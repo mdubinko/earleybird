@@ -1,0 +1,123 @@
+// ixml: s, prolog?, rule++RS, s.
+ixml = { s ~ prolog? ~ rule ~ (RS ~ rule)* ~ s }
+
+s =  _{ (whitespace | comment)* }
+RS = _{ (whitespace | comment)+ }
+whitespace = _{ Unicode_Zs | tab | lf | cr }  
+tab = _{ "\u{09}" }
+lf = _{ "\u{0a}" }
+cr = _{ "\u{0d}" }
+
+// comment: -"{", (cchar; comment)*, -"}".
+comment = { Q_LBRACE ~ (cchar | comment)* ~ Q_RBRACE }
+// -cchar: ~["{}"].
+cchar = _{ !( "{" | "}") ~ ANY }
+prolog = { version ~ s }
+// version: -"ixml", RS, -"version", RS, string, s, -'.' .
+version = { Q_IXML_STR ~ RS ~ Q_VERS_STR ~ RS ~ string ~ s ~ Q_DOT }
+
+// rule: (mark, s)?, name, s, -["=:"], s, -alts, -".".
+rule = { (mark ~ s)? ~ name ~ s ~ ( Q_EQ | Q_COLON ) ~ s ~ Q_alts ~ Q_DOT }
+Q_alts = _{ alts }
+mark = { "@" | "^" | "-" }  // emit attribute
+// alts: alt++(-[";|"], s).
+alts = { alt ~ ( Q_SEMICOL | Q_VBAR ~ s ~ alt)* }
+// alt: term**(-",", s).
+alt = { (term ~ ( Q_COMMA ~ s ~ term)*)? }
+// -term: factor;
+//    option;
+//    repeat0;
+//    repeat1.
+term = _{ option | repeat0 | repeat1 | factor } // order matters here!
+factor = _{ terminal | nonterminal | insertion | Q_LPAREN ~ s ~ alts ~ Q_RPAREN ~ s }
+repeat0 = { factor ~ (Q_STAR ~ s | Q_STAR ~ Q_STAR ~ s ~ sep) }
+repeat1 = { factor ~ (Q_PLUS ~ s | Q_PLUS ~ Q_PLUS ~ s ~ sep) }
+option = { factor ~ Q_QUESTION ~ s }
+sep = { factor }
+// nonterminal: (mark, s)?, name, s.
+nonterminal = { (mark ~ s)? ~ name ~ s }
+
+// @name: namestart, namefollower*.
+name = { namestart ~ namefollower* } // emit attribute
+// -namestart: ["_"; L].
+namestart = _{ "_" | Unicode_L }
+namefollower = _{ namestart | "-" | "." | "·" | "‿" | "⁀" | Unicode_Nd | Unicode_Mn }
+terminal = _{ literal | charset }
+literal = { quoted | encoded }
+// -quoted: (tmark, s)?, string, s.
+quoted = _{ (tmark ~ s)? ~ string ~ s }
+
+tmark = { "^" | "-" } // emit attribute
+string = { Q_QUOT_DOUB ~ dchar+ ~ Q_QUOT_DOUB | Q_QUOT_SING ~ schar+ ~ Q_QUOT_SING }
+// dchar: ~['"'; #a; #d];
+//             '"', -'"'. {all characters except line breaks; quotes must be doubled}
+dchar = { !("\u{22}" | "\u{0a}" | "\u{0d}") ~ ANY |
+          "\u{22}" ~ Q_QUOT_DOUB }
+//         schar: ~["'"; #a; #d];
+//               "'", -"'". {all characters except line breaks; quotes must be doubled}
+schar = { !( "'" | "\u{0a}" | "\u{0d}") ~ ANY |
+          "'" ~ Q_QUOT_SING }
+// -encoded: (tmark, s)?, -"#", hex, s.
+encoded = _{ (tmark ~ s)? ~ Q_HASH ~ hex ~ s }
+hex = { ('0'..'9' | 'a'..'f' | 'A'..'F' )+ }
+
+charset = _{ inclusion | exclusion }
+inclusion = { (tmark ~ s)? ~               set }
+exclusion = { (tmark ~ s)? ~ Q_TILDE ~ s ~ set }
+
+// -set: -"[", s,  (member, s)**(-[";|"], s), -"]", s.
+set = _{ Q_LBRACK ~ s ~ ((member ~ s) ~ ( Q_SEMICOL | Q_VBAR ~ s ~ member ~ s)*)? ~ Q_RBRACK ~ s }
+
+member = { string | Q_HASH ~ hex | range | class }
+range = _{ from ~ s ~ Q_MINUS ~ s ~ to }
+from = { character } // emit attribute
+to = { character } // emit attribute
+character = _{ Q_QUOT_DOUB ~ dchar ~ Q_QUOT_DOUB | Q_QUOT_SING ~ schar ~ Q_QUOT_SING | "#" ~ hex }
+class = _{ code }
+code = { capital ~ letter? } // emit attribute
+capital = _{ 'A'..'Z' }
+letter = _{ 'a'..'z' }
+// insertion: -"+", s, (string; -"#", hex), s.
+insertion = { Q_PLUS ~ s ~ (string | Q_HASH ~ hex) ~ s }
+
+// emulate native support for Unicode machinery
+valid_unicode_categories = {
+        "C" ~ ("c"|"f"|"o"|"s")? |
+        "L" ~ ("l"|"m"|"t"|"u")? |
+        "M" ~ ("c"|"e"|"n")? |
+        "N" ~ ("d"|"l"|"o")? |
+        "P" ~ ("c"|"d"|"e"|"f"|"i"|"o"|"s")? |
+        "S" ~ ("c"|"k"|"m"|"o")? |
+        "Z" ~ ("l"|"p"|"s")?
+}
+Unicode_L  =  _{ 'a'..'z' | 'A'..'Z' } // TODO
+Unicode_Mn =  _{ '\u{0300}'..'\u{036F}' | '\u{0483}'..'\u{0487}' | '\u{0591}'..'\u{05c5}'  | "\u{05C7}" |
+        '\u{0610}'..'\u{065f}' | "\u{0670}" | '\u{06d6}'..'\u{06dc}' | "\u{06df}" | '\u{06e0}'..'\u{06e4}' |
+        '\u{06e7}'..'\u{06e8}' | '\u{06ea}'..'\u{06ed}' } // TODO
+Unicode_Nd =  _{ '0'..'9' | '\u{0660}'..'\u{0669}' | '\u{06f0}'..'\u{06f9}' } // TODO
+Unicode_Zs =  _{ " " | "\u{a0}" | "\u{1680}" | '\u{2000}'..'\u{200a}' | "\u{202f}" | "\u{205f}" | "\u{3000}" }
+
+// Quiet literals -- these map to inline -"..." rules in ixml (but aren't available inline in Pest)
+// Take heed: When quoted strings are used instead of these silent rules, the intent is to emit the character
+Q_COLON =     _{ ":" }
+Q_COMMA =     _{ "," }
+Q_DOT =       _{ "." }
+Q_EQ =        _{ "=" }
+Q_HASH =      _{ "#" }
+Q_IXML_STR =  _{ "ixml" }
+Q_LBRACE =    _{ "{" }
+Q_LBRACK =    _{ "[" }
+Q_LPAREN =    _{ "(" }
+Q_MINUS =     _{ "-" }
+Q_PLUS =      _{ "+" }
+Q_QUESTION =  _{ "?" }
+Q_QUOT_SING = _{ "'" }
+Q_QUOT_DOUB = _{ "\u{22}" }
+Q_RBRACE =    _{ "}" }
+Q_RBRACK =    _{ "]" }
+Q_RPAREN =    _{ ")" }
+Q_SEMICOL =   _{ ";" }
+Q_STAR =      _{ "*" }
+Q_TILDE =     _{ "~" }
+Q_VBAR =      _{ "|" }
+Q_VERS_STR =  _{ "version" }
