@@ -30,8 +30,8 @@ alt = { (term ~ ( Q_COMMA ~ s ~ term)*)? }
 //    repeat1.
 term = _{ option | repeat0 | repeat1 | factor } // order matters here!
 factor = _{ terminal | nonterminal | insertion | Q_LPAREN ~ s ~ alts ~ Q_RPAREN ~ s }
-repeat0 = { factor ~ (Q_STAR ~ s | Q_STAR ~ Q_STAR ~ s ~ sep) }
-repeat1 = { factor ~ (Q_PLUS ~ s | Q_PLUS ~ Q_PLUS ~ s ~ sep) }
+repeat0 = { factor ~ ( Q_STAR ~ Q_STAR ~ s ~ sep | Q_STAR ~ s) } // order matters
+repeat1 = { factor ~ ( Q_PLUS ~ Q_PLUS ~ s ~ sep | Q_PLUS ~ s) } // order matters
 option = { factor ~ Q_QUESTION ~ s }
 sep = { factor }
 // nonterminal: (mark, s)?, name, s.

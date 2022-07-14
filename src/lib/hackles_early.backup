@@ -1,0 +1,162 @@
+use std::collections::HashMap;
+
+// const POSIMARK: char = '‸'; // "\u2038"
+
+type Token = char;
+type Rules = Vec<Rule>;
+
+#[derive(Clone)]
+pub enum Rule {
+    Literal(String),
+    Nonterminal(String),
+    SequenceOf(Rules),
+    OneOf(Rules),
+    // Group(Rules),
+    // Optional(Rule),
+    // OneOrMore(Rule),
+    // ZeroOrMore(Rule),
+    // OneOrMoreSeparatedBy(Rule, String),
+    // ZeroOrMoreSeparatedBy(Rule, String),
+}
+
+#[derive(Clone)]
+pub struct Sentence {
+    subj: String,
+    rule: Rule,
+}
+
+#[allow(dead_code)]
+pub fn get_test_grammar() -> Vec<Sentence> {
+    // <P> ::= <S>      # the start rule
+    // <S> ::= <S> "+" <M> | <M>
+    // <M> ::= <M> "*" <T> | <T>
+    // <T> ::= "1" | "2" | "3" | "4"
+    vec![
+        Sentence {
+            subj: String::from("P"),
+            rule: Rule::Nonterminal(String::from("S")),
+        },
+        Sentence {
+            subj: String::from("S"),
+            rule: Rule::OneOf(vec![
+            Rule::SequenceOf(vec![
+                Rule::Nonterminal(String::from("S")),
+                Rule::Literal(String::from("+")),
+                Rule::Nonterminal(String::from("M")),
+                ]),
+            Rule::Nonterminal(String::from("M"))
+            ]),
+        },
+        Sentence {
+            subj: String::from("M"),
+            rule: Rule::OneOf(vec![
+                Rule::SequenceOf(vec![
+                    Rule::Nonterminal(String::from("M")),
+                    Rule::Literal(String::from("*")),
+                    Rule::Nonterminal(String::from("T")),
+                ]),
+                Rule::Nonterminal(String::from("T")),
+            ]),
+        },
+        Sentence {
+            subj: String::from("T"),
+            rule: Rule::OneOf(vec![
+                Rule::Literal(String::from("1")),
+                Rule::Literal(String::from("2")),
+                Rule::Literal(String::from("3")),
+                Rule::Literal(String::from("4")),
+            ]),
+        },
+    ]
+}
+
+struct EarleyState {
+    // a tuple (X → α • β, i), consisting of
+    // 1. the current production X → α β
+    // 2. the current position in that production (represented by the •)
+    // 3. the position i in the input at which the matching of this production began: aka the origin position
+    production: Sentence,
+    curpos: usize,
+    origin: usize,
+}
+
+struct ParserState {
+    tokens: Vec<Token>,
+    pos: usize,
+    grammar: Vec<Sentence>,
+    ptable: Vec<HashMap<String, EarleyState>>,
+}
+
+pub fn parse(input: &str, grammar: Vec<Sentence>) {
+    let mut state = ParserState {
+        tokens: init_tokens(input),
+        pos: 0,
+        ptable: init_ptable(&grammar, input.len()),
+        grammar,
+    };
+
+    let start &Sentence = state.grammar[0];
+
+    state.ptable[0].insert(start.subj, EarleyState { production: start, curpos: 0, origin: 0 });
+    
+
+    //function EARLEY_PARSE(words, grammar)
+    //INIT(words)
+    //ADD_TO_SET((γ → •S, 0), S[0])
+    //for k ← from 0 to LENGTH(words) do
+    //    for each state in S[k] do  // S[k] can expand during this loop
+    //        if not FINISHED(state) then
+    //            if NEXT_ELEMENT_OF(state) is a nonterminal then
+    //                PREDICTOR(state, k, grammar)         // non_terminal
+    //            else do
+    //                SCANNER(state, k, words)             // terminal
+    //        else do
+    //            COMPLETER(state, k)
+    //    end
+    //end
+    //return chart
+}
+
+fn init_tokens(input: &str) -> Vec<Token> {
+    //let result: Vec<Token> = Vec::new();
+    //for ch in input.chars() {
+    //    result.append(ch as Token);
+    //}
+    //result
+    input.chars().map(|x| x as Token).collect::<Vec<_>>()
+}
+
+fn init_ptable(grammar: &Vec<Sentence>, size: usize) -> Vec<HashMap<String, EarleyState>> {
+    //let result: Vec<HashMap<String, EarleyState>> = Vec::new();
+    //for n in (0..size) {
+    //    result.append(HashMap < String, EarleyState > ::new());
+    //}
+    //result
+
+    //function INIT(words)
+    //S ← CREATE_ARRAY(LENGTH(words) + 1)
+    //for k ← from 0 to LENGTH(words) do
+    //    S[k] ← EMPTY_ORDERED_SET
+    (0..size).map(|_| -> HashMap<String, EarleyState> { HashMap::new() } ).collect::<Vec<_>>()
+}
+
+/*
+procedure PREDICTOR((A → α•Bβ, j), k, grammar)
+    for each (B → γ) in GRAMMAR_RULES_FOR(B, grammar) do
+        ADD_TO_SET((B → •γ, k), S[k])
+    end
+
+procedure SCANNER((A → α•aβ, j), k, words)
+    if a ⊂ PARTS_OF_SPEECH(words[k]) then
+        ADD_TO_SET((A → αa•β, j), S[k+1])
+    end
+
+procedure COMPLETER((B → γ•, x), k)
+    for each (A → α•Bβ, j) in S[x] do
+        ADD_TO_SET((A → αB•β, j), S[k])
+    end
+*/
+
+pub fn test() -> &'static str {
+    "Test"
+}
