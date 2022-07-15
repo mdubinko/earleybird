@@ -15,5 +15,6 @@ path = "src/lib/earley.rs"
 
 [dependencies]
 smol_str = "0.1"
+argh = "0.1"
 # pest = "2.1"
 # pest_derive = "2.1"

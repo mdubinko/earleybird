@@ -24,18 +24,18 @@ pub struct Sentence {
 }
 
 pub struct Grammar {
-    allRules: Vec<Rule>,
-    allSentences: Vec<Sentence>,
+    all_rules: Vec<Rule>,
+    all_sentences: Vec<Sentence>,
 }
 
 impl Grammar {
     fn new() -> Grammar {
-        Self { allRules: Vec::new(), allSentences: Vec::new() }
+        Self { all_rules: Vec::new(), all_sentences: Vec::new() }
     }
 
     fn add_rule(&mut self, rule: Rule) -> RuleRef {
-        self.allRules.push(rule);
-        self.allRules.len()
+        self.all_rules.push(rule);
+        self.all_rules.len()
     }
 
     fn add_nonterminal(&mut self, name: &str) -> RuleRef {
@@ -55,12 +55,12 @@ impl Grammar {
     }
 
     fn get_rule(&self, id: RuleRef) -> Option<&Rule> {
-        self.allRules.get(id)
+        self.all_rules.get(id)
     }
 
     fn add_sentence_internal(&mut self, sentence: Sentence) -> SentenceRef {
-        self.allSentences.push(sentence);
-        self.allSentences.len()
+        self.all_sentences.push(sentence);
+        self.all_sentences.len()
     }
 
     fn add_sentence(&mut self, subj: &str, id: RuleRef) -> SentenceRef {
@@ -68,7 +68,7 @@ impl Grammar {
     }
 
     fn get_sentence(&self, id: SentenceRef) -> (SmolStr, RuleRef) {
-        let sentence = &self.allSentences[id];
+        let sentence = &self.all_sentences[id];
         (sentence.subj.clone(), sentence.rule)
     }
 }
@@ -115,16 +115,25 @@ pub fn parse(input: &str, grammar: Grammar) {
     // grammar from fn parameter, as-is
     // immutable tokens; parser input
     let tokens: Vec<Token> = input.chars().map(|x| x as Token).collect::<Vec<_>>();
-    // current processing position, indexed into tokens Vec
-    let mut pos = 0;
     // The S[k] chart of all parser states. Under each k, like names are grouped under a map key
     let mut chart = init_chart(input.len());
     // starting rule
-    let (subj, ruleId) = grammar.get_sentence(pos);
+    let (subj, rule_id) = grammar.get_sentence(pos);
     // let task_queue = ... TODO
 
     //chart[0].insert(&start.subj, DotRule::Residue(&start, 0 ));
-    add_to_set(DotRule::Residue(subj, ruleId, pos), &mut chart, &grammar);
+    add_to_set(subj, rule_id, pos, &mut chart);
+
+    for (token, k) in token.iter().enumerate() {
+        // for each state in S[k] do  // S[k] can expand during this loop
+            // if not FINISHED(state) then
+                // if NEXT_ELEMENT_OF(state) is a nonterminal then
+                    //  PREDICTOR(state, k, grammar)         // non_terminal
+                //  else do
+                    //  SCANNER(state, k, words)             // terminal
+            // else do
+                // COMPLETER(state, k)
+    }
 
     //function EARLEY_PARSE(words, grammar)
     //INIT(words)
@@ -152,31 +161,43 @@ fn init_chart(size: usize) -> ParseChart {
     (0..size+1).map(|_| { HashMap::new() } ).collect::<Vec<_>>()
 }
 
-fn add_to_set(dotrule: DotRule, chart: &mut ParseChart, grammar: &Grammar) {
-    match dotrule {
-        DotRule::Residue(ref name, id, pos) => {
-            let rules = chart[pos].entry(name.clone()).or_insert(Vec::new());
-            rules.push(dotrule);
-        },
-    }
+fn add_to_set(subj: SmolStr, ruleId: RuleRef, pos: usize, chart: &mut ParseChart) {
+    let rules = chart[pos].entry(subj.clone()).or_insert(Vec::new());
+    rules.push(DotRule::Residue(subj, ruleId, pos));
 }
 
-/*
-procedure PREDICTOR((A → α•Bβ, j), k, grammar)
-    for each (B → γ) in GRAMMAR_RULES_FOR(B, grammar) do
-        ADD_TO_SET((B → •γ, k), S[k])
-    end
+//fn add_to_set(dotrule: DotRule, chart: &mut ParseChart, grammar: &Grammar) {
+//    match dotrule {
+//        DotRule::Residue(ref name, id, pos) => {
+//            let rules = chart[pos].entry(name.clone()).or_insert(Vec::new());
+//            rules.push(dotrule);
+//        },
+//    }
+//}
 
-procedure SCANNER((A → α•aβ, j), k, words)
-    if a ⊂ PARTS_OF_SPEECH(words[k]) then
-        ADD_TO_SET((A → αa•β, j), S[k+1])
-    end
+//procedure PREDICTOR((A → α•Bβ, j), k, grammar)
+//    for each (B → γ) in GRAMMAR_RULES_FOR(B, grammar) do
+//        ADD_TO_SET((B → •γ, k), S[k])
+//    end
+fn predictor() {
 
-procedure COMPLETER((B → γ•, x), k)
-    for each (A → α•Bβ, j) in S[x] do
-        ADD_TO_SET((A → αB•β, j), S[k])
-    end
-*/
+}
+
+//procedure SCANNER((A → α•aβ, j), k, words)
+//    if a ⊂ PARTS_OF_SPEECH(words[k]) then
+//        ADD_TO_SET((A → αa•β, j), S[k+1])
+//    end
+fn scanner() {
+
+}
+
+//procedure COMPLETER((B → γ•, x), k)
+//    for each (A → α•Bβ, j) in S[x] do
+//        ADD_TO_SET((A → αB•β, j), S[k])
+//    end
+fn completer() {
+    
+}
 
 pub fn test() -> &'static str {
     "Test"
