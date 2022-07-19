@@ -1,4 +1,3 @@
-use hackles_earley;
 
 pub mod parse;
 use argh::FromArgs;
@@ -21,15 +20,17 @@ enum Subcommand {
 impl Subcommand {
     fn run(self) {
         match self {
-            Subcommand::Parse(x) => x.run(),
+            Subcommand::Parse(p) => p.run(),
         }
     }
 }
 
 fn main() {
 
-    let test = hackles_earley::test();
-    println!("{}", test);
+    let test = hackles_earley::get_simple1_grammer();
+    let mut parser = hackles_earley::HacklesParser::new();
+    parser.parse("ab", test, "doc");
+    dbg!(&parser);
 
     argh::from_env::<Args>().subcommand.run();
     
