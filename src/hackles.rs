@@ -27,10 +27,12 @@ impl Subcommand {
 
 fn main() {
 
-    let test = hackles_earley::get_simple1_grammer();
-    let mut parser = hackles_earley::HacklesParser::new();
-    parser.parse("ab", test, "doc");
-    dbg!(&parser);
+    let grammar = hackles_earley::get_simple2_grammer();
+    let mut parser = hackles_earley::Parser::new(grammar);
+    parser.parse("b", "doc");
+    //dbg!(&parser);
+    let tree = parser.unpack_parse_tree("doc");
+    println!("{}", &tree);
 
     argh::from_env::<Args>().subcommand.run();
     
