@@ -1,7 +1,8 @@
+use earleybird::parser::Parser;
+use earleybird::builtin_grammars;
 
-pub mod parse;
 use argh::FromArgs;
-
+mod parse;
 
 #[derive(FromArgs)]
 /// An experimental ixml implementation in Rust
@@ -27,10 +28,11 @@ impl Subcommand {
 
 fn main() {
 
-    let grammar = hackles_earley::get_simple2_grammer();
-    let mut parser = hackles_earley::Parser::new(grammar);
-    parser.parse("b", "doc");
-    //dbg!(&parser);
+    let grammar = builtin_grammars::Suite4::get_grammar();
+    let mut parser = Parser::new(grammar);
+    let inputs = builtin_grammars::Suite4::get_inputs();
+    parser.parse(inputs[3], "doc");
+    dbg!(&parser);
     let tree = parser.unpack_parse_tree("doc");
     println!("{}", &tree);
 

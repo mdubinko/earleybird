@@ -1,12 +1,40 @@
-use std::{collections::{HashMap, VecDeque}, iter, fmt};
+use std::{collections::{HashMap, VecDeque, HashSet}, iter, fmt};
 use smol_str::SmolStr;
 use string_builder::Builder;
 
-// const POSIMARK: char = '‸'; // "\u2038"
+
+// const POSIMARK: char = '‸'; //&& "\u2038"
 
 type Token = char; // maybe u32 later?
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub struct ExprRef(usize);
+
+impl ExprRef {
+    /// not directly using Display trait due to the dependency on &Grammar
+    pub fn pretty_print(&self, grammar: &Grammar) -> String {
+        let expr = grammar.get_expr(ExprRef(self.0));
+        match expr {
+            Expr::Empty => format!("Empty"),
+            Expr::LitChar(c) => format!("\"{}\"", c),
+            Expr::LitCharOneOf(s) => format!("[ \"{}\" ]", s),
+            Expr::Nonterm(n) => format!("Nonterm {}", n),
+            Expr::Seq(vec) => {
+                let lst = &vec.iter()
+                    .map(|x: &ExprRef| x.pretty_print(grammar))
+                    .collect::<Vec<String>>()
+                    .join(", ");
+                format!("Seq [ {} ]", lst)
+            }
+            Expr::OneOf(vec) => {
+                let lst = &vec.iter()
+                    .map(|x: &ExprRef| x.pretty_print(grammar))
+                    .collect::<Vec<String>>()
+                    .join(" | ");
+                format!("OneOf ( {} )", lst)
+            }
+        }
+    }
+}
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Expr {
@@ -40,15 +68,22 @@ pub struct Rule {
 pub struct Grammar {
     all_exprs: Vec<Expr>,
     all_rules: HashMap<SmolStr, Rule>,
+    next_generated_rule: i32,
 }
 
 impl Grammar {
 
     pub const EMPTY_EXPR: ExprRef = ExprRef(0);
 
-    fn new() -> Self {
+    pub fn new() -> Self {
         // pre-seed ExprId 0 == Expr::Empty
-        Self { all_exprs: vec![Expr::Empty], all_rules: HashMap::new() }
+        Self { all_exprs: vec![Expr::Empty], all_rules: HashMap::new(), next_generated_rule: 0 }
+    }
+
+    fn internal_id(&mut self, hint: &str) -> String {
+        let s = format!("--{}{}", self.next_generated_rule, hint);
+        self.next_generated_rule += 1;
+        s
     }
 
     fn add_expr(&mut self, expr: Expr) -> ExprRef {
@@ -56,20 +91,68 @@ impl Grammar {
         ExprRef(self.all_exprs.len() - 1)
     }
 
-    fn add_nonterm(&mut self, name: &str) -> ExprRef {
+    pub fn add_nonterm(&mut self, name: &str) -> ExprRef {
         self.add_expr(Expr::Nonterm(SmolStr::new(name)))
     }
 
-    fn add_litchar(&mut self, value: char) -> ExprRef {
+    pub fn add_litchar(&mut self, value: char) -> ExprRef {
         self.add_expr(Expr::LitChar(value))
     }
 
-    fn add_seq(&mut self, exprs: Vec<ExprRef>) -> ExprRef {
+    pub fn add_litcharoneof(&mut self, list: &str) -> ExprRef {
+        self.add_expr(Expr::LitCharOneOf(SmolStr::new(list)))
+    }
+
+    pub fn add_seq(&mut self, exprs: Vec<ExprRef>) -> ExprRef {
         self.add_expr(Expr::Seq(exprs))
     }
 
-    fn add_oneof(&mut self, exprs: Vec<ExprRef>) -> ExprRef {
+    pub fn add_oneof(&mut self, exprs: Vec<ExprRef>) -> ExprRef {
         self.add_expr(Expr::OneOf(exprs))
+    }
+
+    /// Optional factor:
+    /// f? ⇒ f-option
+    /// -f-option: f; ().
+    pub fn add_optional(&mut self, f: ExprRef) -> ExprRef {
+        self.add_oneof(vec![f, Grammar::EMPTY_EXPR])
+    }
+
+    /// Zero or more repetitions:
+    /// f* ⇒ f-star
+    /// -f-star: (f, f-star)?.
+    pub fn add_repeat0(&mut self, f: ExprRef) -> ExprRef {
+        let genrule = self.internal_id("repeat0");
+        let f_star = self.add_nonterm(genrule.as_str());
+        let seq = self.add_oneof(vec![f, f_star]);
+        let opt = self.add_optional(seq);
+        self.add_rule(genrule.as_str(), opt);
+        f_star
+    }
+        
+    /// One or more repetitions:
+    /// f+ ⇒ f-plus
+    /// -f-plus: f, f*.
+    pub fn add_repeat1(&mut self, f: ExprRef) -> ExprRef {
+        let f_star = self.add_repeat0(f);
+        self.add_seq(vec![f, f_star])
+    }
+
+    /// One or more repetitions with separator:
+    /// f++sep ⇒ f-plus-sep
+    /// -f-plus-sep: f, (sep, f)*.
+    pub fn add_repeat1_sep(&mut self, f: ExprRef, sep: ExprRef) -> ExprRef {
+        let inner_seq = self.add_seq(vec![sep, f]);
+        let inner_seq_star = self.add_repeat0(inner_seq);
+        self.add_seq(vec![f, inner_seq_star])
+    }
+
+    /// Zero or more repetitions with separator:
+    /// f**sep ⇒ f-star-sep
+    /// -f-star-sep: (f++sep)?.
+    pub fn add_repeat0_sep(&mut self, f: ExprRef, sep: ExprRef) -> ExprRef {
+        let f_plusplus = self.add_repeat1_sep(f, sep);
+        self.add_optional(f_plusplus)
     }
 
     fn get_expr(&self, id: ExprRef) -> Expr {
@@ -111,7 +194,7 @@ impl Grammar {
         self.all_rules.insert(rule.subj.clone(), rule);
     }
 
-    fn add_rule(&mut self, subj: &str, id: ExprRef) {
+    pub fn add_rule(&mut self, subj: &str, id: ExprRef) {
         self.add_rule_internal(Rule {subj: SmolStr::new(subj), expr: id, mark: None});
     }
 
@@ -162,11 +245,6 @@ impl Task {
         Task{ name: SmolStr::new(name), orig, pos, expr, len, completed: Vec::new()}
     }
 
-    /// clone a task, except the new one is at the next input position
-    fn at_next_input(from: &Task) -> Task {
-        Task { name: from.name.clone(), orig: from.orig, pos: from.pos + 1, expr: from.expr.clone(), len: from.len, completed: from.completed.clone() }
-    }
-
     /// clone a task, except advancing the cursor (storing given position data for the piece just advanced-over)
     fn at_new_cursor(from: &Task, subseq_pos: usize) -> Task {
         let mut new_vec = from.completed.clone();
@@ -186,6 +264,7 @@ pub struct Parser {
     farthest_pos: usize,
     //token_line: u16,
     //token_col: u16,
+    trace_hashes: HashSet<String>,
 }
 
 /// Earley parser
@@ -200,11 +279,12 @@ impl Parser {
             parentage: HashMap::new(),
             pos: 0,
             farthest_pos: 0,
+            trace_hashes: HashSet::new(),
+
         }
     }
 
     pub fn parse(&mut self, input: &str, start: &str) -> &Vec<Task> {
-
         let tokens = input.chars().chain(iter::once(Parser::EOF))
             .map(|x| x as Token).collect::<Vec<_>>();
 
@@ -223,9 +303,11 @@ impl Parser {
         
         // work through the queue
         while let Some(task) = self.queue.pop_front() {
-            println!("Pulled from queue {}",task);
-            self.record_trace(&task);
-            // TODO: check for already-cached
+            println!("Pulled from queue {} {}",task, task.expr.pretty_print(&self.grammar));
+            if self.record_trace(&task) {
+                // already cached...
+                continue;
+            }
 
             let expr_cursor = task.completed.len();
             let expr = self.grammar.get_expr(task.expr);
@@ -243,10 +325,12 @@ impl Parser {
                 }
 
                 // advance through input
-                self.pos += 1;
-                intok = *tokens.get(self.pos).unwrap_or(&Parser::EOF);
-                println!("Input now at position {} '{}'", self.pos, intok);
-                // TODO: detect and account for newline tokens
+                if self.grammar.is_terminal(task.expr) {
+                    self.pos += 1;
+                    intok = *tokens.get(self.pos).unwrap_or(&Parser::EOF);
+                    println!("Input advanced to position {} '{}'", self.pos, intok);
+                    // TODO: detect and account for newline tokens
+                }
                 continue;
             }
 
@@ -262,6 +346,16 @@ impl Parser {
                         );
                     }
                 }
+                Expr::OneOf(vec) => { 
+                    println!("PREDICTOR OneOf {}", task.expr.pretty_print(&self.grammar));
+                    // for each alt, queue it up
+                    for downexpr_id in vec {
+                        self.record_parentage(downexpr_id, self.pos, &task);
+                        self.queue.push_front(
+                            Task::new(task.name.as_str(), task.orig, task.pos, downexpr_id, self.grammar.get_expr_len(downexpr_id))
+                        );
+                    }
+                }
                 Expr::Nonterm(name) => {
                     println!("PREDICTOR (nonterm={})", name);
                     // go one level deeper to see what this nonterminal expands to
@@ -269,7 +363,7 @@ impl Parser {
                     for downexpr_id in self.grammar.get_expr_alts(nt_defn) {
                         self.record_parentage(downexpr_id, self.pos, &task);
                         self.queue.push_front(
-                            Task::new(task.name.as_str(), self.pos, self.pos, downexpr_id, self.grammar.get_expr_len(downexpr_id))
+                            Task::new(name.as_str(), self.pos, self.pos, downexpr_id, self.grammar.get_expr_len(downexpr_id))
                         );
                     }
                 }
@@ -296,8 +390,12 @@ impl Parser {
                         println!("non-matched char '{}' (expecting one of '{}'); terminating task", intok, str);
                     }
                 }
-                Expr::Empty => { unreachable!("Don't queue empty exprs") }
-                Expr::OneOf(_) => { unreachable!("Alternates should't get queued like this")}
+                Expr::Empty => { 
+                    println!("SCANNER Empty");
+                    self.queue.push_back(
+                        Task::at_new_cursor(&task, task.pos)
+                    );
+                 }
             }
         }
         println!("Finished parse with {} items in trace", self.trace.len());
@@ -307,7 +405,7 @@ impl Parser {
     pub fn unpack_parse_tree(&self, name: &str) -> String {
         println!("TRACE...");
         for task in &self.trace {
-            println!("{}", task);
+            println!("{} {}", task, task.expr.pretty_print(&self.grammar));
         }
         let mut builder = Builder::default();
         println!("assuming ending pos of {}", self.farthest_pos);
@@ -325,9 +423,11 @@ impl Parser {
                 let elem_unwrap = elem.unwrap();
                 let elem_name = &elem_unwrap.name;
                 println!("trace found {}", elem_unwrap);
-                builder.append("<");
-                builder.append(elem_name.to_string());
-                builder.append(">");
+                if !elem_name.starts_with("-") {
+                    builder.append("<");
+                    builder.append(elem_name.to_string());
+                    builder.append(">");
+                }
 
                 // CHILDREN
                 let mut new_start = start;
@@ -335,7 +435,7 @@ impl Parser {
                 let exprs = grammar.get_expr_seq(task.expr);
                 println!("trace children {}, positions {:?}, exprs {:?}", &task, positions, exprs);
                 for i in 0..exprs.len() {
-                    let newpos = positions[i];
+                    let newpos = positions[i] + 1;  // + length of this terminal
                     let newexpr = exprs[i];
                     if grammar.is_terminal(newexpr) {
                         if let Expr::LitChar(ch) = grammar.get_expr(newexpr) {
@@ -343,15 +443,18 @@ impl Parser {
                         }
                     } else {
                         if let Expr::Nonterm(named) = grammar.get_expr(newexpr) {
+                            println!("HEREHEREHERE {} {} {}", named, new_start, newpos);
                             self.unpack_parse_tree_internal(builder, named.as_str(), new_start, newpos);
                         }
                     }
                     new_start = newpos;
                 }
 
-                builder.append("</");
-                builder.append(elem_name.to_string());
-                builder.append(">");
+                if !elem_name.starts_with("-") {
+                    builder.append("</");
+                    builder.append(elem_name.to_string());
+                    builder.append(">");
+                }
     
             }
             None => {}
@@ -374,18 +477,21 @@ impl Parser {
         
     }
 
-    //fn trace_key(&self, task: &Task) -> String {
-    //    format!("{}[{},{}]", task.name, task.orig, task.pos)
-    //}
-
     /// record a trace
     /// returns true if this trace had been previously recorded
     fn record_trace(&mut self, task: &Task) -> bool {
         if task.pos > self.farthest_pos {
             self.farthest_pos = task.pos;
         }
-        self.trace.push(task.clone());
-        false
+        let hash = task.to_string();
+        println!("computed hash {}", hash);
+        if self.trace_hashes.contains(&hash) {
+            true
+        } else {
+            self.trace_hashes.insert(hash);
+            self.trace.push(task.clone());
+            false
+        }
     }
 
     fn parentage_key(&self, expr: ExprRef, pos: usize) -> String {
@@ -409,69 +515,3 @@ impl Parser {
 
 }
 
-// temporary hack to get hands-onß
-
-pub fn get_simple1_grammer() -> Grammar {
-    // doc = "a", "b"
-    let mut grammar = Grammar::new();
-    let a = grammar.add_litchar('a');
-    let b = grammar.add_litchar('b');
-    let seq = grammar.add_seq(vec![a,b]);
-    grammar.add_rule("doc", seq);
-    grammar
-}
-
-pub fn get_simple2_grammer() -> Grammar {
-    // doc = "a" | "b"
-    let mut grammar = Grammar::new();
-    let a = grammar.add_litchar('a');
-    let b = grammar.add_litchar('b');
-    let choice = grammar.add_oneof(vec![a,b]);
-    grammar.add_rule("doc", choice);
-    grammar
-}
-
-pub fn get_simple3_grammer() -> Grammar {
-    // doc = a, b
-    // a = "a" | "A"
-    // b = "b" | "B"
-    let mut grammar = Grammar::new();
-    let aref = grammar.add_nonterm("a");
-    let bref = grammar.add_nonterm("b");
-    let a = grammar.add_litchar('a');
-    let a_ = grammar.add_litchar('A');
-    let a_choice = grammar.add_oneof(vec![a,a_]);
-    let b = grammar.add_litchar('b');
-    let b_ = grammar.add_litchar('B');
-    let b_choice = grammar.add_oneof(vec![b, b_]);
-    let seq = grammar.add_seq(vec![aref, bref]);
-    grammar.add_rule("doc", seq);
-    grammar.add_rule("a", a_choice);
-    grammar.add_rule("b", b_choice);
-    grammar
-}
-
-pub fn get_wiki_grammar() -> Grammar {
-    // <P> ::= <S>
-    // <S> ::= <S> "+" <M> | <M>
-    // <M> ::= <M> "*" <T> | <T>
-    // <T> ::= "1" | "2" | "3" | "4"
-    let mut grammar = Grammar::new();
-    let s_expr = grammar.add_nonterm("S");
-    grammar.add_rule("P", s_expr);
-
-    let m_expr = grammar.add_nonterm("M");
-    let t_expr = grammar.add_nonterm("T");
-    let plus = grammar.add_litchar('+');
-    let star = grammar.add_litchar('*');
-    let seq1 = grammar.add_seq(vec![s_expr, plus, m_expr]);
-    let alt1 = grammar.add_oneof(vec![seq1, m_expr]);
-    let seq2 = grammar.add_seq(vec![m_expr, star, t_expr]);
-    let alt2 = grammar.add_oneof(vec![seq2, t_expr]);
-    let digit = grammar.add_expr(Expr::LitCharOneOf(SmolStr::new("1234")));
-
-    grammar.add_rule("S", alt1);
-    grammar.add_rule("M", alt2);
-    grammar.add_rule("T", digit);
-    grammar
-}

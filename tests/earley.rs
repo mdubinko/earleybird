@@ -1,29 +1,68 @@
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn smoke_test_1() {
-        let grammar = hackles_earley::get_simple1_grammer();
-        let mut parser = hackles_earley::Parser::new(grammar);
-        let trace = parser.parse("ab", "doc");
-        assert_eq!(trace.len(), 7);
-        //assert_eq!(trace.keys(), ["doc[0,0]", "doc[0,1]"]);
-        //assert_eq!(trace["doc"].0, "doc");
-        //assert_eq!(trace["doc"].1, 0);
-    }
+use earleybird::parser::{Grammar, Parser};
+use earleybird::builtin_grammars::*;
 
-    #[test]
-    fn smoke_test_2() {
-        let grammar = hackles_earley::get_simple2_grammer();
-        let mut parser = hackles_earley::Parser::new(grammar);
-        let trace = parser.parse("b", "doc");
-        assert_eq!(trace.len(), 3);
-    }
-
-    #[test]
-    fn smoke_test_3() {
-        let grammar = hackles_earley::get_simple3_grammer();
-        let mut parser = hackles_earley::Parser::new(grammar);
-        let trace = parser.parse("Ab", "doc");
-        assert_eq!(trace.len(), 10);
+#[test]
+fn run_suite1() {
+    let inputs = Suite1::get_inputs();
+    let expecteds = Suite1::get_expected();
+    for i in 0..inputs.len() {
+        let g = Suite1::get_grammar();
+        let mut parser = Parser::new(g);
+        let trace = parser.parse(inputs[i], "doc");
+        let result = parser.unpack_parse_tree("doc");
+        assert_eq!(expecteds[i], result);
     }
 }
+
+#[test]
+fn run_suite2() {
+    let inputs = Suite2::get_inputs();
+    let expecteds = Suite2::get_expected();
+    for i in 0..inputs.len() {
+        let g = Suite2::get_grammar();
+        let mut parser = Parser::new(g);
+        let trace = parser.parse(inputs[i], "doc");
+        let result = parser.unpack_parse_tree("doc");
+        assert_eq!(expecteds[i], result);
+    }
+}
+
+#[test]
+fn run_suite3() {
+    let inputs = Suite3::get_inputs();
+    let expecteds = Suite3::get_expected();
+    for i in 0..inputs.len() {
+        let g = Suite3::get_grammar();
+        let mut parser = Parser::new(g);
+        let trace = parser.parse(inputs[i], "doc");
+        let result = parser.unpack_parse_tree("doc");
+        assert_eq!(expecteds[i], result);
+    }
+}
+
+#[test]
+fn run_suite4() {
+    let inputs = Suite4::get_inputs();
+    let expecteds = Suite4::get_expected();
+    for i in 0..inputs.len() {
+        let g = Suite4::get_grammar();
+        let mut parser = Parser::new(g);
+        let trace = parser.parse(inputs[i], "doc");
+        let result = parser.unpack_parse_tree("doc");
+        assert_eq!(expecteds[i], result);
+    }
+}
+
+#[test]
+fn run_suite_wiki() {
+    let inputs = SuiteWiki::get_inputs();
+    let expecteds = SuiteWiki::get_expected();
+    for i in 0..inputs.len() {
+        let g = SuiteWiki::get_grammar();
+        let mut parser = Parser::new(g);
+        let trace = parser.parse(inputs[i], "doc");
+        let result = parser.unpack_parse_tree("doc");
+        assert_eq!(expecteds[i], result);
+    }
+}
+
