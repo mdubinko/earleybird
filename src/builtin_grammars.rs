@@ -8,13 +8,20 @@ use crate::parser::Grammar;
 //    fn get_expected() -> Vec<&'static str>;
 //}
 
-pub struct Suite1 {}
-pub struct Suite2 {}
-pub struct Suite3 {}
-pub struct Suite4 {}
+// smoke tests
+pub struct SmokeSeq {}
+pub struct SmokeAlt {}
+pub struct SmokeNT {}
+pub struct SmokeOpt {}
+pub struct SmokeStar {}
+pub struct SmokePlus {}
+pub struct SmokeStarSep {}
+pub struct SmokePlusSep {}
+
+// test suites
 pub struct SuiteWiki {}
 
-impl Suite1 {
+impl SmokeSeq {
     pub fn get_grammar() -> Grammar {
         // doc = "a", "b"
         let mut g = Grammar::new();
@@ -32,7 +39,7 @@ impl Suite1 {
     }
 }
 
-impl Suite2 {
+impl SmokeAlt {
     pub fn get_grammar() -> Grammar {
         // doc = "a" | "b"
         let mut g = Grammar::new();
@@ -50,7 +57,7 @@ impl Suite2 {
     }
 }
 
-impl Suite3 {
+impl SmokeNT {
     pub fn get_grammar() -> Grammar {
         // doc = a, b
         // a = "a" | "A"
@@ -79,23 +86,37 @@ impl Suite3 {
     }
 }
 
-impl Suite4 {
+impl SmokeOpt {
     pub fn get_grammar() -> Grammar {
-        // doc = "a"*, "b"+
+        // doc = "a"?
         let mut g = Grammar::new();
         let a = g.add_litchar('a');
-        let b = g.add_litchar('b');
-        let aaaa = g.add_repeat0(a);
-        let bbbb = g.add_repeat1(b);
-        let seq = g.add_seq(vec![aaaa, bbbb]);
-        g.add_rule("doc", seq);
+        let opt = g.add_optional(a);
+        g.add_rule("doc", opt);
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {
-        vec!["b", "ab", "aab", "aabb"]
+        vec!["", "a"]
     }
     pub fn get_expected() -> Vec<&'static str> {
-        vec!["<doc>b</doc>", "<doc>ab</doc>", "<doc>aab</doc>", "<doc>aabb</doc>"]
+        vec!["<doc></doc>", "<doc>a</doc>"]
+    }
+}
+
+impl SmokeStar {
+    pub fn get_grammar() -> Grammar {
+        // doc = "a"*
+        let mut g = Grammar::new();
+        let a = g.add_litchar('a');
+        let a_star = g.add_repeat0(a);
+        g.add_rule("doc", a_star);
+        g
+    }
+    pub fn get_inputs() -> Vec<&'static str> {
+        vec!["", "a", "aa", "aaa"]
+    }
+    pub fn get_expected() -> Vec<&'static str> {
+        vec!["<doc></doc>", "<doc>a</doc>", "<doc>aa</doc>", "<doc>aaa</doc>"]
     }
 }
 
@@ -106,21 +127,21 @@ impl SuiteWiki {
         // M = M "*" T | T
         // T = "1" | "2" | "3" | "4"
         let mut g = Grammar::new();
-        let s_expr = g.add_nonterm("S");
-        g.add_rule("P", s_expr);
+        let s_nt = g.add_nonterm("S");
+        g.add_rule("doc", s_nt);
 
-        let m_expr = g.add_nonterm("M");
-        let t_expr = g.add_nonterm("T");
+        let m_nt = g.add_nonterm("M");
+        let t_nt = g.add_nonterm("T");
         let plus = g.add_litchar('+');
         let star = g.add_litchar('*');
-        let seq1 = g.add_seq(vec![s_expr, plus, m_expr]);
-        let alt1 = g.add_oneof(vec![seq1, m_expr]);
-        let seq2 = g.add_seq(vec![m_expr, star, t_expr]);
-        let alt2 = g.add_oneof(vec![seq2, t_expr]);
+        let s_plus_m = g.add_seq(vec![s_nt, plus, m_nt]);
+        let s_plus_m_or_m = g.add_oneof(vec![s_plus_m, m_nt]);
+        let m_star_t = g.add_seq(vec![m_nt, star, t_nt]);
+        let m_star_t_or_t = g.add_oneof(vec![m_star_t, t_nt]);
         let digit = g.add_litcharoneof("1234");
 
-        g.add_rule("doc", alt1);
-        g.add_rule("M", alt2);
+        g.add_rule("S", s_plus_m_or_m);
+        g.add_rule("M", m_star_t_or_t);
         g.add_rule("T", digit);
         g
     }
@@ -128,6 +149,9 @@ impl SuiteWiki {
         vec!["1", "1+2", "1+2*3", "0"]
     }
     pub fn get_expected() -> Vec<&'static str> {
-        vec!["<doc>ab</doc>", "<doc>Ab</doc>", "<doc>AB</doc>", "<doc>aB</doc>"]
+        vec!["<doc><S><M><T>1</T></M></S></doc>",
+             "<doc><S><S><M><T>1</T></M></S>+<M><T>2</T></M></S></doc>",
+             "<doc><S><S><M><T>1</T></M></S>+<M><M><T>2</T></M>*<T>3</T></M></S></doc>",
+             ""] // TODO: better failure cases
     }
 }    

@@ -28,9 +28,9 @@ impl Subcommand {
 
 fn main() {
 
-    let grammar = builtin_grammars::Suite4::get_grammar();
+    let grammar = builtin_grammars::SmokeStar::get_grammar();
     let mut parser = Parser::new(grammar);
-    let inputs = builtin_grammars::Suite4::get_inputs();
+    let inputs = builtin_grammars::SmokeStar::get_inputs();
     parser.parse(inputs[3], "doc");
     dbg!(&parser);
     let tree = parser.unpack_parse_tree("doc");
