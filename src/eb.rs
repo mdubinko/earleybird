@@ -1,5 +1,4 @@
-use earleybird::parser::Parser;
-use earleybird::builtin_grammars;
+use earleybird::grammar::{Grammar, Rule};
 
 use argh::FromArgs;
 mod parse;
@@ -28,13 +27,10 @@ impl Subcommand {
 
 fn main() {
 
-    let grammar = builtin_grammars::SmokeStar::get_grammar();
-    let mut parser = Parser::new(grammar);
-    let inputs = builtin_grammars::SmokeStar::get_inputs();
-    parser.parse(inputs[3], "doc");
-    dbg!(&parser);
-    let tree = parser.unpack_parse_tree("doc");
-    println!("{}", &tree);
+    let mut g = Grammar::new("doc");
+    //g.define("doc", Rule::build().repeat0( Rule::build().lit('a')));
+    g.define("doc", Rule::build().repeat0( Rule::build().lit('a')));
+    println!("{g}");
 
     argh::from_env::<Args>().subcommand.run();
     

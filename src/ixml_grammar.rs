@@ -1,64 +1,22 @@
-use crate::parser::Grammar;
+use crate::grammar::{Grammar, Rule, Mark};
 
 pub fn grammar() -> Grammar {
-    let mut g = Grammar::new();
-
-    // literals
-    let _colon = g.add_litchar(':');
-    let _comma = g.add_litchar(',');
-    let _dot = g.add_litchar('.');
-    let _vbar = g.add_litchar('|');
-    let _equals = g.add_litchar('=');
-    let _squote = g.add_litchar('\'');
-    let _qmark = g.add_litchar('?');
-    let _plus = g.add_litchar('+');
-    let _star = g.add_litchar('*');
-    let _dquote = g.add_litchar('"');
-    let _minus = g.add_litchar('-');
-    let _lbrack = g.add_litchar('[');
-    let _rbrack = g.add_litchar(']');
-    let _lparen = g.add_litchar('(');
-    let _rparen = g.add_litchar(')');
-    let _lbrace = g.add_litchar('{');
-    let _rbrace = g.add_litchar('}');
-    let _at = g.add_litchar('@');
-    let _caret = g.add_litchar('^');
-    let _hash = g.add_litchar('#');
-    let _tilde = g.add_litchar('~');
-    let _colon_or_equals = g.add_litcharoneof(":=");
-    let _semicolon_or_vbar = g.add_litcharoneof(";|");
- 
-    // nonterminals
-    let s = g.add_nonterm("s");
-    let rule = g.add_nonterm("rule");
-    let rs = g.add_nonterm("RS");
-    let name = g.add_nonterm("name");
-    let alts = g.add_nonterm("alts");
-    let alt = g.add_nonterm("alt");
-    let term = g.add_nonterm("term");
-    let factor = g.add_nonterm("factor");
-    let terminal = g.add_nonterm("terminal");
-    let nonterminal = g.add_nonterm("nonterminal");
-    let option = g.add_nonterm("option");
-    let sep = g.add_nonterm("sep");
-    let repeat0 = g.add_nonterm("repeat0");
-    let repeat1 = g.add_nonterm("repeat1");
-    let literal = g.add_nonterm("literal");
-    let quoted = g.add_nonterm("quoted");
-    let string = g.add_nonterm("string");
-    let dchar = g.add_nonterm("dchar");
+    let mut g = Grammar::new("ixml");
 
     // ixml: s, prolog?, rule++RS, s.
     // TODO: prolog
-    let rule_plus_plus_rs = g.add_repeat1_sep(rule, rs);
-    let ixml_seq = g.add_seq(vec![s, rule_plus_plus_rs, s]);
-    g.add_rule("ixml", ixml_seq);
+    g.define("ixml", Rule::build().nt("s").repeat1_sep(Rule::build().nt("rule"), Rule::build().nt("RS")));
 
     // rule: (mark, s)?, name, s, -["=:"], s, -alts, -".".
-    // TODO mark
-    let rule_seq = g.add_seq(vec![name, s, _colon_or_equals, s, alts, _dot]);
-    g.add_rule("rule", rule_seq);
-
+    g.define("rule", Rule::build()
+        .opt(Rule::build().nt("mark").nt("s"))
+        .nt("name")
+        .nt("s")
+        .lit_mark('=', Mark::Hidden) // TODO: choice here
+        .nt("s")
+        .nt_mark("alts", Mark::Hidden)
+        .lit_mark('.', Mark::Hidden) );
+    /*
     // alts: alt++(-[";|"], s).
     let alt_plus_plus_semi_or_vbar = g.add_repeat1_sep(alt, _semicolon_or_vbar);
     g.add_rule("alts", alt_plus_plus_semi_or_vbar);
@@ -129,7 +87,7 @@ pub fn grammar() -> Grammar {
     // TODO g.add_literalcharrange
     let any_char_except_dquote = g.add_litcharoneof("0123456789 ABCDEFGHIJKLMNOPQRSTUVWXYZ.,:;?!@#$%^&*'abcdefghijklmnopqrstuvwxyz()<>[]{}-_+=");
     g.add_rule("dchar", any_char_except_dquote);
-
+    */
     g
 /*
     ixml: s, prolog?, rule++RS, s.
@@ -206,4 +164,3 @@ member: string;
 insertion: -"+", s, (string; -"#", hex), s.
 */
 }
-

@@ -1,540 +1,415 @@
-use std::{collections::{HashMap, VecDeque, HashSet}, fmt};
+use crate::grammar::{Grammar, Rule, Term};
+use std::{collections::{VecDeque, HashSet}, fmt};
 use smol_str::SmolStr;
 use string_builder::Builder;
 
+const DOTSEP: &'static str = "•";
 
-// const POSIMARK: char = '‸'; //&& "\u2038"
+#[derive(Debug, Clone, Eq, PartialEq)]
+/// A sort of iterator for a Rule.
+/// Instead of just calling next(), For completed terms, it tracks positions and specifically-matched chars
+/// matched_so_far.len() is the cursor position
+pub struct DotNotation {
+    iteratee: Rule,
+    matched_so_far: Vec<MatchRec>,
+}
 
-type Token = char; // maybe u32 later?
-#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
-pub struct ExprRef(usize);
-
-impl ExprRef {
-    /// not directly using Display trait due to the dependency on &Grammar
-    pub fn print_dot_notation(&self, g: &Grammar, cursor: Option<usize>) -> String {
-        let dot = "•";
-
-        // the following only apply to single-item exprs
-        let at_start = if let Some(0) = cursor { dot } else { "" };
-        let at_end = if let Some(1) = cursor { dot } else { "" };
-
-        let expr = g.get_expr(ExprRef(self.0));
-        match expr {
-            Expr::Empty => String::from("ε"),
-            Expr::LitChar(c) => format!("{}\"{}\"{}", at_start, c, at_end),
-            Expr::LitCharOneOf(s) => format!("{}[ \"{}\" ]{}", at_start, s, at_end),
-            Expr::Nonterm(n) => format!("{} {} {}", at_start, n, at_end),
-            Expr::Seq(vec) => {
-                match cursor {
-                    Some(pos) => {
-                        let (pre, post) = vec.split_at(pos);
-                        let pre_lst = self.print_vec(pre, &g);
-                        let post_lst = self.print_vec(post, &g);
-                        format!("[ {} {} {} ]", pre_lst, dot, post_lst)
-                    }
-                    None => {
-                        let lst = self.print_vec(&vec, &g);
-                        format!("[ {} ]", lst)
-                    }
-                }
-            }
-            Expr::OneOf(vec) => {
-                let lst = &vec.iter()
-                    .map(|x: &ExprRef| x.print_dot_notation(g, None))
-                    .collect::<Vec<String>>()
-                    .join(" | ");
-                format!("{} ( {} ) {}", at_start, lst, at_end)
-            }
-        }
+impl DotNotation {
+    pub fn new(rule: &Rule) -> DotNotation {
+        DotNotation { iteratee: rule.clone(), matched_so_far: Vec::new() }
     }
 
-    fn print_vec(&self, vec: &[ExprRef], g: &Grammar) -> String {
-        let s = &vec.iter()
-        .map(|x: &ExprRef| x.print_dot_notation(g, None))
-        .collect::<Vec<String>>()
-        .join(", ");
-        s.clone()
+    /// record a new match. Intnded for literal character data
+    /// this returns an entirely new DotNotation
+    fn advance_dot(&self, rec: MatchRec) -> DotNotation {
+        let mut clo = self.clone();
+        clo.matched_so_far.push(rec);
+        clo
+    }
+
+    /// retrieve the original term at index n
+    //fn term_at(&self, n: usize) -> &Term {
+    //    &self.iteratee.factors[n]
+    //}
+
+    fn is_completed(&self) -> bool {
+        self.iteratee.len() == self.matched_so_far.len()
+    }
+
+    /// retrieve the match info for trace processing
+    fn matches_iter(&self) -> std::slice::Iter<'_, MatchRec> {
+        self.matched_so_far.iter()
+    }
+
+    /// next term to parse
+    /// "What's next after the dot?"
+    fn next_unparsed(&self) -> Term {
+        let cursor = self.matched_so_far.len();
+        self.iteratee.factors[cursor].clone()
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum Expr {
-    Empty,
-    LitChar(char),
-    LitCharOneOf(SmolStr),
-    //LitCharRange(char, char),
-    //LitCharUnicodeCat(UnicodeRange),
-    //LitStr(SmolStr),
-    Nonterm(SmolStr),
-    Seq(Vec<ExprRef>),
-    OneOf(Vec<ExprRef>),
-    //Unmatchable,
-}
-
-#[derive(Debug, Clone)]
-pub enum RuleMark {
-    Attr,
-    Quiet,
-}
-
-#[derive(Debug, Clone)]
-pub struct Rule {
-    subj: SmolStr,
-    expr: ExprRef,
-    mark: Option<RuleMark>,
-}
-
-/// the primary owner of all grammar data structures
-#[derive(Debug)]
-pub struct Grammar {
-    all_exprs: Vec<Expr>,
-    all_rules: HashMap<SmolStr, Rule>,
-    next_generated_rule: i32,
-}
-
-impl Grammar {
-
-    pub const EMPTY_EXPR: ExprRef = ExprRef(0);
-
-    pub fn new() -> Self {
-        // pre-seed ExprId 0 == Expr::Empty
-        Self { all_exprs: vec![Expr::Empty], all_rules: HashMap::new(), next_generated_rule: 0 }
-    }
-
-    fn internal_id(&mut self, hint: &str) -> String {
-        let s = format!("--{}{}", hint, self.next_generated_rule);
-        self.next_generated_rule += 1;
-        s
-    }
-
-    fn add_expr(&mut self, expr: Expr) -> ExprRef {
-        self.all_exprs.push(expr);
-        ExprRef(self.all_exprs.len() - 1)
-    }
-
-    pub fn add_nonterm(&mut self, name: &str) -> ExprRef {
-        self.add_expr(Expr::Nonterm(SmolStr::new(name)))
-    }
-
-    pub fn add_litchar(&mut self, value: char) -> ExprRef {
-        self.add_expr(Expr::LitChar(value))
-    }
-
-    pub fn add_litcharoneof(&mut self, list: &str) -> ExprRef {
-        self.add_expr(Expr::LitCharOneOf(SmolStr::new(list)))
-    }
-
-    pub fn add_seq(&mut self, exprs: Vec<ExprRef>) -> ExprRef {
-        self.add_expr(Expr::Seq(exprs))
-    }
-
-    pub fn add_oneof(&mut self, exprs: Vec<ExprRef>) -> ExprRef {
-        self.add_expr(Expr::OneOf(exprs))
-    }
-
-    /// Optional factor:
-    /// f? ⇒ f-option
-    /// -f-option: f; ().
-    pub fn add_optional(&mut self, f: ExprRef) -> ExprRef {
-        self.add_oneof(vec![f, Grammar::EMPTY_EXPR])
-    }
-
-    /// Zero or more repetitions:
-    /// f* ⇒ f-star
-    /// -f-star: (f, f-star)?.
-    fn add_repeat0_internal(&mut self, f: ExprRef, hint: &str) -> ExprRef {
-        let genrule = self.internal_id(hint);
-        let f_star = self.add_nonterm(genrule.as_str());
-        let seq = self.add_seq(vec![f, f_star]);
-        let opt = self.add_optional(seq);
-        self.add_rule(genrule.as_str(), opt);
-        f_star
-    }
-
-    pub fn add_repeat0(&mut self, f: ExprRef) -> ExprRef {
-        self.add_repeat0_internal(f, "f-star")
-    }
+impl fmt::Display for DotNotation {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let cursor = self.matched_so_far.len();
+        //let end = self.iteratee.factors.len();
+        //let (pre, post) = self.iteratee.factors.split_at(cursor);
         
-    /// One or more repetitions:
-    /// f+ ⇒ f-plus
-    /// -f-plus: f, f*.
-    pub fn add_repeat1(&mut self, f: ExprRef) -> ExprRef {
-        let f_star = self.add_repeat0_internal(f, "f-plus");
-        self.add_seq(vec![f, f_star])
-    }
-
-    /// One or more repetitions with separator:
-    /// f++sep ⇒ f-plus-sep
-    /// -f-plus-sep: f, (sep, f)*.
-    pub fn add_repeat1_sep(&mut self, f: ExprRef, sep: ExprRef) -> ExprRef {
-        let inner_seq = self.add_seq(vec![sep, f]);
-        let inner_seq_star = self.add_repeat0_internal(inner_seq, "f++sep");
-        self.add_seq(vec![f, inner_seq_star])
-    }
-
-    /// Zero or more repetitions with separator:
-    /// f**sep ⇒ f-star-sep
-    /// -f-star-sep: (f++sep)?.
-    pub fn add_repeat0_sep(&mut self, f: ExprRef, sep: ExprRef) -> ExprRef {
-        let f_plusplus = self.add_repeat1_sep(f, sep);
-        self.add_optional(f_plusplus)
-    }
-
-    fn get_expr(&self, id: ExprRef) -> Expr {
-        let ExprRef(idx) = id; // Destructuring
-        self.all_exprs[idx].clone()
-    }
-
-    fn is_terminal(&self, id: ExprRef) -> bool {
-        match self.get_expr(id) {
-            Expr::LitChar(_) | Expr::LitCharOneOf(_) => true,
-            _ => false
-        }
-    }
-
-    /// gets an expr, but split out alts, as needed in the parser use case
-    fn get_expr_alts(&self, id: ExprRef) -> Vec<ExprRef> {
-        match self.get_expr(id) {
-            Expr::OneOf(exprs) => exprs,       
-            _ => vec![id]
-        }
-    }
-
-    /// gets an expression in iterable form
-    fn get_expr_seq(&self, id: ExprRef) -> Vec<ExprRef> {
-        match self.get_expr(id) {
-            Expr::Empty => Vec::new(),
-            Expr::Seq(vec) => vec,
-            _ => vec![id]
-        }
-    }
-
-    fn get_expr_len(&self, id: ExprRef) -> usize {
-        match self.get_expr(id) {
-            Expr::Empty => 0,
-            Expr::Seq(v) => v.len(),
-            _ => 1
-        }
-    }
-
-    fn add_rule_internal(&mut self, rule: Rule) {
-        self.all_rules.insert(rule.subj.clone(), rule);
-    }
-
-    pub fn add_rule(&mut self, subj: &str, id: ExprRef) {
-        self.add_rule_internal(Rule {subj: SmolStr::new(subj), expr: id, mark: None});
-    }
-
-    fn get_rule(&self, subj: &str) -> ExprRef {
-        self.all_rules[subj].expr
-    }
-
-    fn get_rule_expr_alts(&self, subj: &str) -> Vec<ExprRef> {
-        self.get_expr_alts(self.get_rule(subj))
-    }
-
-}
-
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub enum ParsedItem {
-    Empty(usize),                 // successfully "matched" an empty rule
-    Terminal(char, usize),        // matched this character @ starting position FOR FOLLOWING ITEMS
-    NonTerminal(SmolStr, usize),  // matched this nonterminal @ starting position FOR FOLLOWING ITEMS
-}
-
-impl fmt::Display for ParsedItem {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            ParsedItem::Empty(pos) => {
-                write!(f, "()@{}", pos)
-            }
-            ParsedItem::Terminal(ch, pos) => {
-                write!(f, "'{}'to{}", ch, pos)
-            }
-            ParsedItem::NonTerminal(str, pos) => {
-                write!(f, "{}to{}", str, pos)
-            }
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct Task {
-    name: SmolStr,        // rule name
-    begin: usize,         // starting position in the input
-    pos: usize,           // current position in the input
-    expr: ExprRef,        // expression
-    len: usize,           // numer of items in the expr
-    
-   /// consumed.len() is the cursor position within the expr
-   /// consumed[n] is ParsedItem where ch is the actual character(s) consumed
-   /// and pos isthe starting position in the input
-   /// , of the nth piece
-    consumed: Vec<ParsedItem>,
-                          
-}
-//pub struct Task(SmolStr, usize, usize, ExprRef, usize, usize);
-
-impl fmt::Display for Task {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let consumed: String = self.consumed.iter()
-            .map(|x| format!("{}", x))
+        // handled rules
+        let done: String = self.matched_so_far.iter()
+            .map(| i |
+                match i {
+                    MatchRec::Term(ch, pos) => format!("'{ch}'@{pos}"),
+                    MatchRec::NonTerm(name, pos) => format!("{name}@{pos}"),
+            })
             .collect::<Vec<_>>()
             .join(", ");
-        write!(f, "Task({} {}:{} {:?} len={} cursor={} {})",
-            self.name, self.begin, self.pos, self.expr, self.len, self.consumed.len(), consumed)
+
+        // remaining rules
+        let remain = self.iteratee.factors.iter()
+            .skip(cursor)
+            .map(|t| t.to_string())
+            .collect::<Vec<String>>()
+            .join(", ");
+        write!(f, "{done} {DOTSEP} {remain}")
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum MatchRec {
+    Term(char, usize),
+    NonTerm(SmolStr, usize),
+}
+
+impl MatchRec {
+    fn pos(&self) -> usize {
+        match self {
+            MatchRec::Term(_, pos) => pos.clone(),
+            MatchRec::NonTerm(_, pos) => pos.clone(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Task {
+    id: TraceId,              // unique id, as handled by TraceArena
+    name: SmolStr,            // rule name
+    begin: usize,             // starting position in the input
+    pos: usize,               // current position in the input
+    dot: DotNotation,         // progress
+    parent: Option<TraceId>,  // parentage
 }
 
 impl Task {
-    fn new(name: &str, orig: usize, pos: usize, expr: ExprRef, len: usize) -> Task {
-        Task{ name: SmolStr::new(name), begin: orig, pos, expr, len, consumed: Vec::new()}
+    fn has_parent(&self) -> bool {
+        self.parent.is_some()
     }
 
-    /// clone a task, except advancing the cursor (storing given position data for the piece just advanced-over)
-    fn advance_cursor(from: &Task, item: ParsedItem, new_pos: usize) -> Task {
-        let mut new_vec = from.consumed.clone();
-        new_vec.push(item);
-        Task { name: from.name.clone(), begin: from.begin, pos: new_pos, expr: from.expr.clone(), len: from.len, consumed: new_vec }
+    fn parent(&self) -> Option<TraceId> {
+        self.parent
     }
+
+    /// returns a cloned MatchRec
+    fn last_completed(&self) -> Option<MatchRec> {
+        self.dot.matched_so_far.last().map(|x| x.clone())
+    }
+}
+
+/// This is currently ONLY used as a hash of Task
+impl fmt::Display for Task {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "( {} {}:{} {}) ", self.name, self.begin, self.pos, self.dot)
+        // TODO: show parentage without recursive explosion
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TraceId(usize);
+
+#[derive(Debug)]
+/// the permanent home of all Traces/Tasks
+pub struct TraceArena {
+    vec: Vec<Task>,
+    hashes: HashSet<String>,
+}
+
+impl TraceArena {
+    fn new() -> TraceArena {
+        TraceArena { vec: Vec::new(), hashes: HashSet::new() }
+    }
+
+    fn get(&self, id: TraceId) -> &Task {
+        let TraceId(n) = id;
+        &self.vec[n]
+    }
+
+    /// originate a completely new task
+    fn task(&mut self, name: &str, begin: usize, pos: usize, dot: DotNotation) -> Option<TraceId> {
+        let id = TraceId(self.vec.len());
+        let task = Task{ id, name: SmolStr::new(name), begin, pos, dot, parent: None };
+        if self.have_we_seen(&task) {
+            None
+        } else {
+            self.vec.push(task);
+            Some(id)
+        }
+    }
+    
+    /// originate a new Task, "downstream" from another task, like
+    /// doc = x { <-- processing this rule }
+    /// x = ... { <-- so queue up this one next, at same pos, etc. }
+    fn task_downstream(&mut self, name: &str, dot: DotNotation, parent: TraceId) -> Option<TraceId> {
+        let id = TraceId(self.vec.len());
+        let parent_task = self.get(parent);
+        let begin = parent_task.pos; // downstream task is a fresh start, so sync origin
+        let pos = parent_task.pos;
+        let task = Task{ id, name: SmolStr::new(name), begin, pos, dot, parent: Some(parent) };
+        if self.have_we_seen(&task) {
+            None
+        } else {
+            self.vec.push(task);
+            Some(id)
+        }
+    }
+    
+    /// clone a task, except advancing the cursor (storing given MatchRec for the piece just advanced-over)
+    /// Maintains the same parentage, and position
+    fn task_advance_cursor(&mut self, from: TraceId, rec: MatchRec) -> Option<TraceId> {
+        let new_pos = rec.pos();
+        
+        let from_task = self.get(from);
+        let new_dot = from_task.dot.advance_dot(rec);
+        let id = TraceId(self.vec.len());
+        let task = Task { id, name: from_task.name.clone(), begin: from_task.begin, pos: new_pos, dot: new_dot, parent: from_task.parent };
+        if self.have_we_seen(&task) {
+            None
+        } else {
+            self.vec.push(task);
+            Some(id)
+        }
+    }
+
+    /// returns true if this trace had been previously seen
+    fn have_we_seen(&mut self, task: &Task) -> bool {
+        let hash = task.to_string();
+        if self.hashes.contains(&hash) {
+            println!("...Skipping this task -- previously seen {} @ {}:{}", task.name, task.begin, task.pos);
+            true
+        } else {
+            self.hashes.insert(hash);
+            false
+        }
+    }
+
+    fn format_task(&self, id: TraceId) -> String {
+        let task = self.get(id);
+        let printable_id: String = id.0.to_string();
+        let printable_parent_id: String = match task.parent {
+            Some(tid) => "via ".to_string() + &tid.0.to_string(),
+            _ => "".to_string(),
+        };
+        format!(" {}) {}:{}👉 {}=( {} ) {}", printable_id, task.begin, task.pos, task.name, task.dot, printable_parent_id)
+    }
+}
+
+struct InputIter {
+    pos: usize,
+    farthest_pos: usize,
+    at_eof: bool,
+    tokens: Vec<char>,
+}
+
+impl InputIter {
+    fn new(input: &str) -> InputIter {
+        InputIter {
+            pos: 0,
+            farthest_pos: 0,
+            at_eof: 0 == input.len(),
+            tokens: input.chars().collect::<Vec<_>>() }
+    }
+
+    pub fn pos(&self) -> usize {
+        self.pos
+    }
+
+    pub fn farthest_pos(&self) -> usize {
+        self.farthest_pos
+    }
+
+    pub fn at_eof(&self) -> bool {
+        self.at_eof 
+    }
+
+    pub fn get_tok(&self) -> char {
+        if self.at_eof {
+            '\x1f' // EOF char
+        } else {
+            self.tokens[self.pos]
+        }
+    }
+
+    pub fn next(&mut self, amount: usize) -> (char, usize) {
+        let new_pos = self.pos + amount;
+        if new_pos >= self.tokens.len() {
+            self.pos = self.tokens.len(); // one past end
+            self.at_eof = true;
+            println!("Reached EOF at position {}", self.pos());
+        } else {
+            self.pos += amount;
+            println!(" ⏭ Advanced input to position {} (='{}')", self.pos(), self.get_tok());
+        }
+        self.farthest_pos = self.pos;
+        (self.get_tok(), self.pos())
+    }
+
+    // TODO: row/col machinery for input tokens
 }
 
 #[derive(Debug)]
 pub struct Parser {
     grammar: Grammar,
-    queue: VecDeque<Task>,
-    trace: Vec<Task>,
-    completed_trace: Vec<Task>,
-    parentage: HashMap<String, Vec<Task>>, // cache key is "exprid@origin"
-    pos: usize,    // input position
-    pos_eof: bool, // input reached end #TODO
-    farthest_pos: usize,
-    //token_line: u16,
-    //token_col: u16,
-    trace_hashes: HashSet<String>,
+    /// the permanent owner of all tasks, referenced by TraceId
+    traces: TraceArena,
+    queue: VecDeque<TraceId>,
+    completed_trace: Vec<TraceId>,
+    farthest_pos: usize,  // hint for later reading the trace
 }
 
 /// Earley parser
 impl Parser {
-    const EOF: char = '\x1f';
 
     pub fn new(grammar: Grammar) -> Self {
         Self {
             grammar,
             queue: VecDeque::new(),
-            trace: Vec::new(),
+            traces: TraceArena::new(),
             completed_trace: Vec::new(),
-            parentage: HashMap::new(),
-            pos: 0,
-            pos_eof: false,
             farthest_pos: 0,
-            trace_hashes: HashSet::new(),
-
         }
     }
 
-    pub fn parse(&mut self, input: &str, top_rule: &str) -> &Vec<Task> {
-        let tokens = input.chars()
-            .map(|x| x as Token).collect::<Vec<_>>();
+    pub fn parse(&mut self, input: &str) {
+        let mut input = InputIter::new(input);
 
-        self.pos = 0;
-        let mut intok = Parser::EOF;
-        if !tokens.is_empty() {
-            intok = tokens[self.pos];
-        }
-        println!("Input now at position {} '{}'", self.pos, intok);
-        //self.token_line = 1;
-        //self.token_col = 1;
+        // help avoid borrow-contention on *self
+        let g = self.grammar.clone();
+    
+        println!("Input now at position {} '{}'", input.pos(), input.get_tok());
 
         // Seed with top expr
-        for expr_id in self.grammar.get_rule_expr_alts(top_rule) {
-            self.queue.push_front(
-                Task::new(top_rule, 0, 0, expr_id, self.grammar.get_expr_len(expr_id))
-            );
+        let top_rule = g.get_top_branching_rule();
+        for alt in top_rule.iter() {
+            let maybe_id = self.traces.task(g.get_top_rule_name(), 0, 0, alt.dot_notator());
+            self.queue_front(maybe_id);
         }
-        
         // work through the queue
-        while let Some(task) = self.queue.pop_front() {
-            println!("Pulled from queue {} {}",task, task.expr.print_dot_notation(&self.grammar, Some(task.consumed.len())));
-            if self.record_trace(&task) {
-                // already cached...
-                continue;
-            }
+        while let Some(tid) = self.queue.pop_front() {
+            println!("Pulled from queue {}", self.traces.format_task(tid));
 
-            let expr_cursor = task.consumed.len();
-            let expr = self.grammar.get_expr(task.expr);
+            let is_completed = self.traces.get(tid).dot.is_completed();
 
-            // task in completed state? 
-            if expr_cursor == task.len {
-                println!("COMPLETER");
-                // find “parent” states at same origin that can produce this expr;
-                let parents = self.get_parentage(task.expr, task.begin);
+            // task in completed state?
+            if is_completed {
+                println!("COMPLETER pos={}", self.traces.get(tid).pos);
+                self.completed_trace.push(tid);
+
+                // find “parent” state at same origin that can produce this expr;
+                let maybe_parent =  self.traces.get(tid).parent;
 
                 // queue parent at next position
-                // eg.
-                // if previously this expr got processed
-                // Source: ( • a, "b" )
-                // causing the nonterminal a to get processed. Eventually it completes
-                // First item in seq done: a •
-                // right here ^^^ is where we are at.
-                // Need to retrieve the parent rule "Source", but advanced to the next cursor
-                // (and holding the input position that came from the downstream parsing)
-                // Goal: ( a, • 'b" )
-                for parent in parents {
-                    println!("parent looks like... {}", parent);
+                if let Some(parent) = maybe_parent {
+                    println!("parent looks like... {}", self.traces.format_task(parent));
+                    //let maybe_last_completed = self.traces.get(parent).last_completed();
+                    let now_finished_via_child = self.traces.get(parent).dot.next_unparsed();
 
-                    match &expr {
-                        Expr::Empty => {
-                            println!("completing Empty");
-                            self.queue.push_front(
-                                Task::advance_cursor(&parent, ParsedItem::Empty(parent.pos), task.pos)
-                            );
-                        }
-                        Expr::LitChar(ch) => {
-                            println!("completing LitChar {}", ch);
-                            self.queue.push_front(
-                                Task::advance_cursor(&parent, ParsedItem::Terminal(*ch, parent.pos + 1), task.pos)
-                            );
-                        }
-                        Expr::LitCharOneOf(str) => {
-                            println!("completing LitCharOneOf");
-                            self.queue.push_front(
-                                Task::advance_cursor(&parent, ParsedItem::Terminal('?', parent.pos + 1), task.pos)
-                            );
-                        }
-                        Expr::Nonterm(name) => {
-                            println!("completing Nonterm {}", name);
-                            self.queue.push_front(
-                                Task::advance_cursor(&parent, ParsedItem::NonTerminal(name.clone(), task.pos), task.pos)
-                            );
-                        }
-                        Expr::Seq(vec) => {
-                            println!("completing seq vec.len={}", vec.len());
-                            self.queue.push_front(
-                                Task::advance_cursor(&parent, ParsedItem::NonTerminal(parent.name.clone(), task.pos), task.pos)
-                            )
-                        }
-                        Expr::OneOf(vec) => {
-                            println!("completing OneOf vec.len={}", vec.len());
-                            unimplemented!("(Not) completing OneOf");
-                        }
-                    }
-
-
-
-
-                    //self.queue.push_front(
-                    //    Task::advance_cursor(&parent, ParsedItem::Terminal(intok, parent.pos), task.pos)
-                    //    //Task::advance_cursor(&parent, '💩', parent.pos, task.pos)
-                    //);
+                    let match_rec = 
+                    match now_finished_via_child {
+                        Term::Nonterm(_, name) => MatchRec::NonTerm(name, self.traces.get(tid).pos),
+                        Term::Term(_, _ch ) => MatchRec::Term('?', self.traces.get(tid).pos),
+                    };
+                    println!("MatchRec {:?}", &match_rec);
+                    // child may have made progress; next item in parent seq needs to account for this
+                    //let new_origin = self.traces.get(parent).begin;
+                    let maybe_id = self.traces.task_advance_cursor(parent, match_rec);
+                    self.queue_front(maybe_id);
                 }
+                
                 // advance input if needed
-                if self.grammar.is_terminal(task.expr) {
-                    if tokens.len() > self.pos + 1 {
-                        self.pos += 1;
-                        intok = tokens[self.pos];
-                        println!("Input advanced to position {} '{}'", self.pos, intok);
-                        // TODO: detect and account for newline tokens    
-                    } else {
-                        // Need to be able to advance one-past-the-end
-                        println!("*** End of input *** EOF.");
-                        self.pos += 1;
-                        intok = Parser::EOF;
-                    }
-                }
+                //match &maybe_last_completed {
+                //    Some(MatchRec::Term(_ch, pos)) => {
+                //        println!("input.next callsite A");
+                //        input.next(1);
+                //    }
+                //    _ => {} // nonterm didn't move input anywhere
+                //}
                 continue;
             }
 
-            match expr {
-                Expr::Seq(child_ids) => {
-                    println!("PREDICTOR (seq@{}) @{}", expr_cursor, &self.pos);
-                    // advance through sequence; queue item at cursor pos
-                    let next = child_ids[expr_cursor];
-                    for downexpr_id in self.grammar.get_expr_alts(next) {
-                        self.record_parentage(downexpr_id, self.pos, &task);
-                        self.queue.push_front(
-                            // TODO !!!!!!!! orig: self.pos vs task.pos
-                            Task::new(task.name.as_str(), task.pos, task.pos, downexpr_id, self.grammar.get_expr_len(downexpr_id))
-                        );
+            // PREDICTOR
+            // task is not in a completed state. Take the next item from the list and process it
+            let term = self.traces.get(tid).dot.next_unparsed();
+
+            match term {
+                Term::Nonterm(mark, name) => {
+                    // go one level deeper
+                    println!("PREDICTOR: Nonterm {mark}{name}");
+                    for rule in g.get_branching_rule(&name).iter() {
+                        // TODO: propertly account for rule-level Mark
+                        let dot = rule.dot_notator();
+                        let maybe_id = self.traces.task_downstream(&name, dot, tid);
+                        self.queue_front(maybe_id);
                     }
                 }
-                Expr::OneOf(vec) => { 
-                    println!("PREDICTOR OneOf {}", task.expr.print_dot_notation(&self.grammar, Some(task.consumed.len())));
-                    // for each alt, queue it up
-                    for downexpr_id in vec {
-                        self.record_parentage(downexpr_id, self.pos, &task);
-                        self.queue.push_front(
-                            Task::new(task.name.as_str(), task.begin, task.pos, downexpr_id, self.grammar.get_expr_len(downexpr_id))
-                        );
-                    }
-                }
-                Expr::Nonterm(name) => {
-                    println!("PREDICTOR (nonterm={})", name);
-                    // go one level deeper to see what this nonterminal expands to
-                    let nt_defn = self.grammar.get_rule(name.as_str());
-                    for downexpr_id in self.grammar.get_expr_alts(nt_defn) {
-                        self.record_parentage(downexpr_id, self.pos, &task);
-                        self.queue.push_front(
-                            // TODO !!!!!!!! orig: self.pos vs task.pos
-                            Task::new(name.as_str(), task.pos, task.pos, downexpr_id, self.grammar.get_expr_len(downexpr_id))
-                        );
-                    }
-                }
-                Expr::LitChar(ch) => {
-                    println!("SCANNER (char='{}')", ch);
-                    if ch == intok {
-                        // hit!
-                        // CONTINUE task AT (pos incremented (input, sym))
-                        self.queue.push_back(
-                            Task::advance_cursor(&task, ParsedItem::Terminal(ch, task.pos + 1), task.pos + 1)
-                        );
+                Term::Term(mark, matcher) => {
+                    // record terminal
+                    println!("SCANNER: Terminal {mark}{matcher}");
+                    if matcher.accept(input.get_tok()) {
+                        // Match!
+                        let rec = MatchRec::Term(input.get_tok(), input.pos() + 1);
+                        println!("advance cursor SCAN");
+                        let maybe_id = self.traces.task_advance_cursor(tid, rec);
+                        self.queue_back(maybe_id);
+
+                        input.next(1);
+
                     } else {
-                        println!("non-matched char '{}' (expecting '{}'); terminating task", intok, ch);
+                        println!("non-matched char '{}' (against {matcher}); 🛑", input.get_tok());
                     }
                 }
-                Expr::LitCharOneOf(str) => {
-                    println!("SCANNER (char one of '{}')", str);
-                    if str.contains(intok) {
-                        self.queue.push_back(
-                            Task::advance_cursor(&task, ParsedItem::Terminal(intok, task.pos + 1), task.pos + 1)
-                        );
-                    } else {
-                        println!("non-matched char '{}' (expecting one of '{}'); terminating task", intok, str);
-                    }
-                }
-                Expr::Empty => { 
-                    println!("SCANNER Empty");
-                    unimplemented!("How did we get here?");
-                    // Empty should never occur in a sequence.
-                    //self.queue.push_back(
-                    //    Task::advance_cursor(&task, task.pos, task.pos)
-                    //);
-                 }
+            }
+        } // while
+        self.farthest_pos = input.farthest_pos();
+        println!("Finished parse with {} items in trace", self.traces.vec.len());
+        //&self.trace
+    }
+
+    fn queue_front(&mut self, maybe_id: Option<TraceId>) {
+        for id in maybe_id {
+            self.queue.push_front(id)
+        }
+    }
+
+    fn  queue_back(&mut self, maybe_id: Option<TraceId>) {
+        for id in maybe_id {
+            self.queue.push_back(id)
+        }
+    }
+
+    fn find_completed_trace(&self, name: &str, begin: usize, pos: usize) -> Option<&Task> {
+        // TODO: optimize
+        for tid in &self.completed_trace {
+            let t = self.traces.get(*tid);
+            if t.name == name && t.begin == begin && t.pos == pos {
+                return Some(t);
             }
         }
-        println!("Finished parse with {} items in trace", self.trace.len());
-        &self.trace
+        None
     }
 
     pub fn unpack_parse_tree(&mut self, name: &str) -> String {
-        // from this point, all we care about are completed traces
-        self.completed_trace.clear();
-        for item in &self.trace {
-            if item.len==item.consumed.len() {
-                self.completed_trace.push(item.clone());
-            }
-        }
-
-        //self.completed_trace.extend(
-        //    self.trace
-        //        .iter()
-        //        .filter(|t|*t.len==*t.consumed.len())
-        //);
-
         println!("TRACE...");
-        for task in &self.completed_trace {
-            println!("{}    {}", task, task.expr.print_dot_notation(&self.grammar, Some(task.consumed.len())));
+        for tid in &self.completed_trace {
+            println!("{}", self.traces.format_task(*tid));
         }
         let mut builder = Builder::default();
         println!("assuming ending pos of {}", self.farthest_pos);
@@ -543,9 +418,7 @@ impl Parser {
     }
 
     fn unpack_parse_tree_internal(&self, builder: &mut Builder, name: &str, begin: usize, end: usize) -> () {
-        let g = &self.grammar;
-        let matching_trace = &self.completed_trace.iter().find(
-            |t|t.name==name && t.begin==begin && t.pos==end);
+        let matching_trace = self.find_completed_trace(name, begin, end);
 
             match matching_trace {
                 Some(task) => {
@@ -559,28 +432,22 @@ impl Parser {
             
                     // CHILDREN
                     let mut new_begin = begin;
-                    let consumed = &task.consumed;
-                    for item in consumed {
-                        match item {
-                            ParsedItem::Empty(pos) => {
-                                println!("Empty @ {}", pos);
+                    let dot = &task.dot;
+                    for match_rec in dot.matches_iter() {
+                        match match_rec {
+                            MatchRec::Term(ch, pos) => {
+                                builder.append(ch.to_string());
                                 new_begin = *pos;
                             }
-                            ParsedItem::Terminal(chr, pos) => {
-                                println!("Terminal {}@{}", chr, *pos);
-                                builder.append(chr.to_string());
-                                new_begin = *pos;
-                            }
-                            ParsedItem::NonTerminal(ntname, pos) => {
-                                println!("Nonterminal {}@{}", ntname, pos);
-                                // insure no infinite recurse - don't call self with same params
-                                assert!( !(ntname==name && new_begin==begin && *pos==end));
-                                self.unpack_parse_tree_internal(builder, ntname.as_str(), new_begin, *pos);
+                            MatchRec::NonTerm(nt_name, pos ) => {
+                                // guard against infinite recursion
+                                assert!( (nt_name!=name || new_begin!=begin && *pos!=end));
+                                self.unpack_parse_tree_internal(builder, nt_name, new_begin, *pos);
                                 new_begin = *pos;
                             }
                         }
                     }
-            
+         
                     if !match_name.starts_with("-") {
                         builder.append("</");
                         builder.append(match_name.to_string());
@@ -609,41 +476,4 @@ impl Parser {
 
     }
 
-    /// record a trace
-    /// returns true if this trace had been previously recorded
-    fn record_trace(&mut self, task: &Task) -> bool {
-        if task.pos > self.farthest_pos {
-            self.farthest_pos = task.pos;
-        }
-        let hash = task.to_string();
-        if self.trace_hashes.contains(&hash) {
-            println!("...Skipping this task -- previously seen");
-            true
-        } else {
-            self.trace_hashes.insert(hash);
-            self.trace.push(task.clone());
-            false
-        }
-    }
-
-    fn parentage_key(&self, expr: ExprRef, pos: usize) -> String {
-        format!("{:?}@{}", expr, pos)
-    }
-
-    /// HOWTO get back to a rule's parent:
-    /// For an Expr at pos, it was spawned by a certain Task
-    /// 
-    fn record_parentage(&mut self, expr: ExprRef, pos: usize, task: &Task) {
-        let key = self.parentage_key(expr, pos);
-        let vec = self.parentage.entry(key).or_insert(Vec::new());
-        vec.push(task.clone());
-    }
-
-    /// given a exprref and position, find all the rules that could've produced it
-    fn get_parentage(&self, expr: ExprRef, pos: usize) -> Vec<Task> {
-        let val = self.parentage.get(&self.parentage_key(expr, pos));
-        val.map(|x| (*x).clone()).unwrap_or(Vec::new())
-    }
-
 }
-

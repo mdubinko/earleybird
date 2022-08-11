@@ -1,4 +1,4 @@
-use crate::parser::Grammar;
+use crate::grammar::{Grammar, Rule};
 
 /// temporary hack to get hands-on
 /// TODO: Maybe use traits?
@@ -23,13 +23,10 @@ pub struct SuiteWiki {}
 
 impl SmokeSeq {
     pub fn get_grammar() -> Grammar {
-        // doc = "a", "b"
-        let mut g = Grammar::new();
-        let a = g.add_litchar('a');
-        let b = g.add_litchar('b');
-        let seq = g.add_seq(vec![a,b]);
-        g.add_rule("doc", seq);
-        g      
+        // doc = "a", "b".
+        let mut g = Grammar::new("doc");
+        g.define("doc", Rule::build().lit('a').lit('b') );
+        g
     }
     pub fn get_inputs() -> Vec<&'static str> {
         vec!["ab"]
@@ -41,12 +38,10 @@ impl SmokeSeq {
 
 impl SmokeAlt {
     pub fn get_grammar() -> Grammar {
-        // doc = "a" | "b"
-        let mut g = Grammar::new();
-        let a = g.add_litchar('a');
-        let b = g.add_litchar('b');
-        let choice = g.add_oneof(vec![a,b]);
-        g.add_rule("doc", choice);
+        // doc = "a" | "b".
+        let mut g = Grammar::new("doc");
+        g.define("doc", Rule::build().lit('a') );
+        g.define("doc", Rule::build().lit('b') );
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {
@@ -59,22 +54,15 @@ impl SmokeAlt {
 
 impl SmokeNT {
     pub fn get_grammar() -> Grammar {
-        // doc = a, b
-        // a = "a" | "A"
-        // b = "b" | "B"
-        let mut g = Grammar::new();
-        let aref = g.add_nonterm("a");
-        let bref = g.add_nonterm("b");
-        let a = g.add_litchar('a');
-        let a_ = g.add_litchar('A');
-        let a_choice = g.add_oneof(vec![a,a_]);
-        let b = g.add_litchar('b');
-        let b_ = g.add_litchar('B');
-        let b_choice = g.add_oneof(vec![b, b_]);
-        let seq = g.add_seq(vec![aref, bref]);
-        g.add_rule("doc", seq);
-        g.add_rule("a", a_choice);
-        g.add_rule("b", b_choice);
+        // doc = a, b.
+        // a = "a" | "A".
+        // b = "b" | "B".
+        let mut g = Grammar::new("doc");
+        g.define("doc", Rule::build().nt("a").nt("b") );
+        g.define("a", Rule::build().lit('a') );
+        g.define("a", Rule::build().lit('A') );
+        g.define("b", Rule::build().lit('b') );
+        g.define("b", Rule::build().lit('B') );
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {
@@ -88,11 +76,9 @@ impl SmokeNT {
 
 impl SmokeOpt {
     pub fn get_grammar() -> Grammar {
-        // doc = "a"?
-        let mut g = Grammar::new();
-        let a = g.add_litchar('a');
-        let opt = g.add_optional(a);
-        g.add_rule("doc", opt);
+        // doc = "a"?.
+        let mut g = Grammar::new("doc");
+        g.define("doc", Rule::build().opt(Rule::build().lit('a')));
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {
@@ -106,10 +92,8 @@ impl SmokeOpt {
 impl SmokeStar {
     pub fn get_grammar() -> Grammar {
         // doc = "a"*
-        let mut g = Grammar::new();
-        let a = g.add_litchar('a');
-        let a_star = g.add_repeat0(a);
-        g.add_rule("doc", a_star);
+        let mut g = Grammar::new("doc");
+        g.define("doc", Rule::build().repeat0( Rule::build().lit('a')));
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {
@@ -120,29 +104,23 @@ impl SmokeStar {
     }
 }
 
+/// The example grammar from https://en.wikipedia.org/wiki/Earley_parser
 impl SuiteWiki {
     pub fn get_grammar() -> Grammar {
-        // doc = S
-        // S = S "+" M | M
-        // M = M "*" T | T
-        // T = "1" | "2" | "3" | "4"
-        let mut g = Grammar::new();
-        let s_nt = g.add_nonterm("S");
-        g.add_rule("doc", s_nt);
-
-        let m_nt = g.add_nonterm("M");
-        let t_nt = g.add_nonterm("T");
-        let plus = g.add_litchar('+');
-        let star = g.add_litchar('*');
-        let s_plus_m = g.add_seq(vec![s_nt, plus, m_nt]);
-        let s_plus_m_or_m = g.add_oneof(vec![s_plus_m, m_nt]);
-        let m_star_t = g.add_seq(vec![m_nt, star, t_nt]);
-        let m_star_t_or_t = g.add_oneof(vec![m_star_t, t_nt]);
-        let digit = g.add_litcharoneof("1234");
-
-        g.add_rule("S", s_plus_m_or_m);
-        g.add_rule("M", m_star_t_or_t);
-        g.add_rule("T", digit);
+        // doc = S.
+        // S = S, "+", M | M.
+        // M = M, "*", T | T.
+        // T = "1" | "2" | "3" | "4".
+        let mut g = Grammar::new("doc");
+        g.define("doc", Rule::build().nt("S") );
+        g.define("S", Rule::build().nt("S").lit('+').nt("M") );
+        g.define("S", Rule::build().nt("M") );
+        g.define("M", Rule::build().nt("M").lit('*').nt("T") );
+        g.define("M", Rule::build().nt("T") );
+        g.define("T", Rule::build().lit('1') );
+        g.define("T", Rule::build().lit('2') );
+        g.define("T", Rule::build().lit('3') );
+        g.define("T", Rule::build().lit('4') );
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {

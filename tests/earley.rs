@@ -1,4 +1,4 @@
-use earleybird::parser::{Grammar, Parser};
+use earleybird::parser::Parser;
 use earleybird::builtin_grammars::*;
 
 #[test]
@@ -9,7 +9,7 @@ fn run_smoke_seq() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SmokeSeq::get_grammar();
         let mut parser = Parser::new(g);
-        let trace = parser.parse(inputs[i], "doc");
+        let _trace = parser.parse(inputs[i]);
         let result = parser.unpack_parse_tree("doc");
         assert_eq!(expecteds[i], result);
     }
@@ -23,7 +23,7 @@ fn run_smoke_alt() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SmokeAlt::get_grammar();
         let mut parser = Parser::new(g);
-        let trace = parser.parse(inputs[i], "doc");
+        let _trace = parser.parse(inputs[i]);
         let result = parser.unpack_parse_tree("doc");
         assert_eq!(expecteds[i], result);
     }
@@ -37,7 +37,7 @@ fn run_smoke_nt() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SmokeNT::get_grammar();
         let mut parser = Parser::new(g);
-        let trace = parser.parse(inputs[i], "doc");
+        let _trace = parser.parse(inputs[i]);
         let result = parser.unpack_parse_tree("doc");
         assert_eq!(expecteds[i], result);
     }
@@ -51,7 +51,7 @@ fn run_smoke_opt() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SmokeOpt::get_grammar();
         let mut parser = Parser::new(g);
-        let trace = parser.parse(inputs[i], "doc");
+        let _trace = parser.parse(inputs[i]);
         let result = parser.unpack_parse_tree("doc");
         assert_eq!(expecteds[i], result);
     }
@@ -64,8 +64,9 @@ fn run_smoke_star() {
     for i in 0..inputs.len() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SmokeStar::get_grammar();
+        println!("  Against grammar:\n{:?}", g);
         let mut parser = Parser::new(g);
-        let trace = parser.parse(inputs[i], "doc");
+        let _trace = parser.parse(inputs[i]);
         let result = parser.unpack_parse_tree("doc");
         assert_eq!(expecteds[i], result);
     }
@@ -79,9 +80,9 @@ fn run_suite_wiki() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SuiteWiki::get_grammar();
         let mut parser = Parser::new(g);
-        let trace = parser.parse(inputs[i], "doc");
-        //let result = parser.unpack_parse_tree("doc");
-        //assert_eq!(expecteds[i], result);
+        let _trace = parser.parse(inputs[i]);
+        let result = parser.unpack_parse_tree("doc");
+        assert_eq!(expecteds[i], result);
     }
 }
 

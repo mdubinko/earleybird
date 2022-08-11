@@ -1,7 +1,7 @@
 # EarleyBird
 Experimental implementation of ixml in Rust. Currently targeting the 20220620 spec.
 
-# Status as of Jul 31, 2022
+# Status as of August 10, 2022
 
 My overall goal is to get onboard with the ixml test suite. From there, incremental progress in the form of passing %.
 
@@ -18,6 +18,13 @@ And you have the happy-path of a useful tool. From there, progress should be mea
 # Usage
 
 for now `cargo test` is your best bet.
+
+# Future work
+
+* maybe use https://github.com/saschagrunert/indextree
+
+* more generally, performance profiling and optimization
+
 
 # References
 
