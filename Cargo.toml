@@ -14,6 +14,7 @@ path = "src/eb.rs"
 name = "earleybird"
 
 [dependencies]
+multimap = "0.8.3"
 quick-xml = "0.23.0"
 smol_str = "0.1"
 argh = "0.1"

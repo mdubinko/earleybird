@@ -12,10 +12,10 @@ pub fn grammar() -> Grammar {
         .opt(Rule::build().nt("mark").nt("s"))
         .nt("name")
         .nt("s")
-        .lit_mark('=', Mark::Hidden) // TODO: choice here
+        .lit_mark('=', Mark::Skip) // TODO: choice here
         .nt("s")
-        .nt_mark("alts", Mark::Hidden)
-        .lit_mark('.', Mark::Hidden) );
+        .nt_mark("alts", Mark::Skip)
+        .lit_mark('.', Mark::Skip) );
     /*
     // alts: alt++(-[";|"], s).
     let alt_plus_plus_semi_or_vbar = g.add_repeat1_sep(alt, _semicolon_or_vbar);

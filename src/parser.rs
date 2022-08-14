@@ -1,5 +1,6 @@
 use crate::grammar::{Grammar, Rule, Term};
 use std::{collections::{VecDeque, HashSet}, fmt};
+use multimap::{MultiMap};
 use smol_str::SmolStr;
 use string_builder::Builder;
 
@@ -27,11 +28,6 @@ impl DotNotation {
         clo
     }
 
-    /// retrieve the original term at index n
-    //fn term_at(&self, n: usize) -> &Term {
-    //    &self.iteratee.factors[n]
-    //}
-
     fn is_completed(&self) -> bool {
         self.iteratee.len() == self.matched_so_far.len()
     }
@@ -41,8 +37,8 @@ impl DotNotation {
         self.matched_so_far.iter()
     }
 
-    /// next term to parse
-    /// "What's next after the dot?"
+    /// next term to parse. A.k.a. "What's next after the dot?"
+    /// returns cloned Term
     fn next_unparsed(&self) -> Term {
         let cursor = self.matched_so_far.len();
         self.iteratee.factors[cursor].clone()
@@ -94,31 +90,22 @@ impl MatchRec {
 pub struct Task {
     id: TraceId,              // unique id, as handled by TraceArena
     name: SmolStr,            // rule name
-    begin: usize,             // starting position in the input
+    origin: usize,            // starting position in the input
     pos: usize,               // current position in the input
     dot: DotNotation,         // progress
-    parent: Option<TraceId>,  // parentage
 }
 
 impl Task {
-    fn has_parent(&self) -> bool {
-        self.parent.is_some()
-    }
-
-    fn parent(&self) -> Option<TraceId> {
-        self.parent
-    }
-
     /// returns a cloned MatchRec
     fn last_completed(&self) -> Option<MatchRec> {
         self.dot.matched_so_far.last().map(|x| x.clone())
     }
 }
 
-/// This is currently ONLY used as a hash of Task
+/// This is currently ONLY used as a hash of Task, and can probably be optimized
 impl fmt::Display for Task {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "( {} {}:{} {}) ", self.name, self.begin, self.pos, self.dot)
+        write!(f, "( {} {}:{} {}) ", self.name, self.origin, self.pos, self.dot)
         // TODO: show parentage without recursive explosion
     }
 }
@@ -129,28 +116,74 @@ pub struct TraceId(usize);
 #[derive(Debug)]
 /// the permanent home of all Traces/Tasks
 pub struct TraceArena {
-    vec: Vec<Task>,
+    /// main storage for Tasks. The vector index becomes the TraceId
+    /// (which should always match what's stored in task.id)
+    arena: Vec<Task>,
+
+    /// active queue of tasks
+    queue: VecDeque<TraceId>,
+
+    /// Track every place where a nonterminal can be triggered.
+    /// Key is a nonterminal name. Value is a particular TraceId that references it
+    /// For example in
+    /// doc = S.
+    /// S = S, "+", T | T
+    /// upon completing an "S", we need to go back and resume both
+    /// the doc=(S) rule as well as the S=(S, "+", T) branch, bumping the dot cursor one term
+    /// therefore, when inititally queueing the S branches, we need to record
+    /// "S" -> (TraceId for doc=(• S))
+    /// "S" -> (TraceId for S=(• S "+" T))
+    continuations: MultiMap<SmolStr, TraceId>,
+
+    /// a simple yes/no test if we've seen this exact Task before
     hashes: HashSet<String>,
 }
 
 impl TraceArena {
     fn new() -> TraceArena {
-        TraceArena { vec: Vec::new(), hashes: HashSet::new() }
+        TraceArena {
+            arena: Vec::new(),
+            queue: VecDeque::new(),
+            continuations: MultiMap::new(),
+            hashes: HashSet::new()
+        }
     }
 
     fn get(&self, id: TraceId) -> &Task {
         let TraceId(n) = id;
-        &self.vec[n]
+        &self.arena[n]
+    }
+
+    /// store the immutable task. Takes ownership
+    fn save_task(&mut self, task: Task) {
+        assert_eq!(task.id.0, self.arena.len());
+        self.arena.push(task);
+    }
+
+    /// record the continuation of a Task
+    fn save_continuation(&mut self, target_nt: &str, tid: TraceId) {
+        println!("..⏸️ saving continuation {target_nt}->{:?}", tid);
+        self.continuations.insert(SmolStr::from(target_nt), tid);
+    }
+
+    /// retrieve the continuation for a Task
+    /// if nothing found, returns an empty Vec
+    fn get_continuations_for(&self, target_nt: SmolStr) -> Vec<TraceId> {
+        let maybe_val = self.continuations.get_vec(&target_nt);
+        let result = maybe_val.unwrap_or(&Vec::new()).to_vec();
+        println!("..🔁 retrieving continuation {target_nt} containing {} entries", result.len());
+        result
     }
 
     /// originate a completely new task
-    fn task(&mut self, name: &str, begin: usize, pos: usize, dot: DotNotation) -> Option<TraceId> {
-        let id = TraceId(self.vec.len());
-        let task = Task{ id, name: SmolStr::new(name), begin, pos, dot, parent: None };
+    /// Returns Some(TraceId) (unless this is a duplicate Task, in which case None is returned)
+    fn task(&mut self, name: &str, origin: usize, pos: usize, dot: DotNotation) -> Option<TraceId> {
+        let id = TraceId(self.arena.len());
+        let task = Task{ id, name: SmolStr::new(name), origin, pos, dot };
         if self.have_we_seen(&task) {
             None
         } else {
-            self.vec.push(task);
+            self.save_task(task);
             Some(id)
         }
     }
@@ -158,16 +191,14 @@ impl TraceArena {
     /// originate a new Task, "downstream" from another task, like
     /// doc = x { <-- processing this rule }
     /// x = ... { <-- so queue up this one next, at same pos, etc. }
-    fn task_downstream(&mut self, name: &str, dot: DotNotation, parent: TraceId) -> Option<TraceId> {
-        let id = TraceId(self.vec.len());
-        let parent_task = self.get(parent);
-        let begin = parent_task.pos; // downstream task is a fresh start, so sync origin
-        let pos = parent_task.pos;
-        let task = Task{ id, name: SmolStr::new(name), begin, pos, dot, parent: Some(parent) };
+    /// Returns Some(TraceId) (unless this is a duplicate Task, in which case None is returned)
+    fn task_downstream(&mut self, name: &str, origin: usize, pos: usize, dot: DotNotation) -> Option<TraceId> {
+        let id = TraceId(self.arena.len());
+        let task = Task{ id, name: SmolStr::new(name), origin, pos, dot };
         if self.have_we_seen(&task) {
             None
         } else {
-            self.vec.push(task);
+            self.save_task(task);
             Some(id)
         }
     }
@@ -179,23 +210,25 @@ impl TraceArena {
         
         let from_task = self.get(from);
         let new_dot = from_task.dot.advance_dot(rec);
-        let id = TraceId(self.vec.len());
-        let task = Task { id, name: from_task.name.clone(), begin: from_task.begin, pos: new_pos, dot: new_dot, parent: from_task.parent };
+        let id = TraceId(self.arena.len());
+        let task = Task { id, name: from_task.name.clone(), origin: from_task.origin, pos: new_pos, dot: new_dot };
         if self.have_we_seen(&task) {
             None
         } else {
-            self.vec.push(task);
+            self.save_task(task);
             Some(id)
         }
     }
 
     /// returns true if this trace had been previously seen
+    /// also performs necessary bookkeeping
     fn have_we_seen(&mut self, task: &Task) -> bool {
         let hash = task.to_string();
         if self.hashes.contains(&hash) {
-            println!("...Skipping this task -- previously seen {} @ {}:{}", task.name, task.begin, task.pos);
+            println!("...Skipping this task -- previously seen {} @ {}:{} {}", task.name, task.origin, task.pos, hash);
             true
         } else {
+            println!("...caching task {}", hash);
             self.hashes.insert(hash);
             false
         }
@@ -204,11 +237,7 @@ impl TraceArena {
     fn format_task(&self, id: TraceId) -> String {
         let task = self.get(id);
         let printable_id: String = id.0.to_string();
-        let printable_parent_id: String = match task.parent {
-            Some(tid) => "via ".to_string() + &tid.0.to_string(),
-            _ => "".to_string(),
-        };
-        format!(" {}) {}:{}👉 {}=( {} ) {}", printable_id, task.begin, task.pos, task.name, task.dot, printable_parent_id)
+        format!(" {}) {}:{}👉 {}=( {} ) ", printable_id, task.origin, task.pos, task.name, task.dot)
     }
 }
 
@@ -256,7 +285,7 @@ impl InputIter {
             println!("Reached EOF at position {}", self.pos());
         } else {
             self.pos += amount;
-            println!(" ⏭ Advanced input to position {} (='{}')", self.pos(), self.get_tok());
+            println!("⏭ Advanced input to position {} (='{}')", self.pos(), self.get_tok());
         }
         self.farthest_pos = self.pos;
         (self.get_tok(), self.pos())
@@ -270,7 +299,6 @@ pub struct Parser {
     grammar: Grammar,
     /// the permanent owner of all tasks, referenced by TraceId
     traces: TraceArena,
-    queue: VecDeque<TraceId>,
     completed_trace: Vec<TraceId>,
     farthest_pos: usize,  // hint for later reading the trace
 }
@@ -281,7 +309,6 @@ impl Parser {
     pub fn new(grammar: Grammar) -> Self {
         Self {
             grammar,
-            queue: VecDeque::new(),
             traces: TraceArena::new(),
             completed_trace: Vec::new(),
             farthest_pos: 0,
@@ -303,7 +330,7 @@ impl Parser {
             self.queue_front(maybe_id);
         }
         // work through the queue
-        while let Some(tid) = self.queue.pop_front() {
+        while let Some(tid) = self.traces.queue.pop_front() {
             println!("Pulled from queue {}", self.traces.format_task(tid));
 
             let is_completed = self.traces.get(tid).dot.is_completed();
@@ -313,15 +340,18 @@ impl Parser {
                 println!("COMPLETER pos={}", self.traces.get(tid).pos);
                 self.completed_trace.push(tid);
 
-                // find “parent” state at same origin that can produce this expr;
-                let maybe_parent =  self.traces.get(tid).parent;
+                // find “parent” states at same origin that can produce this expr;
+                let continuations_here = self.traces.get_continuations_for(self.traces.get(tid).name.clone());
+                //let maybe_parent =  self.traces.get(tid).parent;
 
-                // queue parent at next position
-                if let Some(parent) = maybe_parent {
-                    println!("parent looks like... {}", self.traces.format_task(parent));
-                    //let maybe_last_completed = self.traces.get(parent).last_completed();
-                    let now_finished_via_child = self.traces.get(parent).dot.next_unparsed();
+                for continue_id in continuations_here {
+                    // make sure we only continue from a compatible position
+                    if self.traces.get(continue_id).pos != self.traces.get(tid).origin {
+                        continue;
+                    }
+                    println!("...continuing Task... {}", self.traces.format_task(continue_id));
 
+                    let now_finished_via_child = self.traces.get(continue_id).dot.next_unparsed();
                     let match_rec = 
                     match now_finished_via_child {
                         Term::Nonterm(_, name) => MatchRec::NonTerm(name, self.traces.get(tid).pos),
@@ -330,18 +360,10 @@ impl Parser {
                     println!("MatchRec {:?}", &match_rec);
                     // child may have made progress; next item in parent seq needs to account for this
                     //let new_origin = self.traces.get(parent).begin;
-                    let maybe_id = self.traces.task_advance_cursor(parent, match_rec);
-                    self.queue_front(maybe_id);
+                    let maybe_id = self.traces.task_advance_cursor(continue_id, match_rec);
+                    //self.queue_front(maybe_id);
+                    self.queue_back(maybe_id);
                 }
-                
-                // advance input if needed
-                //match &maybe_last_completed {
-                //    Some(MatchRec::Term(_ch, pos)) => {
-                //        println!("input.next callsite A");
-                //        input.next(1);
-                //    }
-                //    _ => {} // nonterm didn't move input anywhere
-                //}
                 continue;
             }
 
@@ -353,11 +375,17 @@ impl Parser {
                 Term::Nonterm(mark, name) => {
                     // go one level deeper
                     println!("PREDICTOR: Nonterm {mark}{name}");
+
+                    self.traces.save_continuation(&name, tid);
+
                     for rule in g.get_branching_rule(&name).iter() {
                         // TODO: propertly account for rule-level Mark
                         let dot = rule.dot_notator();
-                        let maybe_id = self.traces.task_downstream(&name, dot, tid);
-                        self.queue_front(maybe_id);
+                        let new_pos = self.traces.get(tid).pos;
+                        // "origin" for this downstream task now matches current pos
+                        let maybe_id = self.traces.task_downstream(&name, new_pos, new_pos, dot);
+                        //self.queue_front(maybe_id);
+                        self.queue_back(maybe_id);
                     }
                 }
                 Term::Term(mark, matcher) => {
@@ -373,33 +401,35 @@ impl Parser {
                         input.next(1);
 
                     } else {
-                        println!("non-matched char '{}' (against {matcher}); 🛑", input.get_tok());
+                        println!("non-matched char '{}' (expecting {matcher}); 🛑", input.get_tok());
                     }
                 }
             }
         } // while
         self.farthest_pos = input.farthest_pos();
-        println!("Finished parse with {} items in trace", self.traces.vec.len());
+        println!("Finished parse with {} items in trace", self.traces.arena.len());
         //&self.trace
     }
 
     fn queue_front(&mut self, maybe_id: Option<TraceId>) {
         for id in maybe_id {
-            self.queue.push_front(id)
+            self.traces.queue.push_front(id)
         }
     }
 
     fn  queue_back(&mut self, maybe_id: Option<TraceId>) {
         for id in maybe_id {
-            self.queue.push_back(id)
+            self.traces.queue.push_back(id)
         }
     }
 
-    fn find_completed_trace(&self, name: &str, begin: usize, pos: usize) -> Option<&Task> {
+    /// Sift through and find only completed Tasks
+    /// this speeds up the unpacking process by omitting parse states irrelevant to the final result
+    fn find_completed_trace(&self, name: &str, origin: usize, pos: usize) -> Option<&Task> {
         // TODO: optimize
         for tid in &self.completed_trace {
             let t = self.traces.get(*tid);
-            if t.name == name && t.begin == begin && t.pos == pos {
+            if t.name == name && t.origin == origin && t.pos == pos {
                 return Some(t);
             }
         }
@@ -417,8 +447,8 @@ impl Parser {
         builder.string().unwrap_or("Internal error generating parse".to_string())
     }
 
-    fn unpack_parse_tree_internal(&self, builder: &mut Builder, name: &str, begin: usize, end: usize) -> () {
-        let matching_trace = self.find_completed_trace(name, begin, end);
+    fn unpack_parse_tree_internal(&self, builder: &mut Builder, name: &str, origin: usize, end: usize) -> () {
+        let matching_trace = self.find_completed_trace(name, origin, end);
 
             match matching_trace {
                 Some(task) => {
@@ -431,19 +461,19 @@ impl Parser {
                     }
             
                     // CHILDREN
-                    let mut new_begin = begin;
+                    let mut new_origin = origin;
                     let dot = &task.dot;
                     for match_rec in dot.matches_iter() {
                         match match_rec {
                             MatchRec::Term(ch, pos) => {
                                 builder.append(ch.to_string());
-                                new_begin = *pos;
+                                new_origin = *pos;
                             }
                             MatchRec::NonTerm(nt_name, pos ) => {
                                 // guard against infinite recursion
-                                assert!( (nt_name!=name || new_begin!=begin && *pos!=end));
-                                self.unpack_parse_tree_internal(builder, nt_name, new_begin, *pos);
-                                new_begin = *pos;
+                                assert!( (nt_name!=name || new_origin!=origin || *pos!=end));
+                                self.unpack_parse_tree_internal(builder, nt_name, new_origin, *pos);
+                                new_origin = *pos;
                             }
                         }
                     }
@@ -456,7 +486,7 @@ impl Parser {
             
                 }
                 None => {
-                    println!("  No matching traces for {}@{}:{}", name, begin, end);
+                    println!("  No matching traces for {}@{}:{}", name, origin, end);
                 }
             }
 

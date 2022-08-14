@@ -29,7 +29,7 @@ impl Grammar {
         for (syn_name, builders) in rb.syn_rules {
             for builder in builders {
                 let syn_branching_rule = self.definitions.entry(syn_name.clone())
-                    .or_insert(BranchingRule::new(Mark::Hidden));
+                    .or_insert(BranchingRule::new(Mark::Skip));
                 syn_branching_rule.add_alt_branch(Rule::new(builder.terms));
             }
         }
@@ -112,25 +112,25 @@ impl BranchingRule {
     }
 }
 
-/// Representation of marks on rules or terms.
+/// Representation of marks on rules or terms. These get used everywhere, so the varient names are kept short
 /// @ for attribute
 /// - for hidden
 /// ^ for visible (default)
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Mark {
     Default,
-    Visible,
-    Hidden,
-    Attrib,
+    Viz,
+    Skip,
+    Attr,
 }
 
 impl fmt::Display for Mark {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Mark::Default => write!(f, ""),
-            Mark::Visible => write!(f, "^"),
-            Mark::Hidden => write!(f, "-"),
-            Mark::Attrib => write!(f, "@"),
+            Mark::Viz => write!(f, "^"),
+            Mark::Skip => write!(f, "-"),
+            Mark::Attr => write!(f, "@"),
         }
     }
 }
@@ -317,7 +317,7 @@ impl RuleBuilder {
         self = self.syn_rule(f_option, Rule::build()); // empty
         self = self.syn_rule(f_option, sub);
         // 2 insert newly created nt into sequence under construction
-        self.nt_mark(f_option, Mark::Hidden)
+        self.nt_mark(f_option, Mark::Skip)
     }
 
     /// f* ⇒ f-star
@@ -328,7 +328,7 @@ impl RuleBuilder {
         let f_star: &str = &self.mint_internal_id("f-star");
         self = self.syn_rule(f_star, Rule::build().opt(Rule::build().expr(sub).nt(f_star)));
         // 2 insert newly-created nt into sequence under construction
-        self.nt_mark(f_star, Mark::Hidden)
+        self.nt_mark(f_star, Mark::Skip)
     }
 
     /// f+ ⇒ f-plus
@@ -339,7 +339,7 @@ impl RuleBuilder {
         let f_plus: &str = &self.mint_internal_id("f-plus");
         self = self.syn_rule(f_plus, Rule::build().expr(sub).repeat0(Rule::build().nt(f_plus)));
         // 2 insert newly-created nt into sequence under construction
-        self.nt_mark(f_plus, Mark::Hidden)
+        self.nt_mark(f_plus, Mark::Skip)
     }
 
     /// f++sep ⇒ f-plus-sep
@@ -351,7 +351,7 @@ impl RuleBuilder {
         let f_plus_sep: &str = &self.mint_internal_id("f-plus-sep");
         self = self.syn_rule(f_plus_sep, Rule::build().expr(sub1.clone()).repeat0(Rule::build().expr(sub2).expr(sub1)));
         // 2 insert newly-created nt into sequence under construction
-        self.nt_mark(f_plus_sep, Mark::Hidden)
+        self.nt_mark(f_plus_sep, Mark::Skip)
     }    
 
     /// f**sep ⇒ f-star-sep
@@ -363,7 +363,7 @@ impl RuleBuilder {
         let f_star_sep: &str = &self.mint_internal_id("f-star-sep");
         self = self.syn_rule(f_star_sep, Rule::build().opt( Rule::build().repeat1_sep(sub1, sub2)));
         // 2 insert newly-created nt into sequence under construction
-        self.nt_mark(f_star_sep, Mark::Hidden)        
+        self.nt_mark(f_star_sep, Mark::Skip)
     }
 
     /// internal identifier for synthesized rules
@@ -375,11 +375,5 @@ impl RuleBuilder {
             s
         }
     }
-
-    // empty contents into new TermList
-    //pub fn get(&mut self) -> Rule {
-    //    let tl = Rule::new(self.terms);
-    //    tl
-    //}
 
 }
