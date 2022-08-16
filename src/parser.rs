@@ -3,6 +3,7 @@ use std::{collections::{VecDeque, HashSet}, fmt};
 use multimap::{MultiMap};
 use smol_str::SmolStr;
 use string_builder::Builder;
+use log::{info, debug, trace};
 
 const DOTSEP: &'static str = "•";
 

@@ -64,7 +64,52 @@ fn run_smoke_star() {
     for i in 0..inputs.len() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SmokeStar::get_grammar();
-        println!("  Against grammar:\n{:?}", g);
+        println!("  Against grammar:\n{}", g);
+        let mut parser = Parser::new(g);
+        let _trace = parser.parse(inputs[i]);
+        let result = parser.unpack_parse_tree("doc");
+        assert_eq!(expecteds[i], result);
+    }
+}
+
+#[test]
+fn run_smoke_plus() {
+    let inputs = SmokePlus::get_inputs();
+    let expecteds = SmokePlus::get_expected();
+    for i in 0..inputs.len() {
+        println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
+        let g = SmokePlus::get_grammar();
+        println!("  Against grammar:\n{}", g);
+        let mut parser = Parser::new(g);
+        let _trace = parser.parse(inputs[i]);
+        let result = parser.unpack_parse_tree("doc");
+        assert_eq!(expecteds[i], result);
+    }
+}
+
+#[test]
+fn run_smoke_star_sep() {
+    let inputs = SmokeStarSep::get_inputs();
+    let expecteds = SmokeStarSep::get_expected();
+    for i in 0..inputs.len() {
+        println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
+        let g = SmokeStarSep::get_grammar();
+        println!("  Against grammar:\n{}", g);
+        let mut parser = Parser::new(g);
+        let _trace = parser.parse(inputs[i]);
+        let result = parser.unpack_parse_tree("doc");
+        assert_eq!(expecteds[i], result);
+    }
+}
+
+#[test]
+fn run_smoke_plus_sep() {
+    let inputs = SmokePlusSep::get_inputs();
+    let expecteds = SmokePlusSep::get_expected();
+    for i in 0..inputs.len() {
+        println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
+        let g = SmokePlusSep::get_grammar();
+        println!("  Against grammar:\n{}", g);
         let mut parser = Parser::new(g);
         let _trace = parser.parse(inputs[i]);
         let result = parser.unpack_parse_tree("doc");

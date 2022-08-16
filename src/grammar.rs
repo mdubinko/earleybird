@@ -337,7 +337,7 @@ impl RuleBuilder {
         self = self.siphon(&mut sub);
         // create new rule 'f-plus'
         let f_plus: &str = &self.mint_internal_id("f-plus");
-        self = self.syn_rule(f_plus, Rule::build().expr(sub).repeat0(Rule::build().nt(f_plus)));
+        self = self.syn_rule(f_plus, Rule::build().expr(sub.clone()).repeat0(Rule::build().expr(sub)));
         // 2 insert newly-created nt into sequence under construction
         self.nt_mark(f_plus, Mark::Skip)
     }

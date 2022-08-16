@@ -91,7 +91,7 @@ impl SmokeOpt {
 
 impl SmokeStar {
     pub fn get_grammar() -> Grammar {
-        // doc = "a"*
+        // doc = "a"*.
         let mut g = Grammar::new("doc");
         g.define("doc", Rule::build().repeat0( Rule::build().lit('a')));
         g
@@ -103,6 +103,58 @@ impl SmokeStar {
         vec!["<doc></doc>", "<doc>a</doc>", "<doc>aa</doc>", "<doc>aaa</doc>"]
     }
 }
+
+impl SmokePlus {
+    pub fn get_grammar() -> Grammar {
+        // doc = "a"+.
+        let mut g = Grammar::new("doc");
+        g.define("doc", Rule::build().repeat1( Rule::build().lit('a')));
+        g
+    }
+    pub fn get_inputs() -> Vec<&'static str> {
+        vec!["a", "aa", "aaa"]
+    }
+    pub fn get_expected() -> Vec<&'static str> {
+        vec!["<doc>a</doc>", "<doc>aa</doc>", "<doc>aaa</doc>"]
+    }
+}
+
+impl SmokeStarSep {
+    pub fn get_grammar() -> Grammar {
+        // doc = "a"**" ".
+        let mut g = Grammar::new("doc");
+        g.define("doc", Rule::build().repeat0_sep(
+            Rule::build().lit('a'),
+            Rule::build().lit(' '))
+        );
+        g
+    }
+    pub fn get_inputs() -> Vec<&'static str> {
+        vec!["", "a a", "a a a"]
+    }
+    pub fn get_expected() -> Vec<&'static str> {
+        vec!["<doc></doc>", "<doc>a a</doc>", "<doc>a a a</doc>"]
+    }
+}
+
+impl SmokePlusSep {
+    pub fn get_grammar() -> Grammar {
+        // doc = "a"++" ".
+        let mut g = Grammar::new("doc");
+        g.define("doc", Rule::build().repeat1_sep(
+            Rule::build().lit('a'),
+            Rule::build().lit(' '))
+        );
+        g
+    }
+    pub fn get_inputs() -> Vec<&'static str> {
+        vec!["a a", "a a a"]
+    }
+    pub fn get_expected() -> Vec<&'static str> {
+        vec!["<doc>a a</doc>", "<doc>a a a</doc>"]
+    }
+}
+
 
 /// The example grammar from https://en.wikipedia.org/wiki/Earley_parser
 impl SuiteWiki {

@@ -1,7 +1,7 @@
 use earleybird::grammar::{Grammar, Rule};
 
 use argh::FromArgs;
-mod parse;
+mod parse_cmd;
 
 #[derive(FromArgs)]
 /// An experimental ixml implementation in Rust
@@ -14,7 +14,7 @@ struct Args {
 /// parse something
 #[argh(subcommand)]
 enum Subcommand {
-    Parse(parse::Parse),
+    Parse(parse_cmd::Parse),
 }
 
 impl Subcommand {
