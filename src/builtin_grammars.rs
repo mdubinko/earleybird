@@ -9,6 +9,7 @@ use crate::grammar::{Grammar, Rule};
 //}
 
 // smoke tests
+pub struct SmokeChars {}
 pub struct SmokeSeq {}
 pub struct SmokeAlt {}
 pub struct SmokeNT {}
@@ -25,7 +26,7 @@ impl SmokeSeq {
     pub fn get_grammar() -> Grammar {
         // doc = "a", "b".
         let mut g = Grammar::new("doc");
-        g.define("doc", Rule::build().lit('a').lit('b') );
+        g.define("doc", Rule::build().ch('a').ch('b') );
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {
@@ -40,8 +41,8 @@ impl SmokeAlt {
     pub fn get_grammar() -> Grammar {
         // doc = "a" | "b".
         let mut g = Grammar::new("doc");
-        g.define("doc", Rule::build().lit('a') );
-        g.define("doc", Rule::build().lit('b') );
+        g.define("doc", Rule::build().ch('a') );
+        g.define("doc", Rule::build().ch('b') );
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {
@@ -59,10 +60,10 @@ impl SmokeNT {
         // b = "b" | "B".
         let mut g = Grammar::new("doc");
         g.define("doc", Rule::build().nt("a").nt("b") );
-        g.define("a", Rule::build().lit('a') );
-        g.define("a", Rule::build().lit('A') );
-        g.define("b", Rule::build().lit('b') );
-        g.define("b", Rule::build().lit('B') );
+        g.define("a", Rule::build().ch('a') );
+        g.define("a", Rule::build().ch('A') );
+        g.define("b", Rule::build().ch('b') );
+        g.define("b", Rule::build().ch('B') );
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {
@@ -78,7 +79,7 @@ impl SmokeOpt {
     pub fn get_grammar() -> Grammar {
         // doc = "a"?.
         let mut g = Grammar::new("doc");
-        g.define("doc", Rule::build().opt(Rule::build().lit('a')));
+        g.define("doc", Rule::build().opt(Rule::build().ch('a')));
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {
@@ -93,7 +94,7 @@ impl SmokeStar {
     pub fn get_grammar() -> Grammar {
         // doc = "a"*.
         let mut g = Grammar::new("doc");
-        g.define("doc", Rule::build().repeat0( Rule::build().lit('a')));
+        g.define("doc", Rule::build().repeat0( Rule::build().ch('a')));
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {
@@ -108,7 +109,7 @@ impl SmokePlus {
     pub fn get_grammar() -> Grammar {
         // doc = "a"+.
         let mut g = Grammar::new("doc");
-        g.define("doc", Rule::build().repeat1( Rule::build().lit('a')));
+        g.define("doc", Rule::build().repeat1( Rule::build().ch('a')));
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {
@@ -124,8 +125,8 @@ impl SmokeStarSep {
         // doc = "a"**" ".
         let mut g = Grammar::new("doc");
         g.define("doc", Rule::build().repeat0_sep(
-            Rule::build().lit('a'),
-            Rule::build().lit(' '))
+            Rule::build().ch('a'),
+            Rule::build().ch(' '))
         );
         g
     }
@@ -142,8 +143,8 @@ impl SmokePlusSep {
         // doc = "a"++" ".
         let mut g = Grammar::new("doc");
         g.define("doc", Rule::build().repeat1_sep(
-            Rule::build().lit('a'),
-            Rule::build().lit(' '))
+            Rule::build().ch('a'),
+            Rule::build().ch(' '))
         );
         g
     }
@@ -162,17 +163,14 @@ impl SuiteWiki {
         // doc = S.
         // S = S, "+", M | M.
         // M = M, "*", T | T.
-        // T = "1" | "2" | "3" | "4".
+        // T = ["1234"].
         let mut g = Grammar::new("doc");
         g.define("doc", Rule::build().nt("S") );
-        g.define("S", Rule::build().nt("S").lit('+').nt("M") );
+        g.define("S", Rule::build().nt("S").ch('+').nt("M") );
         g.define("S", Rule::build().nt("M") );
-        g.define("M", Rule::build().nt("M").lit('*').nt("T") );
+        g.define("M", Rule::build().nt("M").ch('*').nt("T") );
         g.define("M", Rule::build().nt("T") );
-        g.define("T", Rule::build().lit('1') );
-        g.define("T", Rule::build().lit('2') );
-        g.define("T", Rule::build().lit('3') );
-        g.define("T", Rule::build().lit('4') );
+        g.define("T", Rule::build().ch_in("1234") );
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {

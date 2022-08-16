@@ -29,7 +29,7 @@ fn main() {
 
     let mut g = Grammar::new("doc");
     //g.define("doc", Rule::build().repeat0( Rule::build().lit('a')));
-    g.define("doc", Rule::build().repeat0( Rule::build().lit('a')));
+    g.define("doc", Rule::build().repeat0( Rule::build().ch('a')));
     println!("{g}");
 
     argh::from_env::<Args>().subcommand.run();

@@ -195,7 +195,7 @@ pub enum Term {
 /// At thit low level, an individual term is either a terminal or a nonterminal
 impl Term {
     pub fn lit(ch: char) -> Term {
-        Term::Term(Mark::Default, CharMatcher::Single(ch))
+        Term::Term(Mark::Default, CharMatcher::Exact(ch))
     }
 
    pub fn nonterm(name: &str) -> Term {
@@ -214,18 +214,20 @@ impl fmt::Display for Term {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum CharMatcher {
-    Single(char),
+    Exact(char),
     OneOf(SmolStr),
-    // TODO: Range(char, char),
+    Range(char, char),
     // TODO: UnicodeRange(SmolStr),
-    // TODO: Excluding(&CharMatcher),
+    // TODO: Exclude(&CharMatcher),
+    // TODO: Union(&CharMatcher, &CharMatcher)
 }
 
 impl CharMatcher {
     pub fn accept(&self, test: char) -> bool {
         match self {
-            CharMatcher::Single(ch) => *ch==test,
+            CharMatcher::Exact(ch) => *ch==test,
             CharMatcher::OneOf(lst) => lst.contains(test),
+            CharMatcher::Range(bot, top) => test <= *top && test >= *bot,
             //_ => false,
         }
     }
@@ -234,8 +236,9 @@ impl CharMatcher {
 impl fmt::Display for CharMatcher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CharMatcher::Single(ch) => write!(f, "'{ch}'"),
+            CharMatcher::Exact(ch) => write!(f, "'{ch}'"),
             CharMatcher::OneOf(str) => write!(f, "[\"{str}\"]"),
+            CharMatcher::Range(bot, top) => write!(f, "[{bot}-{top}]"),
             // _ => write!(f, "?"),
         }
     }
@@ -261,13 +264,37 @@ impl RuleBuilder {
     }
 
     /// accept a single char
-    pub fn lit(mut self, ch: char) -> RuleBuilder {
-        self.lit_mark(ch, Mark::Default)
+    pub fn ch(mut self, ch: char) -> RuleBuilder {
+        self.mark_ch(ch, Mark::Default)
     }
 
-    /// accept a sincle char, with specified mark
-    pub fn lit_mark(mut self, ch: char, mark: Mark) -> RuleBuilder {
-        let term = Term::Term(mark, CharMatcher::Single(ch));
+    /// accept a single char, with specified mark
+    pub fn mark_ch(mut self, ch: char, mark: Mark) -> RuleBuilder {
+        let term = Term::Term(mark, CharMatcher::Exact(ch));
+        self.terms.push(term);
+        self
+    }
+
+    /// accept a single char out of a list
+    pub fn ch_in(mut self, chrs: &str) -> RuleBuilder {
+        self.lit_in_mark(chrs, Mark::Default)
+    }
+
+    /// accept a single char out of a list, with specified mark
+    pub fn lit_in_mark(mut self, chrs: &str, mark: Mark) -> RuleBuilder {
+        let term = Term::Term(mark, CharMatcher::OneOf(SmolStr::new(chrs)));
+        self.terms.push(term);
+        self
+    }
+
+    /// accept a single character within a range
+    pub fn lit_in_range(mut self, bot: char, top: char) -> RuleBuilder {
+        self.lit_in_range_mark(bot, top, Mark::Default)
+    }
+
+    /// accept a single character within a range, with specified mark
+    pub fn lit_in_range_mark(mut self, bot: char, top: char, mark: Mark) -> RuleBuilder {
+        let term = Term::Term(mark, CharMatcher::Range(bot, top));
         self.terms.push(term);
         self
     }
