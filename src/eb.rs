@@ -1,5 +1,4 @@
-use earleybird::grammar::{Grammar, Rule};
-
+use earleybird::{grammar::{Grammar, Rule}, parser::Parser};
 use argh::FromArgs;
 mod parse_cmd;
 
@@ -30,7 +29,17 @@ fn main() {
     let mut g = Grammar::new("doc");
     //g.define("doc", Rule::build().repeat0( Rule::build().lit('a')));
     g.define("doc", Rule::build().repeat0( Rule::build().ch('a')));
-    println!("{g}");
+    //println!("{g}");
+
+    let mut parser = Parser::new(g);
+    parser.parse("aaaa");
+    let arena = parser.unpack_parse_tree("doc");
+    let s = Parser::tree_to_testfmt(&arena);
+    println!("{}", s.len());
+    println!("{s}");
+
+    //dbg!(arena);
+
 
     argh::from_env::<Args>().subcommand.run();
     

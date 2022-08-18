@@ -10,7 +10,7 @@ fn run_smoke_seq() {
         let g = SmokeSeq::get_grammar();
         let mut parser = Parser::new(g);
         let _trace = parser.parse(inputs[i]);
-        let result = parser.unpack_parse_tree("doc");
+        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
         assert_eq!(expecteds[i], result);
     }
 }
@@ -24,7 +24,7 @@ fn run_smoke_alt() {
         let g = SmokeAlt::get_grammar();
         let mut parser = Parser::new(g);
         let _trace = parser.parse(inputs[i]);
-        let result = parser.unpack_parse_tree("doc");
+        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
         assert_eq!(expecteds[i], result);
     }
 }
@@ -38,7 +38,7 @@ fn run_smoke_nt() {
         let g = SmokeNT::get_grammar();
         let mut parser = Parser::new(g);
         let _trace = parser.parse(inputs[i]);
-        let result = parser.unpack_parse_tree("doc");
+        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
         assert_eq!(expecteds[i], result);
     }
 }
@@ -52,7 +52,7 @@ fn run_smoke_opt() {
         let g = SmokeOpt::get_grammar();
         let mut parser = Parser::new(g);
         let _trace = parser.parse(inputs[i]);
-        let result = parser.unpack_parse_tree("doc");
+        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
         assert_eq!(expecteds[i], result);
     }
 }
@@ -67,7 +67,7 @@ fn run_smoke_star() {
         println!("  Against grammar:\n{}", g);
         let mut parser = Parser::new(g);
         let _trace = parser.parse(inputs[i]);
-        let result = parser.unpack_parse_tree("doc");
+        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
         assert_eq!(expecteds[i], result);
     }
 }
@@ -82,7 +82,7 @@ fn run_smoke_plus() {
         println!("  Against grammar:\n{}", g);
         let mut parser = Parser::new(g);
         let _trace = parser.parse(inputs[i]);
-        let result = parser.unpack_parse_tree("doc");
+        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
         assert_eq!(expecteds[i], result);
     }
 }
@@ -97,7 +97,7 @@ fn run_smoke_star_sep() {
         println!("  Against grammar:\n{}", g);
         let mut parser = Parser::new(g);
         let _trace = parser.parse(inputs[i]);
-        let result = parser.unpack_parse_tree("doc");
+        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
         assert_eq!(expecteds[i], result);
     }
 }
@@ -112,7 +112,7 @@ fn run_smoke_plus_sep() {
         println!("  Against grammar:\n{}", g);
         let mut parser = Parser::new(g);
         let _trace = parser.parse(inputs[i]);
-        let result = parser.unpack_parse_tree("doc");
+        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
         assert_eq!(expecteds[i], result);
     }
 }
@@ -126,7 +126,7 @@ fn run_suite_wiki() {
         let g = SuiteWiki::get_grammar();
         let mut parser = Parser::new(g);
         let _trace = parser.parse(inputs[i]);
-        let result = parser.unpack_parse_tree("doc");
+        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
         assert_eq!(expecteds[i], result);
     }
 }

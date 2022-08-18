@@ -3,6 +3,7 @@ use std::{collections::{VecDeque, HashSet}, fmt};
 use multimap::{MultiMap};
 use smol_str::SmolStr;
 use string_builder::Builder;
+use indextree::{Arena, NodeId};
 use log::{info, debug, trace};
 
 const DOTSEP: &'static str = "•";
@@ -107,7 +108,6 @@ impl Task {
 impl fmt::Display for Task {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "( {} {}:{} {}) ", self.name, self.origin, self.pos, self.dot)
-        // TODO: show parentage without recursive explosion
     }
 }
 
@@ -295,6 +295,15 @@ impl InputIter {
     // TODO: row/col machinery for input tokens
 }
 
+#[derive(Debug, Clone)]
+/// in the intermediate parse indextree, tree nodes are provided thusly
+pub enum ParseContentDesc {
+    Root,
+    Element(String),            // name
+    Attribute(String, String),  // name, value
+    Text(String)                // value
+}
+
 #[derive(Debug)]
 pub struct Parser {
     grammar: Grammar,
@@ -437,28 +446,30 @@ impl Parser {
         None
     }
 
-    pub fn unpack_parse_tree(&mut self, name: &str) -> String {
+    pub fn unpack_parse_tree(&mut self, name: &str) -> Arena<ParseContentDesc> {
         println!("TRACE...");
         for tid in &self.completed_trace {
             println!("{}", self.traces.format_task(*tid));
         }
-        let mut builder = Builder::default();
+        //let mut builder = Builder::default();
+        let mut arena = Arena::new();
+        let root = arena.new_node(ParseContentDesc::Root);
         println!("assuming ending pos of {}", self.farthest_pos);
-        self.unpack_parse_tree_internal(&mut builder, name, 0, self.farthest_pos);
-        builder.string().unwrap_or("Internal error generating parse".to_string())
+        self.unpack_parse_tree_internal(&mut arena, name, 0, self.farthest_pos, root);
+        arena
     }
 
-    fn unpack_parse_tree_internal(&self, builder: &mut Builder, name: &str, origin: usize, end: usize) -> () {
+    fn unpack_parse_tree_internal(&self, arena: &mut Arena<ParseContentDesc>, name: &str, origin: usize, end: usize, root: NodeId) -> () {
         let matching_trace = self.find_completed_trace(name, origin, end);
-
+        let mut new_root = root;
             match matching_trace {
                 Some(task) => {
                     let match_name = &task.name;
                     println!("trace found {}", task);
                     if !match_name.starts_with("-") {
-                        builder.append("<");
-                        builder.append(match_name.to_string());
-                        builder.append(">");
+                        let temp_root = arena.new_node(ParseContentDesc::Element(match_name.to_string()));
+                        root.append(temp_root, arena);
+                        new_root = temp_root;
                     }
             
                     // CHILDREN
@@ -467,22 +478,23 @@ impl Parser {
                     for match_rec in dot.matches_iter() {
                         match match_rec {
                             MatchRec::Term(ch, pos) => {
-                                builder.append(ch.to_string());
+                                let new_child = arena.new_node(
+                                    if match_name.starts_with("@") {
+                                        // TODO: fix
+                                         ParseContentDesc::Attribute(match_name.to_string(), ch.to_string())
+                                    } else {
+                                         ParseContentDesc::Text(ch.to_string())
+                                    });
+                                new_root.append(new_child, arena);
                                 new_origin = *pos;
                             }
                             MatchRec::NonTerm(nt_name, pos ) => {
                                 // guard against infinite recursion
                                 assert!( (nt_name!=name || new_origin!=origin || *pos!=end));
-                                self.unpack_parse_tree_internal(builder, nt_name, new_origin, *pos);
+                                self.unpack_parse_tree_internal(arena, nt_name, new_origin, *pos, new_root);
                                 new_origin = *pos;
                             }
                         }
-                    }
-         
-                    if !match_name.starts_with("-") {
-                        builder.append("</");
-                        builder.append(match_name.to_string());
-                        builder.append(">");
                     }
             
                 }
@@ -505,6 +517,44 @@ impl Parser {
         //                SERIALISE sym FROM newstart TO pos
         //        PUT pos IN newstart
 
+    }
+
+
+
+    pub fn tree_to_testfmt(arena: &Arena<ParseContentDesc>) -> String {
+        let mut builder = Builder::default();
+        let root = arena.iter().next().unwrap(); // first item == root
+        let root_id = arena.get_node_id(root).unwrap();
+        for child in root_id.children(arena) {
+            Parser::tree_to_testfmt_recurse(arena, &mut builder, child);
+        }
+    
+        builder.string().unwrap()
+    }
+    
+    fn tree_to_testfmt_recurse(arena: &Arena<ParseContentDesc>, builder: &mut Builder, nid: NodeId) {
+        let maybe_node = arena.get(nid);
+        if maybe_node.is_none() {
+            return;
+        }
+        match arena.get(nid).unwrap().get() {
+            ParseContentDesc::Root => {},
+            ParseContentDesc::Element(name) => {
+                builder.append("<");
+                builder.append(name.to_string());
+                builder.append(">");
+    
+                for child in nid.children(arena) {
+                    Parser::tree_to_testfmt_recurse(arena, builder, child);
+                }
+    
+                builder.append("</");
+                builder.append(name.to_string());
+                builder.append(">");
+            },
+            ParseContentDesc::Attribute(_, _) => todo!(),
+            ParseContentDesc::Text(utf8) => builder.append(utf8.clone()),
+        }
     }
 
 }

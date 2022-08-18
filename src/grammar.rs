@@ -3,6 +3,8 @@ use smol_str::SmolStr;
 
 use crate::parser::DotNotation;
 
+// TODO: add CharMatchers at the Grammar level, with builders similar to Rule::build().x().y().z()
+
 /// the primary owner of all grammar data structures
 #[derive(Debug, Clone)]
 pub struct Grammar {
@@ -277,23 +279,23 @@ impl RuleBuilder {
 
     /// accept a single char out of a list
     pub fn ch_in(mut self, chrs: &str) -> RuleBuilder {
-        self.lit_in_mark(chrs, Mark::Default)
+        self.mark_ch_in(chrs, Mark::Default)
     }
 
     /// accept a single char out of a list, with specified mark
-    pub fn lit_in_mark(mut self, chrs: &str, mark: Mark) -> RuleBuilder {
+    pub fn mark_ch_in(mut self, chrs: &str, mark: Mark) -> RuleBuilder {
         let term = Term::Term(mark, CharMatcher::OneOf(SmolStr::new(chrs)));
         self.terms.push(term);
         self
     }
 
     /// accept a single character within a range
-    pub fn lit_in_range(mut self, bot: char, top: char) -> RuleBuilder {
-        self.lit_in_range_mark(bot, top, Mark::Default)
+    pub fn ch_range(mut self, bot: char, top: char) -> RuleBuilder {
+        self.mark_ch_range(bot, top, Mark::Default)
     }
 
     /// accept a single character within a range, with specified mark
-    pub fn lit_in_range_mark(mut self, bot: char, top: char, mark: Mark) -> RuleBuilder {
+    pub fn mark_ch_range(mut self, bot: char, top: char, mark: Mark) -> RuleBuilder {
         let term = Term::Term(mark, CharMatcher::Range(bot, top));
         self.terms.push(term);
         self
