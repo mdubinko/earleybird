@@ -5,11 +5,11 @@ pub fn grammar() -> Grammar {
 
     // ixml: s, prolog?, rule++RS, s.
     // TODO: prolog
-    g.define("ixml", Rule::build().nt("s").repeat1_sep(Rule::build().nt("rule"), Rule::build().nt("RS")));
+    g.define("ixml", Rule::seq().nt("s").repeat1_sep(Rule::seq().nt("rule"), Rule::seq().nt("RS")));
 
     // rule: (mark, s)?, name, s, -["=:"], s, -alts, -".".
-    g.define("rule", Rule::build()
-        .opt(Rule::build().nt("mark").nt("s"))
+    g.define("rule", Rule::seq()
+        .opt(Rule::seq().nt("mark").nt("s"))
         .nt("name")
         .nt("s")
         .mark_ch('=', Mark::Skip) // TODO: choice here

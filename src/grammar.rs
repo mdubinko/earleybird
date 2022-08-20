@@ -14,7 +14,10 @@ pub struct Grammar {
 
 impl Grammar {
     pub fn new(top_rule_name: &str) -> Self {
-        Self { definitions: HashMap::new(), top_rule_name: SmolStr::new(top_rule_name) }
+        Self {
+            definitions: HashMap::new(),
+            top_rule_name: SmolStr::new(top_rule_name)
+            }
     }
 
     /// merge contents of RuleBuilder (which might include entire synthesized named rules) into Grammar
@@ -22,7 +25,7 @@ impl Grammar {
     pub fn define(&mut self, name: &str, rb: RuleBuilder) {
         // 1) the main rule 
         let mark = Mark::Default; // TODO: get actual Mark
-        let main_rule = Rule::new(rb.terms);
+        let main_rule = Rule::new(rb.factors);
         let branching_rule = self.definitions.entry(SmolStr::new(name))
             .or_insert(BranchingRule::new(mark));
         branching_rule.add_alt_branch(main_rule);
@@ -32,7 +35,7 @@ impl Grammar {
             for builder in builders {
                 let syn_branching_rule = self.definitions.entry(syn_name.clone())
                     .or_insert(BranchingRule::new(Mark::Skip));
-                syn_branching_rule.add_alt_branch(Rule::new(builder.terms));
+                syn_branching_rule.add_alt_branch(Rule::new(builder.factors));
             }
         }
     }
@@ -79,10 +82,10 @@ impl<'a> Iterator for RuleIter<'a> {
 }
 
 /// within a Rule, iterate through individual Terms
-pub struct TermIter<'a>(&'a Vec<Term>, usize);
+pub struct TermIter<'a>(&'a Vec<Factor>, usize);
 
 impl<'a> Iterator for TermIter<'a> {
-    type Item = &'a Term;
+    type Item = &'a Factor;
     fn next(&mut self) -> Option<Self::Item> {
         let rc = self.0.get(self.1);
         self.1 += 1;
@@ -139,7 +142,7 @@ impl fmt::Display for Mark {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Rule {
-    pub factors: Vec<Term>,
+    pub factors: Vec<Factor>,
 }
 
 /// A single sequence of terms ( = various terminals or a nonterminal )
@@ -149,7 +152,7 @@ pub struct Rule {
 /// foo = a, --synthesized_nt, d
 /// --synthesized_nt = b | c
 impl Rule {
-    pub fn new(terms: Vec<Term>) -> Rule {
+    pub fn new(terms: Vec<Factor>) -> Rule {
         Rule { factors: terms }
     }
 
@@ -162,7 +165,7 @@ impl Rule {
         //crate::parser::DotNotation { iteratee: self.clone(), matched_so_far: Vec::new() }
     }
 
-    pub fn add_term(&mut self, term: Term) {
+    pub fn add_term(&mut self, term: Factor) {
         self.factors.push(term);
     }
 
@@ -171,7 +174,7 @@ impl Rule {
     }
 
     /// builder interface
-    pub fn build() -> RuleBuilder {
+    pub fn seq() -> RuleBuilder {
         RuleBuilder::new()
     }
 }
@@ -188,40 +191,82 @@ impl fmt::Display for Rule {
 }
 
 
+/// At thit low level, an individual Factor is either a terminal or a nonterminal
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum Term {
-    Term(Mark, CharMatcher),
+pub enum Factor {
+    Terminal(Mark, Lit),
     Nonterm(Mark, SmolStr),
 }
 
-/// At thit low level, an individual term is either a terminal or a nonterminal
-impl Term {
-    pub fn lit(ch: char) -> Term {
-        Term::Term(Mark::Default, CharMatcher::Exact(ch))
-    }
-
-   pub fn nonterm(name: &str) -> Term {
-        Term::Nonterm(Mark::Default, SmolStr::new(name))
+impl Factor {
+    /// drain off the matchers from a LitBuilder, producing a new Factor::Terminal
+    fn new_lit(builder: LitBuilder, mark: Mark) -> Factor {
+        let mut lit = Lit::new();
+        lit.matchers = builder.matcher.matchers;
+        Factor::Terminal(mark, lit)
     }
 }
 
-impl fmt::Display for Term {
+impl fmt::Display for Factor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Term::Term(mark, cm) => write!(f, "{cm}"),
-            Term::Nonterm(mark, str) => write!(f, "{str}"),
+            Factor::Terminal(mark, lit) => write!(f, "{mark}{lit}"),
+            Factor::Nonterm(mark, str) => write!(f, "{mark}{str}"),
         }
     }
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+struct CharMatchId(usize);
+
+/// A character matcher can be an arbitrarily long set of matchspecs (which are considered logically OR'd)
+/// e.g. ["0"-"9"; "?": Nd]
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub enum CharMatcher {
+pub struct Lit {
+    matchers: Vec<CharMatcher>,
+    /// negative matchers invert the overall match logic
+    /// e.g. ~["0"-"9"]
+    is_exclude: bool,
+}
+
+impl Lit {
+    fn new() -> Self {
+        Self { matchers: Vec::new(), is_exclude: false}
+    }
+
+    fn make_excluding(&mut self) {
+        self.is_exclude = true;
+    }
+
+    /// actually match the input char
+    pub fn accept(&self, test: char) -> bool {
+        if self.is_exclude {
+            //self.matchers.iter().all(|m| !m.accept(test))
+            !self.matchers.iter().any(|m| m.accept(test))
+        } else {
+            self.matchers.iter().any(|m| m.accept(test))
+        }
+    }
+
+    pub fn union() -> LitBuilder {
+        LitBuilder::new()
+    }
+}
+
+impl fmt::Display for Lit {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s: String = self.matchers.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(" | ");
+        let prefix = if self.is_exclude { "~"} else { "" };
+        write!(f, "{prefix}[ {s} ]")
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum CharMatcher {
     Exact(char),
     OneOf(SmolStr),
     Range(char, char),
-    // TODO: UnicodeRange(SmolStr),
-    // TODO: Exclude(&CharMatcher),
-    // TODO: Union(&CharMatcher, &CharMatcher)
+    UnicodeRange(SmolStr),
 }
 
 impl CharMatcher {
@@ -230,7 +275,7 @@ impl CharMatcher {
             CharMatcher::Exact(ch) => *ch==test,
             CharMatcher::OneOf(lst) => lst.contains(test),
             CharMatcher::Range(bot, top) => test <= *top && test >= *bot,
-            //_ => false,
+            CharMatcher::UnicodeRange(name) => todo!("Write unicode.rs module"),
         }
     }
 }
@@ -241,8 +286,39 @@ impl fmt::Display for CharMatcher {
             CharMatcher::Exact(ch) => write!(f, "'{ch}'"),
             CharMatcher::OneOf(str) => write!(f, "[\"{str}\"]"),
             CharMatcher::Range(bot, top) => write!(f, "[{bot}-{top}]"),
-            // _ => write!(f, "?"),
+            CharMatcher::UnicodeRange(name) => write!(f, "Unicode range {name}"),
         }
+    }
+}
+
+pub struct LitBuilder {
+    matcher: Lit
+}
+
+impl LitBuilder {
+    fn new() -> Self {
+        Self { matcher: Lit::new() }
+    }
+
+    /// accept a single char
+    pub fn ch(mut self, ch: char) -> LitBuilder {
+        let matcher = CharMatcher::Exact(ch);
+        self.matcher.matchers.push(matcher);
+        self
+    }
+
+    /// accept a single char out of a list
+    pub fn ch_in(mut self, chrs: &str) -> LitBuilder {
+        let matcher_impl = CharMatcher::OneOf(SmolStr::new(chrs));
+        self.matcher.matchers.push(matcher_impl);
+        self
+    }
+
+    /// accept a single character within a range
+    pub fn ch_range(mut self, bot: char, top: char) -> LitBuilder {
+        let matcher_impl = CharMatcher::Range(bot, top);
+        self.matcher.matchers.push(matcher_impl);
+        self
     }
 }
 
@@ -253,7 +329,7 @@ static mut NEXT_ID: i32 = 0;
 #[derive(Clone)]
 pub struct RuleBuilder {
     /// the "main" TermList being built here
-    terms: Vec<Term>,
+    factors: Vec<Factor>,
 
     /// in the course of building a rule, we may end up synthesizing additional rules.
     /// These need to eventually get added into the resulting grammar
@@ -262,42 +338,42 @@ pub struct RuleBuilder {
 
 impl RuleBuilder {
     pub fn new() -> RuleBuilder {
-        RuleBuilder { terms: Vec::new(), syn_rules: HashMap::new() }
+        RuleBuilder { factors: Vec::new(), syn_rules: HashMap::new() }
     }
 
-    /// accept a single char
+    /// Convenience function: accept a single char
     pub fn ch(mut self, ch: char) -> RuleBuilder {
         self.mark_ch(ch, Mark::Default)
     }
 
-    /// accept a single char, with specified mark
+    /// Convenience function: accept a single char, with specified mark
     pub fn mark_ch(mut self, ch: char, mark: Mark) -> RuleBuilder {
-        let term = Term::Term(mark, CharMatcher::Exact(ch));
-        self.terms.push(term);
+        let factor = Factor::new_lit(Lit::union().ch(ch) , mark);
+        self.factors.push(factor);
         self
     }
 
-    /// accept a single char out of a list
+    /// Convenience function: accept a single char out of a list
     pub fn ch_in(mut self, chrs: &str) -> RuleBuilder {
         self.mark_ch_in(chrs, Mark::Default)
     }
 
-    /// accept a single char out of a list, with specified mark
+    /// Convenience function: accept a single char out of a list, with specified mark
     pub fn mark_ch_in(mut self, chrs: &str, mark: Mark) -> RuleBuilder {
-        let term = Term::Term(mark, CharMatcher::OneOf(SmolStr::new(chrs)));
-        self.terms.push(term);
+        let term = Factor::new_lit( Lit::union().ch_in(chrs), mark);
+        self.factors.push(term);
         self
     }
 
-    /// accept a single character within a range
+    /// Convenience function: accept a single character within a range
     pub fn ch_range(mut self, bot: char, top: char) -> RuleBuilder {
         self.mark_ch_range(bot, top, Mark::Default)
     }
 
-    /// accept a single character within a range, with specified mark
+    /// Convenience function: accept a single character within a range, with specified mark
     pub fn mark_ch_range(mut self, bot: char, top: char, mark: Mark) -> RuleBuilder {
-        let term = Term::Term(mark, CharMatcher::Range(bot, top));
-        self.terms.push(term);
+        let term = Factor::new_lit(Lit::union().ch_range(bot, top), mark);
+        self.factors.push(term);
         self
     }
 
@@ -308,8 +384,8 @@ impl RuleBuilder {
 
     /// nonterminal, with specified mark
     pub fn nt_mark(mut self, name: &str, mark: Mark) -> RuleBuilder {
-        let term = Term::Nonterm(mark, SmolStr::new(name));
-        self.terms.push(term);
+        let term = Factor::Nonterm(mark, SmolStr::new(name));
+        self.factors.push(term);
         self
     }
 
@@ -323,8 +399,8 @@ impl RuleBuilder {
 
     /// take primary rule from another RuleBuilder
     pub fn expr(mut self, mut sub: RuleBuilder) -> RuleBuilder {
-        for t in sub.terms.drain(..) {
-            self.terms.push(t)
+        for t in sub.factors.drain(..) {
+            self.factors.push(t)
         }
         self
     }
@@ -343,7 +419,7 @@ impl RuleBuilder {
         self = self.siphon(&mut sub);
         // 1 create new rule 'f-option'
         let f_option: &str = &self.mint_internal_id("f-option");
-        self = self.syn_rule(f_option, Rule::build()); // empty
+        self = self.syn_rule(f_option, Rule::seq()); // empty
         self = self.syn_rule(f_option, sub);
         // 2 insert newly created nt into sequence under construction
         self.nt_mark(f_option, Mark::Skip)
@@ -355,7 +431,7 @@ impl RuleBuilder {
         self = self.siphon(&mut sub);
         // 1 create new rule 'f-star'
         let f_star: &str = &self.mint_internal_id("f-star");
-        self = self.syn_rule(f_star, Rule::build().opt(Rule::build().expr(sub).nt(f_star)));
+        self = self.syn_rule(f_star, Rule::seq().opt(Rule::seq().expr(sub).nt(f_star)));
         // 2 insert newly-created nt into sequence under construction
         self.nt_mark(f_star, Mark::Skip)
     }
@@ -366,7 +442,7 @@ impl RuleBuilder {
         self = self.siphon(&mut sub);
         // create new rule 'f-plus'
         let f_plus: &str = &self.mint_internal_id("f-plus");
-        self = self.syn_rule(f_plus, Rule::build().expr(sub.clone()).repeat0(Rule::build().expr(sub)));
+        self = self.syn_rule(f_plus, Rule::seq().expr(sub.clone()).repeat0(Rule::seq().expr(sub)));
         // 2 insert newly-created nt into sequence under construction
         self.nt_mark(f_plus, Mark::Skip)
     }
@@ -378,7 +454,7 @@ impl RuleBuilder {
         self = self.siphon(&mut sub2);
         // create new rule 'f-plus-sep'
         let f_plus_sep: &str = &self.mint_internal_id("f-plus-sep");
-        self = self.syn_rule(f_plus_sep, Rule::build().expr(sub1.clone()).repeat0(Rule::build().expr(sub2).expr(sub1)));
+        self = self.syn_rule(f_plus_sep, Rule::seq().expr(sub1.clone()).repeat0(Rule::seq().expr(sub2).expr(sub1)));
         // 2 insert newly-created nt into sequence under construction
         self.nt_mark(f_plus_sep, Mark::Skip)
     }    
@@ -390,7 +466,7 @@ impl RuleBuilder {
         self = self.siphon(&mut sub2);
         // create new rule 'f-star-sep'
         let f_star_sep: &str = &self.mint_internal_id("f-star-sep");
-        self = self.syn_rule(f_star_sep, Rule::build().opt( Rule::build().repeat1_sep(sub1, sub2)));
+        self = self.syn_rule(f_star_sep, Rule::seq().opt( Rule::seq().repeat1_sep(sub1, sub2)));
         // 2 insert newly-created nt into sequence under construction
         self.nt_mark(f_star_sep, Mark::Skip)
     }

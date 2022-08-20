@@ -1,10 +1,13 @@
-use crate::grammar::{Grammar, Rule, Term};
+use crate::grammar::{Grammar, Rule, Factor};
 use std::{collections::{VecDeque, HashSet}, fmt};
 use multimap::{MultiMap};
 use smol_str::SmolStr;
 use string_builder::Builder;
 use indextree::{Arena, NodeId};
 use log::{info, debug, trace};
+
+// TODO: logs ^^^
+// TODO: just make parser.parse return indextree::Arena
 
 const DOTSEP: &'static str = "•";
 
@@ -41,7 +44,7 @@ impl DotNotation {
 
     /// next term to parse. A.k.a. "What's next after the dot?"
     /// returns cloned Term
-    fn next_unparsed(&self) -> Term {
+    fn next_unparsed(&self) -> Factor {
         let cursor = self.matched_so_far.len();
         self.iteratee.factors[cursor].clone()
     }
@@ -364,8 +367,8 @@ impl Parser {
                     let now_finished_via_child = self.traces.get(continue_id).dot.next_unparsed();
                     let match_rec = 
                     match now_finished_via_child {
-                        Term::Nonterm(_, name) => MatchRec::NonTerm(name, self.traces.get(tid).pos),
-                        Term::Term(_, _ch ) => MatchRec::Term('?', self.traces.get(tid).pos),
+                        Factor::Nonterm(_, name) => MatchRec::NonTerm(name, self.traces.get(tid).pos),
+                        Factor::Terminal(_, _ch ) => MatchRec::Term('?', self.traces.get(tid).pos),
                     };
                     println!("MatchRec {:?}", &match_rec);
                     // child may have made progress; next item in parent seq needs to account for this
@@ -382,7 +385,7 @@ impl Parser {
             let term = self.traces.get(tid).dot.next_unparsed();
 
             match term {
-                Term::Nonterm(mark, name) => {
+                Factor::Nonterm(mark, name) => {
                     // go one level deeper
                     println!("PREDICTOR: Nonterm {mark}{name}");
 
@@ -398,7 +401,7 @@ impl Parser {
                         self.queue_back(maybe_id);
                     }
                 }
-                Term::Term(mark, matcher) => {
+                Factor::Terminal(mark, matcher) => {
                     // record terminal
                     println!("SCANNER: Terminal {mark}{matcher}");
                     if matcher.accept(input.get_tok()) {

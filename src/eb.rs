@@ -27,8 +27,7 @@ impl Subcommand {
 fn main() {
 
     let mut g = Grammar::new("doc");
-    //g.define("doc", Rule::build().repeat0( Rule::build().lit('a')));
-    g.define("doc", Rule::build().repeat0( Rule::build().ch('a')));
+    g.define("doc", Rule::seq().repeat0( Rule::seq().ch('a')));
     //println!("{g}");
 
     let mut parser = Parser::new(g);
