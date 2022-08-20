@@ -3,7 +3,7 @@ use smol_str::SmolStr;
 
 use crate::{parser::DotNotation, unicode_ranges::UnicodeRange};
 
-// TODO: add CharMatchers at the Grammar level, with builders similar to Rule::build().x().y().z()
+// TODO: Optimization: add CharMatchers at the Grammar level
 
 /// the primary owner of all grammar data structures
 #[derive(Debug, Clone)]
@@ -201,8 +201,10 @@ pub enum Factor {
 impl Factor {
     /// drain off the matchers from a LitBuilder, producing a new Factor::Terminal
     fn new_lit(builder: LitBuilder, mark: Mark) -> Factor {
+        let is_exclude = builder.lit.is_exclude;
         let mut lit = Lit::new();
-        lit.matchers = builder.matcher.matchers;
+        lit.matchers = builder.lit.matchers;
+        lit.is_exclude = is_exclude;
         Factor::Terminal(mark, lit)
     }
 }
@@ -256,8 +258,8 @@ impl Lit {
 impl fmt::Display for Lit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s: String = self.matchers.iter().map(|m| m.to_string()).collect::<Vec<_>>().join(" | ");
-        let prefix = if self.is_exclude { "~"} else { "" };
-        write!(f, "{prefix}[ {s} ]")
+        let prefix = if self.is_exclude { "~" } else { "" };
+        write!(f, "{prefix}[{s}]")
     }
 }
 
@@ -285,45 +287,51 @@ impl fmt::Display for CharMatcher {
         match self {
             CharMatcher::Exact(ch) => write!(f, "'{ch}'"),
             CharMatcher::OneOf(str) => write!(f, "[\"{str}\"]"),
-            CharMatcher::Range(bot, top) => write!(f, "[{bot}-{top}]"),
+            CharMatcher::Range(bot, top) => write!(f, "[\"{bot}\"-\"{top}\"]"),
             CharMatcher::UnicodeRange(name) => write!(f, "Unicode range {name}"),
         }
     }
 }
 
+#[derive(Debug)]
 pub struct LitBuilder {
-    matcher: Lit
+    lit: Lit
 }
 
 impl LitBuilder {
     fn new() -> Self {
-        Self { matcher: Lit::new() }
+        Self { lit: Lit::new() }
     }
 
     /// accept a single char
     pub fn ch(mut self, ch: char) -> LitBuilder {
         let matcher = CharMatcher::Exact(ch);
-        self.matcher.matchers.push(matcher);
+        self.lit.matchers.push(matcher);
         self
     }
 
     /// accept a single char out of a list
     pub fn ch_in(mut self, chrs: &str) -> LitBuilder {
         let matcher = CharMatcher::OneOf(SmolStr::new(chrs));
-        self.matcher.matchers.push(matcher);
+        self.lit.matchers.push(matcher);
         self
     }
 
     /// accept a single character within a range
     pub fn ch_range(mut self, bot: char, top: char) -> LitBuilder {
         let matcher = CharMatcher::Range(bot, top);
-        self.matcher.matchers.push(matcher);
+        self.lit.matchers.push(matcher);
         self
     }
 
     pub fn ch_unicode(mut self, range: &str) -> LitBuilder {
         let matcher = CharMatcher::UnicodeRange(SmolStr::new(range));
-        self.matcher.matchers.push(matcher);
+        self.lit.matchers.push(matcher);
+        self
+    }
+
+    pub fn exclude(mut self) -> LitBuilder {
+        self.lit.is_exclude = true;
         self
     }
 }
@@ -352,7 +360,7 @@ impl RuleBuilder {
         self.mark_ch(ch, Mark::Default)
     }
 
-    /// Convenience function: accept a single char, with specified mark
+    /// Convenience function: accept a single char, with specified Mark
     pub fn mark_ch(mut self, ch: char, mark: Mark) -> RuleBuilder {
         let factor = Factor::new_lit(Lit::union().ch(ch) , mark);
         self.factors.push(factor);
@@ -364,10 +372,10 @@ impl RuleBuilder {
         self.mark_ch_in(chrs, Mark::Default)
     }
 
-    /// Convenience function: accept a single char out of a list, with specified mark
+    /// Convenience function: accept a single char out of a list, with specified Mark
     pub fn mark_ch_in(mut self, chrs: &str, mark: Mark) -> RuleBuilder {
-        let term = Factor::new_lit( Lit::union().ch_in(chrs), mark);
-        self.factors.push(term);
+        let factor = Factor::new_lit( Lit::union().ch_in(chrs), mark);
+        self.factors.push(factor);
         self
     }
 
@@ -376,10 +384,10 @@ impl RuleBuilder {
         self.mark_ch_range(bot, top, Mark::Default)
     }
 
-    /// Convenience function: accept a single character within a range, with specified mark
+    /// Convenience function: accept a single character within a range, with specified Mark
     pub fn mark_ch_range(mut self, bot: char, top: char, mark: Mark) -> RuleBuilder {
-        let term = Factor::new_lit(Lit::union().ch_range(bot, top), mark);
-        self.factors.push(term);
+        let factor = Factor::new_lit(Lit::union().ch_range(bot, top), mark);
+        self.factors.push(factor);
         self
     }
 
@@ -388,10 +396,22 @@ impl RuleBuilder {
         self.mark_ch_unicode(name, Mark::Default)
     }
 
-    /// Convenience function: accept a single character within a Unicode range, with specified mark
+    /// Convenience function: accept a single character within a Unicode range, with specified Mark
     pub fn mark_ch_unicode(mut self, name: &str, mark: Mark) -> RuleBuilder {
-        let term = Factor::new_lit(Lit::union().ch_unicode(name), mark);
-        self.factors.push(term);
+        let factor = Factor::new_lit(Lit::union().ch_unicode(name), mark);
+        self.factors.push(factor);
+        self
+    }
+
+    /// if convenience funcutions don't sufice, build your own Lit here
+    pub fn lit(mut self, lit: LitBuilder) -> RuleBuilder {
+        self.mark_lit(lit, Mark::Default)
+    }
+
+    /// if convenience funcutions don't sufice, build your own Lit here, with specified Mark
+    pub fn mark_lit(mut self, lit: LitBuilder, mark: Mark) -> RuleBuilder {
+        let factor = Factor::new_lit(lit, mark);
+        self.factors.push(factor);
         self
     }
 

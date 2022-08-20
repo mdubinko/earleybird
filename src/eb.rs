@@ -28,7 +28,6 @@ fn main() {
 
     let mut g = Grammar::new("doc");
     g.define("doc", Rule::seq().repeat0( Rule::seq().ch('a')));
-    //println!("{g}");
 
     let mut parser = Parser::new(g);
     parser.parse("aaaa");

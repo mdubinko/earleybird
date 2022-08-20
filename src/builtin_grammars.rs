@@ -1,4 +1,4 @@
-use crate::grammar::{Grammar, Rule};
+use crate::grammar::{Grammar, Rule, Lit};
 
 /// temporary hack to get hands-on
 /// TODO: Maybe use traits?
@@ -24,19 +24,21 @@ pub struct SuiteWiki {}
 
 impl SmokeChars {
     pub fn get_grammar() -> Grammar {
-        // doc = ["0"-"9"], [Zs], ["abcdef"].
+        // exercise all the different kinds of character matching
+        // doc = ["0"-"9"], [Zs], ~["0"-"9"; "a"-"f"; "A"-"F"], ["abcdef"].
         let mut g = Grammar::new("doc");
-        g.define("doc", Rule::seq().ch_range('0', '9').ch_unicode("Zs").ch_in("abcdef") );
+        g.define("doc", Rule::seq()
+            .ch_range('0', '9')
+            .ch_unicode("Zs")
+            .lit( Lit::union().exclude().ch_range('0', '9').ch_range('a', 'f').ch_range('A', 'F') )
+            .ch_in("abcdef") );
         g
-
-        // above is shorthand syntax; can also define complex literal matches like
-        //g.define("foo", Rule::build().lit( Lit::union().ch('a').range('0','9') ))
     }
     pub fn get_inputs() -> Vec<&'static str> {
-        vec!["0 a", "9\u{00a0}f"]
+        vec!["0 Ga", "9\u{00a0}!f"]
     }
     pub fn get_expected() -> Vec<&'static str> {
-        vec!["<doc>0 a</doc>", "<doc>9\u{00a0}f</doc>"]
+        vec!["<doc>0 Ga</doc>", "<doc>9\u{00a0}!f</doc>"]
     }
 }
 

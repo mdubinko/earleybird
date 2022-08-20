@@ -1,5 +1,8 @@
 use crate::grammar::{Grammar, Rule, Mark};
 
+// TODO: -rules and @rules
+
+/// Bootstrap ixml grammar; hand-coded definition
 pub fn grammar() -> Grammar {
     let mut g = Grammar::new("ixml");
 
@@ -7,81 +10,97 @@ pub fn grammar() -> Grammar {
     // TODO: prolog
     g.define("ixml", Rule::seq().nt("s").repeat1_sep(Rule::seq().nt("rule"), Rule::seq().nt("RS")));
 
+    // -s: (whitespace; comment)*. {Optional spacing}
+    // TODO: comment
+    g.define("s", Rule::seq().repeat0( Rule::seq().nt("whitespace")));
+
+    // -RS: (whitespace; comment)+. {Required spacing}
+    // TODO: comment
+    g.define("RS", Rule::seq().repeat1( Rule::seq().nt("whitespace")));
+
+    // -whitespace: -[Zs]; tab; lf; cr.
+    // TODO: Unicode
+    g.define("whitespace", Rule::seq().ch_in(" \u{0009}\u{000a}\u{000d}"));
+
     // rule: (mark, s)?, name, s, -["=:"], s, -alts, -".".
     g.define("rule", Rule::seq()
         .opt(Rule::seq().nt("mark").nt("s"))
         .nt("name")
         .nt("s")
-        .mark_ch('=', Mark::Skip) // TODO: choice here
+        .mark_ch_in("=:", Mark::Skip)
         .nt("s")
         .nt_mark("alts", Mark::Skip)
         .mark_ch('.', Mark::Skip) );
-    /*
+
+    // @mark: ["@^-"].
+    g.define("mark", Rule::seq().ch_in("@^-"));
+
+    // @name: namestart, namefollower*.
+    // -namestart: ["_"; L].
+    // -namefollower: namestart; ["-.·‿⁀"; Nd; Mn].
+    // TODO: fixme
+    g.define("name", Rule::seq().repeat1( Rule::seq().ch_in("_abcdefghijklmnopqrstuvwxyzRS")));
+
     // alts: alt++(-[";|"], s).
-    let alt_plus_plus_semi_or_vbar = g.add_repeat1_sep(alt, _semicolon_or_vbar);
-    g.add_rule("alts", alt_plus_plus_semi_or_vbar);
+    g.define("alts", Rule::seq().repeat1_sep(
+        Rule::seq().nt("alt"),
+        Rule::seq().mark_ch_in(";|", Mark::Skip).nt("s") ));
 
     // alt: term**(-",", s)
-    let comma_space = g.add_seq(vec![_comma, s]);
-    let term_star_star_comma_space = g.add_repeat0_sep(term, comma_space);
-    g.add_rule("alt", term_star_star_comma_space);
+    g.define("alt", Rule::seq().repeat0_sep(
+        Rule::seq().nt("term"),
+        Rule::seq().mark_ch(',', Mark::Skip).nt("s") ));
 
     // -term: factor; option; repeat0; repeat1.
-    let term_opts = g.add_oneof(vec![factor, option, repeat0, repeat1]);
-    g.add_rule("term", term_opts);
-
-    // -factor: terminal; nonterminal; insertion; -"(", s, alts, -")", s.
-    // TODO insertion
-    let paren_alts_paren = g.add_seq(vec![_lparen, s, alts, _rparen, s]);
-    let factor_opts = g.add_oneof(vec![terminal, nonterminal, paren_alts_paren]);
-    g.add_rule("factor", factor_opts);
+    // TODO: option; repeat0; repeat1
+    g.define("term", Rule::seq().nt("factor"));
 
     // option: factor, -"?", s.
-    let factor_qmark_s = g.add_seq(vec![factor, _qmark, s]);
-    g.add_rule("option", factor_qmark_s);
+    //g.define("option", Rule::seq().nt("factor").mark_ch('?', Mark::Skip).nt("s"));
 
     // repeat0: factor, (-"*", s; -"**", s, sep).
-    let star_s = g.add_seq(vec![_star, s]);
-    let star_star_sep = g.add_seq(vec![_star, _star, s, sep]);
-    let star_or_star_star_sep = g.add_oneof(vec![star_s, star_star_sep]);
-    let repeat0_seq = g.add_seq(vec![factor, star_or_star_star_sep]);
-    g.add_rule("repeat0", repeat0_seq);
 
     // repeat1: factor, (-"+", s; -"++", s, sep).
-    let plus_s = g.add_seq(vec![_plus, s]);
-    let plus_plus_sep = g.add_seq(vec![_plus, _plus, s, sep]);
-    let plus_or_plus_plus_sep = g.add_oneof(vec![plus_s, plus_plus_sep]);
-    let repeat1_seq = g.add_seq(vec![factor, plus_or_plus_plus_sep]);
-    g.add_rule("repeat1", repeat1_seq);
 
     // sep: factor.
-    g.add_rule("sep", factor);
+
+    // -factor: terminal; nonterminal; insertion; -"(", s, alts, -")", s.
+    // TODO: insertion
+    g.define("factor", Rule::seq().nt("terminal"));
+    g.define("factor", Rule::seq().nt("nonterminal"));
+    g.define("factor", Rule::seq()
+        .mark_ch('(', Mark::Skip).nt("s").nt("alts").mark_ch(')', Mark::Skip).nt("s"));
 
     // -terminal: literal; charset.
     // TODO charset
-    g.add_rule("terminal", literal);
+    g.define("terminal", Rule::seq().nt("literal"));
 
     // nonterminal: (mark, s)?, name, s.
-    // TODO mark
-    let nonterminal_seq = g.add_seq(vec![name, s]);
-    g.add_rule("nonterminal", nonterminal_seq);
+    g.define("nonterminal", Rule::seq()
+        .opt( Rule::seq().nt("mark").nt("s") )
+        .nt("name").nt("s") );
 
     // literal: quoted; encoded.
     // TODO encoded
-    g.add_rule("literal", quoted);
+    g.define("literal", Rule::seq().nt("quoted"));
 
     // -quoted: (tmark, s)?, string, s.
     // TODO tmark
-    let string_s = g.add_seq(vec![string, s]);
-    g.add_rule("quoted", string_s);
+    g.define("quoted", Rule::seq().nt("string").nt("s"));
 
     // @string: -'"', dchar+, -'"'; -"'", schar+, -"'".
-    // TODO schar
-    let dchar_plus = g.add_repeat1(dchar);
-    let string_seq = g.add_seq(vec![_dquote, dchar_plus, _dquote]);
-    g.add_rule("string", string_seq);
+    // TODO schar variant
+    g.define("string", Rule::seq()
+        .mark_ch('"', Mark::Skip)
+        .repeat1( Rule::seq().nt("dchar"))
+        .mark_ch('"', Mark::Skip) );
 
     // dchar: ~['"'; #a; #d]; '"', -'"'. {all characters except line breaks; quotes must be doubled}
+    // TODO: fixme
+    g.define("dchar", Rule::seq().ch_in("abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ"));
+    /*
+
+
     // TODO g.add_literalcharexcept
     // TODO doubled dquote escape
     // TODO g.add_literalcharrange
@@ -89,6 +108,25 @@ pub fn grammar() -> Grammar {
     g.add_rule("dchar", any_char_except_dquote);
     */
     g
+}
+
+#[test]
+fn parse_ixml() {
+    let g = grammar();
+    println!("{}", &g);
+    let ixml: &str = r#"doc = "A", "B"."#;
+    //                  012345678901234
+    let mut parser = crate::parser::Parser::new(g);
+    let _trace = parser.parse(ixml);
+    let result = crate::parser::Parser::tree_to_testfmt( &parser.unpack_parse_tree("ixml") );
+    let expected = "<ixml><rule></rule></ixml>"; // TODO: fixme
+    assert_eq!(result, expected);
+
+    // now do a second pass, with the just-generated grammar
+    let _input2 = "AB";
+    let _expected2 = "<doc>AB</doc>";
+}
+
 /*
     ixml: s, prolog?, rule++RS, s.
 
@@ -163,4 +201,3 @@ member: string;
 -letter: ["a"-"z"].
 insertion: -"+", s, (string; -"#", hex), s.
 */
-}
