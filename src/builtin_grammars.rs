@@ -22,15 +22,30 @@ pub struct SmokePlusSep {}
 // test suites
 pub struct SuiteWiki {}
 
+impl SmokeChars {
+    pub fn get_grammar() -> Grammar {
+        // doc = ["0"-"9"], [Zs], ["abcdef"].
+        let mut g = Grammar::new("doc");
+        g.define("doc", Rule::seq().ch_range('0', '9').ch_unicode("Zs").ch_in("abcdef") );
+        g
+
+        // above is shorthand syntax; can also define complex literal matches like
+        //g.define("foo", Rule::build().lit( Lit::union().ch('a').range('0','9') ))
+    }
+    pub fn get_inputs() -> Vec<&'static str> {
+        vec!["0 a", "9\u{00a0}f"]
+    }
+    pub fn get_expected() -> Vec<&'static str> {
+        vec!["<doc>0 a</doc>", "<doc>9\u{00a0}f</doc>"]
+    }
+}
+
 impl SmokeSeq {
     pub fn get_grammar() -> Grammar {
         // doc = "a", "b".
         let mut g = Grammar::new("doc");
         g.define("doc", Rule::seq().ch('a').ch('b') );
         g
-
-        // above is shorthand syntax; can also define complex literal matches like
-        //g.define("foo", Rule::build().lit( Lit::union().ch('a').range('0','9') ))
     }
     pub fn get_inputs() -> Vec<&'static str> {
         vec!["ab"]

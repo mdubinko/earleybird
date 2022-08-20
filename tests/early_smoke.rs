@@ -2,6 +2,20 @@ use earleybird::parser::Parser;
 use earleybird::builtin_grammars::*;
 
 #[test]
+fn run_smoke_chars() {
+    let inputs = SmokeChars::get_inputs();
+    let expecteds = SmokeChars::get_expected();
+    for i in 0..inputs.len() {
+        println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
+        let g = SmokeChars::get_grammar();
+        let mut parser = Parser::new(g);
+        let _trace = parser.parse(inputs[i]);
+        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
+        assert_eq!(expecteds[i], result);
+    }
+}
+
+#[test]
 fn run_smoke_seq() {
     let inputs = SmokeSeq::get_inputs();
     let expecteds = SmokeSeq::get_expected();

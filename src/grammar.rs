@@ -1,7 +1,7 @@
 use std::{fmt, collections::HashMap};
 use smol_str::SmolStr;
 
-use crate::parser::DotNotation;
+use crate::{parser::DotNotation, unicode_ranges::UnicodeRange};
 
 // TODO: add CharMatchers at the Grammar level, with builders similar to Rule::build().x().y().z()
 
@@ -275,7 +275,7 @@ impl CharMatcher {
             CharMatcher::Exact(ch) => *ch==test,
             CharMatcher::OneOf(lst) => lst.contains(test),
             CharMatcher::Range(bot, top) => test <= *top && test >= *bot,
-            CharMatcher::UnicodeRange(name) => todo!("Write unicode.rs module"),
+            CharMatcher::UnicodeRange(name) => UnicodeRange::new(&name).accept(test),
         }
     }
 }
@@ -309,15 +309,21 @@ impl LitBuilder {
 
     /// accept a single char out of a list
     pub fn ch_in(mut self, chrs: &str) -> LitBuilder {
-        let matcher_impl = CharMatcher::OneOf(SmolStr::new(chrs));
-        self.matcher.matchers.push(matcher_impl);
+        let matcher = CharMatcher::OneOf(SmolStr::new(chrs));
+        self.matcher.matchers.push(matcher);
         self
     }
 
     /// accept a single character within a range
     pub fn ch_range(mut self, bot: char, top: char) -> LitBuilder {
-        let matcher_impl = CharMatcher::Range(bot, top);
-        self.matcher.matchers.push(matcher_impl);
+        let matcher = CharMatcher::Range(bot, top);
+        self.matcher.matchers.push(matcher);
+        self
+    }
+
+    pub fn ch_unicode(mut self, range: &str) -> LitBuilder {
+        let matcher = CharMatcher::UnicodeRange(SmolStr::new(range));
+        self.matcher.matchers.push(matcher);
         self
     }
 }
@@ -373,6 +379,18 @@ impl RuleBuilder {
     /// Convenience function: accept a single character within a range, with specified mark
     pub fn mark_ch_range(mut self, bot: char, top: char, mark: Mark) -> RuleBuilder {
         let term = Factor::new_lit(Lit::union().ch_range(bot, top), mark);
+        self.factors.push(term);
+        self
+    }
+
+    /// Convenience function: accept a single character within a Unicode range
+    pub fn ch_unicode(mut self, name: &str) -> RuleBuilder {
+        self.mark_ch_unicode(name, Mark::Default)
+    }
+
+    /// Convenience function: accept a single character within a Unicode range, with specified mark
+    pub fn mark_ch_unicode(mut self, name: &str, mark: Mark) -> RuleBuilder {
+        let term = Factor::new_lit(Lit::union().ch_unicode(name), mark);
         self.factors.push(term);
         self
     }
