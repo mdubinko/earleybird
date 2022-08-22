@@ -1,4 +1,4 @@
-use crate::grammar::{Grammar, Rule, Factor};
+use crate::grammar::{Grammar, Rule, Factor, TMark, Mark};
 use std::{collections::{VecDeque, HashSet}, fmt};
 use multimap::{MultiMap};
 use smol_str::SmolStr;
@@ -53,15 +53,13 @@ impl DotNotation {
 impl fmt::Display for DotNotation {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let cursor = self.matched_so_far.len();
-        //let end = self.iteratee.factors.len();
-        //let (pre, post) = self.iteratee.factors.split_at(cursor);
         
         // handled rules
         let done: String = self.matched_so_far.iter()
             .map(| i |
                 match i {
-                    MatchRec::Term(ch, pos) => format!("'{ch}'@{pos}"),
-                    MatchRec::NonTerm(name, pos) => format!("{name}@{pos}"),
+                    MatchRec::Term(ch, pos, tmark) => format!("'{tmark}{ch}'@{pos}"),
+                    MatchRec::NonTerm(name, pos, mark) => format!("{mark}{name}@{pos}"),
             })
             .collect::<Vec<_>>()
             .join(", ");
@@ -76,17 +74,19 @@ impl fmt::Display for DotNotation {
     }
 }
 
+/// The internal record of a fragment of a matching parse
+/// See also the Content enum for the stable, outward facing record of a similar nature
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum MatchRec {
-    Term(char, usize),
-    NonTerm(SmolStr, usize),
+    Term(char, usize, TMark),
+    NonTerm(SmolStr, usize, Mark),
 }
 
 impl MatchRec {
     fn pos(&self) -> usize {
         match self {
-            MatchRec::Term(_, pos) => pos.clone(),
-            MatchRec::NonTerm(_, pos) => pos.clone(),
+            MatchRec::Term(_, pos, _) => pos.clone(),
+            MatchRec::NonTerm(_, pos, _) => pos.clone(),
         }
     }
 }
@@ -95,6 +95,7 @@ impl MatchRec {
 pub struct Task {
     id: TraceId,              // unique id, as handled by TraceArena
     name: SmolStr,            // rule name
+    mark: Mark,               // effective mark for this task
     origin: usize,            // starting position in the input
     pos: usize,               // current position in the input
     dot: DotNotation,         // progress
@@ -105,12 +106,15 @@ impl Task {
     fn last_completed(&self) -> Option<MatchRec> {
         self.dot.matched_so_far.last().map(|x| x.clone())
     }
+    pub fn mark(&self) -> Mark {
+        self.mark.clone()
+    }
 }
 
 /// This is currently ONLY used as a hash of Task, and can probably be optimized
 impl fmt::Display for Task {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "( {} {}:{} {}) ", self.name, self.origin, self.pos, self.dot)
+        write!(f, "( {}{} {}:{} {}) ", self.mark, self.name, self.origin, self.pos, self.dot)
     }
 }
 
@@ -181,9 +185,9 @@ impl TraceArena {
 
     /// originate a completely new task
     /// Returns Some(TraceId) (unless this is a duplicate Task, in which case None is returned)
-    fn task(&mut self, name: &str, origin: usize, pos: usize, dot: DotNotation) -> Option<TraceId> {
+    fn task(&mut self, name: &str, mark: Mark, origin: usize, pos: usize, dot: DotNotation) -> Option<TraceId> {
         let id = TraceId(self.arena.len());
-        let task = Task{ id, name: SmolStr::new(name), origin, pos, dot };
+        let task = Task{ id, name: SmolStr::new(name), mark, origin, pos, dot };
         if self.have_we_seen(&task) {
             None
         } else {
@@ -193,12 +197,12 @@ impl TraceArena {
     }
     
     /// originate a new Task, "downstream" from another task, like
-    /// doc = x { <-- processing this rule }
+    /// ... = x { <-- processing this rule }
     /// x = ... { <-- so queue up this one next, at same pos, etc. }
     /// Returns Some(TraceId) (unless this is a duplicate Task, in which case None is returned)
-    fn task_downstream(&mut self, name: &str, origin: usize, pos: usize, dot: DotNotation) -> Option<TraceId> {
+    fn task_downstream(&mut self, name: &str, mark: Mark, origin: usize, pos: usize, dot: DotNotation) -> Option<TraceId> {
         let id = TraceId(self.arena.len());
-        let task = Task{ id, name: SmolStr::new(name), origin, pos, dot };
+        let task = Task{ id, name: SmolStr::new(name), mark, origin, pos, dot };
         if self.have_we_seen(&task) {
             None
         } else {
@@ -215,7 +219,8 @@ impl TraceArena {
         let from_task = self.get(from);
         let new_dot = from_task.dot.advance_dot(rec);
         let id = TraceId(self.arena.len());
-        let task = Task { id, name: from_task.name.clone(), origin: from_task.origin, pos: new_pos, dot: new_dot };
+        // use from_task.mark? Or take from MatchRec?
+        let task = Task { id, name: from_task.name.clone(), mark: from_task.mark.clone(), origin: from_task.origin, pos: new_pos, dot: new_dot };
         if self.have_we_seen(&task) {
             None
         } else {
@@ -300,11 +305,26 @@ impl InputIter {
 
 #[derive(Debug, Clone)]
 /// in the intermediate parse indextree, tree nodes are provided thusly
-pub enum ParseContentDesc {
+pub enum Content {
     Root,
     Element(String),            // name
-    Attribute(String, String),  // name, value
+    Attribute(String),          // name
     Text(String)                // value
+}
+
+impl Content {
+    pub fn is_attr(&self) -> bool {
+        match self {
+            Content::Attribute(_) => true,
+            _ => false,
+        }
+    }
+    pub fn is_elem(&self) -> bool {
+        match self {
+            Content::Element(_) => true,
+            _=> false,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -337,9 +357,9 @@ impl Parser {
         println!("Input now at position {} '{}'", input.pos(), input.get_tok());
 
         // Seed with top expr
-        let top_rule = g.get_top_branching_rule();
+        let top_rule = g.get_root_definition();
         for alt in top_rule.iter() {
-            let maybe_id = self.traces.task(g.get_top_rule_name(), 0, 0, alt.dot_notator());
+            let maybe_id = self.traces.task(g.get_root_definition_name(), top_rule.mark(), 0, 0, alt.dot_notator());
             self.queue_front(maybe_id);
         }
         // work through the queue
@@ -367,8 +387,8 @@ impl Parser {
                     let now_finished_via_child = self.traces.get(continue_id).dot.next_unparsed();
                     let match_rec = 
                     match now_finished_via_child {
-                        Factor::Nonterm(_, name) => MatchRec::NonTerm(name, self.traces.get(tid).pos),
-                        Factor::Terminal(_, _ch ) => MatchRec::Term('?', self.traces.get(tid).pos),
+                        Factor::Nonterm(mark, name) => MatchRec::NonTerm(name, self.traces.get(tid).pos, mark),
+                        Factor::Terminal(tmark, _ch ) => MatchRec::Term('?', self.traces.get(tid).pos, tmark),
                     };
                     println!("MatchRec {:?}", &match_rec);
                     // child may have made progress; next item in parent seq needs to account for this
@@ -382,31 +402,44 @@ impl Parser {
 
             // PREDICTOR
             // task is not in a completed state. Take the next item from the list and process it
-            let term = self.traces.get(tid).dot.next_unparsed();
+            let factor = self.traces.get(tid).dot.next_unparsed();
 
-            match term {
+            match factor {
                 Factor::Nonterm(mark, name) => {
                     // go one level deeper
                     println!("PREDICTOR: Nonterm {mark}{name}");
 
                     self.traces.save_continuation(&name, tid);
 
-                    for rule in g.get_branching_rule(&name).iter() {
+
+                    // We can have a Mark at the point of definiton,
+                    // as well as at the point of reference...
+                    // Figure out what to do with all possible combinations
+                    let defn_mark = g.get_definition_mark(&name);
+                    let effective_mark = match (defn_mark, mark) {
+                        (Mark::Default, Mark::Default) => Mark::Default,
+                        (Mark::Mute, Mark::Unmute) => Mark::Unmute,       // can 'undo' marking Mute
+                        (Mark::Attr, _) | (_, Mark::Attr) => Mark::Attr,  // attributes all the way down
+                        (Mark::Mute, _) | (_, Mark::Mute) => Mark::Mute,
+                        (Mark::Unmute, _) | (_, Mark::Unmute) => Mark::Unmute,
+                    };
+
+                    for rule in g.get_definition(&name).iter() {
                         // TODO: propertly account for rule-level Mark
                         let dot = rule.dot_notator();
                         let new_pos = self.traces.get(tid).pos;
                         // "origin" for this downstream task now matches current pos
-                        let maybe_id = self.traces.task_downstream(&name, new_pos, new_pos, dot);
+                        let maybe_id = self.traces.task_downstream(&name, effective_mark.clone(), new_pos, new_pos, dot);
                         //self.queue_front(maybe_id);
                         self.queue_back(maybe_id);
                     }
                 }
-                Factor::Terminal(mark, matcher) => {
+                Factor::Terminal(tmark, matcher) => {
                     // record terminal
-                    println!("SCANNER: Terminal {mark}{matcher}");
+                    println!("SCANNER: Terminal {tmark}{matcher}");
                     if matcher.accept(input.get_tok()) {
                         // Match!
-                        let rec = MatchRec::Term(input.get_tok(), input.pos() + 1);
+                        let rec = MatchRec::Term(input.get_tok(), input.pos() + 1, tmark);
                         println!("advance cursor SCAN");
                         let maybe_id = self.traces.task_advance_cursor(tid, rec);
                         self.queue_back(maybe_id);
@@ -449,28 +482,49 @@ impl Parser {
         None
     }
 
-    pub fn unpack_parse_tree(&mut self, name: &str) -> Arena<ParseContentDesc> {
+    pub fn test_inspect_trace(&self, filter: Option<SmolStr>) -> Vec<Task> {
+        match filter {
+            Some(str) => self.traces.arena
+               .clone()
+               .into_iter()
+               .filter(|task| task.name==str)
+               .collect(),
+            None => self.traces.arena.clone(),
+        }
+    }
+
+    pub fn unpack_parse_tree(&mut self, name: &str) -> Arena<Content> {
         println!("TRACE...");
         for tid in &self.completed_trace {
             println!("{}", self.traces.format_task(*tid));
         }
-        //let mut builder = Builder::default();
         let mut arena = Arena::new();
-        let root = arena.new_node(ParseContentDesc::Root);
+        let root = arena.new_node(Content::Root);
         println!("assuming ending pos of {}", self.farthest_pos);
-        self.unpack_parse_tree_internal(&mut arena, name, 0, self.farthest_pos, root);
+        self.unpack_parse_tree_internal(&mut arena, name, Mark::Default, 0, self.farthest_pos, root);
         arena
     }
 
-    fn unpack_parse_tree_internal(&self, arena: &mut Arena<ParseContentDesc>, name: &str, origin: usize, end: usize, root: NodeId) -> () {
+    fn unpack_parse_tree_internal(&self, arena: &mut Arena<Content>, name: &str, mark: Mark, origin: usize, end: usize, root: NodeId) -> () {
         let matching_trace = self.find_completed_trace(name, origin, end);
         let mut new_root = root;
             match matching_trace {
                 Some(task) => {
                     let match_name = &task.name;
-                    println!("trace found {}", task);
-                    if !match_name.starts_with("-") {
-                        let temp_root = arena.new_node(ParseContentDesc::Element(match_name.to_string()));
+
+                    if task.mark==Mark::Mute || match_name.starts_with("-") {
+                        // Skip
+                        println!("trace found {mark} {task} -- SKIPPING");
+                    } else {
+                        // Element or Attribute
+                        println!("trace found {} {task}", task.mark);
+                        let name_str = match_name.to_string();
+                        let data = if task.mark==Mark::Attr {
+                            Content::Attribute(name_str)
+                        } else {
+                            Content::Element(name_str)
+                        };
+                        let temp_root = arena.new_node(data);
                         root.append(temp_root, arena);
                         new_root = temp_root;
                     }
@@ -480,21 +534,15 @@ impl Parser {
                     let dot = &task.dot;
                     for match_rec in dot.matches_iter() {
                         match match_rec {
-                            MatchRec::Term(ch, pos) => {
-                                let new_child = arena.new_node(
-                                    if match_name.starts_with("@") {
-                                        // TODO: fix
-                                         ParseContentDesc::Attribute(match_name.to_string(), ch.to_string())
-                                    } else {
-                                         ParseContentDesc::Text(ch.to_string())
-                                    });
+                            MatchRec::Term(ch, pos, tmark) => {
+                                let new_child = arena.new_node(Content::Text(ch.to_string()) );
                                 new_root.append(new_child, arena);
                                 new_origin = *pos;
                             }
-                            MatchRec::NonTerm(nt_name, pos ) => {
+                            MatchRec::NonTerm(nt_name, pos, mark) => {
                                 // guard against infinite recursion
                                 assert!( (nt_name!=name || new_origin!=origin || *pos!=end));
-                                self.unpack_parse_tree_internal(arena, nt_name, new_origin, *pos, new_root);
+                                self.unpack_parse_tree_internal(arena, nt_name, mark.clone(), new_origin, *pos, new_root);
                                 new_origin = *pos;
                             }
                         }
@@ -524,30 +572,55 @@ impl Parser {
 
 
 
-    pub fn tree_to_testfmt(arena: &Arena<ParseContentDesc>) -> String {
+    pub fn tree_to_testfmt(arena: &Arena<Content>) -> String {
         let mut builder = Builder::default();
         let root = arena.iter().next().unwrap(); // first item == root
         let root_id = arena.get_node_id(root).unwrap();
         for child in root_id.children(arena) {
             Parser::tree_to_testfmt_recurse(arena, &mut builder, child);
         }
-    
         builder.string().unwrap()
     }
     
-    fn tree_to_testfmt_recurse(arena: &Arena<ParseContentDesc>, builder: &mut Builder, nid: NodeId) {
+    fn tree_to_testfmt_recurse(arena: &Arena<Content>, builder: &mut Builder, nid: NodeId) {
         let maybe_node = arena.get(nid);
         if maybe_node.is_none() {
             return;
         }
         match arena.get(nid).unwrap().get() {
-            ParseContentDesc::Root => {},
-            ParseContentDesc::Element(name) => {
+            Content::Root => {},
+            Content::Element(name) => {
                 builder.append("<");
                 builder.append(name.to_string());
+
+                // handle attributes before closing start tag...
+                for attr_child in nid.children(arena).filter(|n| arena.get(n.clone()).unwrap().get().is_attr() ) {
+                    builder.append(" ");
+                    let attr_desc = arena.get(attr_child).unwrap().get();
+                    let attr_name = match attr_desc {
+                        Content::Attribute(attr_name) => attr_name,
+                        _ => unreachable!("Filter on children() somewhow didn't work..."),
+                    };
+                    builder.append(attr_name.to_string());
+                    builder.append("=\"");
+
+                    // aggregate descendent text nodes; escape &quot;
+                    for descendant in attr_child.descendants(arena) {
+                        let mut attr_builder = Builder::default();
+                        match arena.get(descendant).unwrap().get() {
+                            Content::Text(txt) => attr_builder.append(txt.as_str()),
+                            _ => {}
+                        }
+                        builder.append(attr_builder.string().unwrap().replace("\"", "&quot;"));
+                    }
+
+                    builder.append("\"");
+                }
+
                 builder.append(">");
     
                 for child in nid.children(arena) {
+                    println!("testfmt found {child} in ::Element");
                     Parser::tree_to_testfmt_recurse(arena, builder, child);
                 }
     
@@ -555,8 +628,8 @@ impl Parser {
                 builder.append(name.to_string());
                 builder.append(">");
             },
-            ParseContentDesc::Attribute(_, _) => todo!(),
-            ParseContentDesc::Text(utf8) => builder.append(utf8.clone()),
+            Content::Attribute(_) => {}, // handled above
+            Content::Text(utf8) => builder.append(utf8.clone()),
         }
     }
 

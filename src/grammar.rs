@@ -1,6 +1,32 @@
+//! An ixml grammar definition based on https://invisiblexml.org/
+//! 
+//! ixml grammars are defined down to the character-level -- there is no "lexing" phase.
+//! 
+//! A simple example ixml grammar might be:
+//! doc = "A", "B" | "C", "D".
+//! 
+//! A grammar is encoded as a map of definitions: SmolStr -> BranchingRule
+//! (SmolStr is a O(1)-to-clone immutable string type)
+//! 
+//! In the example gramamr there are two possible branches for the "doc" rule - either ("A","B") or ("C","D")
+//! A BranchingRule captures all possible alternatives (called 'alts' in the ixml spec)
+//! A BranchingRule contains a Mark, a Vec<Rule>, and an is_internal flag.
+//! (In ixml, a Mark can be a @ prefix indicating an attribute, or a - prefix indicating to skip over this term)
+//! 
+//! A (non-branching) Rule is always a sequence of zero or more Factors, a Vec<Factor>
+//! A Factor is an enum of either
+//! Terminal(TMark, Lit)  (a TMark is like a Mark, except there is no @ prefix)
+//! or
+//! Nonterm(Mark, SmolStr) which is a reference to a different definition (which must exist elsewhere in the grammar)
+//!
+//! More complicated structures like x? or x+ or x* or x++y or x**y
+//! are built from the existing primitives and recursive definitions
+//! 
+//! This module includes an ergonomic interface for building grammars by hand,
+//! or from the output of upstream processes (including ixml parsing!)
+
 use std::{fmt, collections::HashMap};
 use smol_str::SmolStr;
-
 use crate::{parser::DotNotation, unicode_ranges::UnicodeRange};
 
 // TODO: Optimization: add CharMatchers at the Grammar level
@@ -9,22 +35,28 @@ use crate::{parser::DotNotation, unicode_ranges::UnicodeRange};
 #[derive(Debug, Clone)]
 pub struct Grammar {
     definitions: HashMap<SmolStr, BranchingRule>,
-    top_rule_name: SmolStr,
+    root_definition_name: SmolStr,
 }
 
 impl Grammar {
-    pub fn new(top_rule_name: &str) -> Self {
+    pub fn new(root_definition_name: &str) -> Self {
         Self {
             definitions: HashMap::new(),
-            top_rule_name: SmolStr::new(top_rule_name)
+            root_definition_name: SmolStr::new(root_definition_name)
             }
     }
 
     /// merge contents of RuleBuilder (which might include entire synthesized named rules) into Grammar
+    /// Including the given Mark
     /// Consumes the RuleBuilder
     pub fn define(&mut self, name: &str, rb: RuleBuilder) {
+        self.mark_define(Mark::Default, name, rb)
+    }
+
+    /// merge contents of RuleBuilder (which might include entire synthesized named rules) into Grammar
+    /// Consumes the RuleBuilder
+    pub fn mark_define(&mut self, mark: Mark, name: &str, rb: RuleBuilder) {
         // 1) the main rule 
-        let mark = Mark::Default; // TODO: get actual Mark
         let main_rule = Rule::new(rb.factors);
         let branching_rule = self.definitions.entry(SmolStr::new(name))
             .or_insert(BranchingRule::new(mark));
@@ -34,22 +66,26 @@ impl Grammar {
         for (syn_name, builders) in rb.syn_rules {
             for builder in builders {
                 let syn_branching_rule = self.definitions.entry(syn_name.clone())
-                    .or_insert(BranchingRule::new(Mark::Skip));
+                    .or_insert(BranchingRule::new(Mark::Mute));
                 syn_branching_rule.add_alt_branch(Rule::new(builder.factors));
             }
         }
     }
 
-    pub fn get_branching_rule<'a>(&'a self, name: &str) -> &'a BranchingRule {
+    pub fn get_root_definition_name(&self) -> &str {
+        &self.root_definition_name
+    }
+
+    pub fn get_root_definition<'a>(&'a self) -> &'a BranchingRule {
+        self.get_definition(&self.root_definition_name)
+    }
+    
+    pub fn get_definition_mark(&self, name: &str) -> Mark {
+        self.definitions[name].mark.clone()
+    }
+
+    pub fn get_definition<'a>(&'a self, name: &str) -> &'a BranchingRule {
         &self.definitions[name]
-    }
-
-    pub fn get_top_branching_rule<'a>(&'a self) -> &'a BranchingRule {
-        self.get_branching_rule(&self.top_rule_name)
-    }
-
-    pub fn get_top_rule_name(&self) -> &str {
-        &self.top_rule_name
     }
 }
 
@@ -57,6 +93,7 @@ impl fmt::Display for Grammar {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut builder = string_builder::Builder::default();
         for (name, branching_rule) in &self.definitions {
+            builder.append(branching_rule.mark.to_string());
             builder.append(name.to_string());
             builder.append(": ");
             let rules: Vec<String> = branching_rule.alts.clone().iter()
@@ -115,17 +152,22 @@ impl BranchingRule {
     pub fn iter(&self) -> RuleIter<'_> {
         RuleIter(&self.alts, 0)
     }
+
+    pub fn mark(&self) -> Mark {
+        self.mark.clone()
+    }
 }
 
-/// Representation of marks on rules or terms. These get used everywhere, so the varient names are kept short
+/// Representation of marks on rules or nonterminal references.
+/// These get used often, so the varient names are kept short
 /// @ for attribute
 /// - for hidden
 /// ^ for visible (default)
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Mark {
     Default,
-    Viz,
-    Skip,
+    Unmute,
+    Mute,
     Attr,
 }
 
@@ -133,9 +175,31 @@ impl fmt::Display for Mark {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Mark::Default => write!(f, ""),
-            Mark::Viz => write!(f, "^"),
-            Mark::Skip => write!(f, "-"),
+            Mark::Unmute => write!(f, "^"),
+            Mark::Mute => write!(f, "-"),
             Mark::Attr => write!(f, "@"),
+        }
+    }
+}
+
+/// Representation of tmarks on terminals
+/// (Much like Mark, except no Attr variant)
+/// These get used often, so the varient names are kept short
+/// - for hidden
+/// ^ for visible (default)
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum TMark {
+    Default,
+    Unmute,
+    Mute,
+}
+
+impl fmt::Display for TMark {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TMark::Default => write!(f, ""),
+            TMark::Unmute => write!(f, "^"),
+            TMark::Mute => write!(f, "-"),
         }
     }
 }
@@ -162,7 +226,6 @@ impl Rule {
 
     pub fn dot_notator(&self) -> crate::parser::DotNotation {
         DotNotation::new(&self)
-        //crate::parser::DotNotation { iteratee: self.clone(), matched_so_far: Vec::new() }
     }
 
     pub fn add_term(&mut self, term: Factor) {
@@ -194,25 +257,25 @@ impl fmt::Display for Rule {
 /// At thit low level, an individual Factor is either a terminal or a nonterminal
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Factor {
-    Terminal(Mark, Lit),
+    Terminal(TMark, Lit),
     Nonterm(Mark, SmolStr),
 }
 
 impl Factor {
     /// drain off the matchers from a LitBuilder, producing a new Factor::Terminal
-    fn new_lit(builder: LitBuilder, mark: Mark) -> Factor {
+    fn new_lit(builder: LitBuilder, tmark: TMark) -> Factor {
         let is_exclude = builder.lit.is_exclude;
         let mut lit = Lit::new();
         lit.matchers = builder.lit.matchers;
         lit.is_exclude = is_exclude;
-        Factor::Terminal(mark, lit)
+        Factor::Terminal(tmark, lit)
     }
 }
 
 impl fmt::Display for Factor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Factor::Terminal(mark, lit) => write!(f, "{mark}{lit}"),
+            Factor::Terminal(tmark, lit) => write!(f, "{tmark}{lit}"),
             Factor::Nonterm(mark, str) => write!(f, "{mark}{str}"),
         }
     }
@@ -357,60 +420,60 @@ impl RuleBuilder {
 
     /// Convenience function: accept a single char
     pub fn ch(mut self, ch: char) -> RuleBuilder {
-        self.mark_ch(ch, Mark::Default)
+        self.mark_ch(ch, TMark::Default)
     }
 
-    /// Convenience function: accept a single char, with specified Mark
-    pub fn mark_ch(mut self, ch: char, mark: Mark) -> RuleBuilder {
-        let factor = Factor::new_lit(Lit::union().ch(ch) , mark);
+    /// Convenience function: accept a single char, with specified TMark
+    pub fn mark_ch(mut self, ch: char, tmark: TMark) -> RuleBuilder {
+        let factor = Factor::new_lit(Lit::union().ch(ch) , tmark);
         self.factors.push(factor);
         self
     }
 
     /// Convenience function: accept a single char out of a list
     pub fn ch_in(mut self, chrs: &str) -> RuleBuilder {
-        self.mark_ch_in(chrs, Mark::Default)
+        self.mark_ch_in(chrs, TMark::Default)
     }
 
-    /// Convenience function: accept a single char out of a list, with specified Mark
-    pub fn mark_ch_in(mut self, chrs: &str, mark: Mark) -> RuleBuilder {
-        let factor = Factor::new_lit( Lit::union().ch_in(chrs), mark);
+    /// Convenience function: accept a single char out of a list, with specified TMark
+    pub fn mark_ch_in(mut self, chrs: &str, tmark: TMark) -> RuleBuilder {
+        let factor = Factor::new_lit( Lit::union().ch_in(chrs), tmark);
         self.factors.push(factor);
         self
     }
 
     /// Convenience function: accept a single character within a range
     pub fn ch_range(mut self, bot: char, top: char) -> RuleBuilder {
-        self.mark_ch_range(bot, top, Mark::Default)
+        self.mark_ch_range(bot, top, TMark::Default)
     }
 
-    /// Convenience function: accept a single character within a range, with specified Mark
-    pub fn mark_ch_range(mut self, bot: char, top: char, mark: Mark) -> RuleBuilder {
-        let factor = Factor::new_lit(Lit::union().ch_range(bot, top), mark);
+    /// Convenience function: accept a single character within a range, with specified TMark
+    pub fn mark_ch_range(mut self, bot: char, top: char, tmark: TMark) -> RuleBuilder {
+        let factor = Factor::new_lit(Lit::union().ch_range(bot, top), tmark);
         self.factors.push(factor);
         self
     }
 
     /// Convenience function: accept a single character within a Unicode range
     pub fn ch_unicode(mut self, name: &str) -> RuleBuilder {
-        self.mark_ch_unicode(name, Mark::Default)
+        self.mark_ch_unicode(name, TMark::Default)
     }
 
-    /// Convenience function: accept a single character within a Unicode range, with specified Mark
-    pub fn mark_ch_unicode(mut self, name: &str, mark: Mark) -> RuleBuilder {
-        let factor = Factor::new_lit(Lit::union().ch_unicode(name), mark);
+    /// Convenience function: accept a single character within a Unicode range, with specified TMark
+    pub fn mark_ch_unicode(mut self, name: &str, tmark: TMark) -> RuleBuilder {
+        let factor = Factor::new_lit(Lit::union().ch_unicode(name), tmark);
         self.factors.push(factor);
         self
     }
 
     /// if convenience funcutions don't sufice, build your own Lit here
     pub fn lit(mut self, lit: LitBuilder) -> RuleBuilder {
-        self.mark_lit(lit, Mark::Default)
+        self.mark_lit(lit, TMark::Default)
     }
 
-    /// if convenience funcutions don't sufice, build your own Lit here, with specified Mark
-    pub fn mark_lit(mut self, lit: LitBuilder, mark: Mark) -> RuleBuilder {
-        let factor = Factor::new_lit(lit, mark);
+    /// if convenience funcutions don't sufice, build your own Lit here, with specified TMark
+    pub fn mark_lit(mut self, lit: LitBuilder, tmark: TMark) -> RuleBuilder {
+        let factor = Factor::new_lit(lit, tmark);
         self.factors.push(factor);
         self
     }
@@ -420,7 +483,7 @@ impl RuleBuilder {
         self.nt_mark(name, Mark::Default)
     }
 
-    /// nonterminal, with specified mark
+    /// nonterminal, with specified Mark
     pub fn nt_mark(mut self, name: &str, mark: Mark) -> RuleBuilder {
         let term = Factor::Nonterm(mark, SmolStr::new(name));
         self.factors.push(term);
@@ -460,7 +523,7 @@ impl RuleBuilder {
         self = self.syn_rule(f_option, Rule::seq()); // empty
         self = self.syn_rule(f_option, sub);
         // 2 insert newly created nt into sequence under construction
-        self.nt_mark(f_option, Mark::Skip)
+        self.nt_mark(f_option, Mark::Mute)
     }
 
     /// f* ⇒ f-star
@@ -471,7 +534,7 @@ impl RuleBuilder {
         let f_star: &str = &self.mint_internal_id("f-star");
         self = self.syn_rule(f_star, Rule::seq().opt(Rule::seq().expr(sub).nt(f_star)));
         // 2 insert newly-created nt into sequence under construction
-        self.nt_mark(f_star, Mark::Skip)
+        self.nt_mark(f_star, Mark::Mute)
     }
 
     /// f+ ⇒ f-plus
@@ -482,7 +545,7 @@ impl RuleBuilder {
         let f_plus: &str = &self.mint_internal_id("f-plus");
         self = self.syn_rule(f_plus, Rule::seq().expr(sub.clone()).repeat0(Rule::seq().expr(sub)));
         // 2 insert newly-created nt into sequence under construction
-        self.nt_mark(f_plus, Mark::Skip)
+        self.nt_mark(f_plus, Mark::Mute)
     }
 
     /// f++sep ⇒ f-plus-sep
@@ -494,7 +557,7 @@ impl RuleBuilder {
         let f_plus_sep: &str = &self.mint_internal_id("f-plus-sep");
         self = self.syn_rule(f_plus_sep, Rule::seq().expr(sub1.clone()).repeat0(Rule::seq().expr(sub2).expr(sub1)));
         // 2 insert newly-created nt into sequence under construction
-        self.nt_mark(f_plus_sep, Mark::Skip)
+        self.nt_mark(f_plus_sep, Mark::Mute)
     }    
 
     /// f**sep ⇒ f-star-sep
@@ -506,7 +569,7 @@ impl RuleBuilder {
         let f_star_sep: &str = &self.mint_internal_id("f-star-sep");
         self = self.syn_rule(f_star_sep, Rule::seq().opt( Rule::seq().repeat1_sep(sub1, sub2)));
         // 2 insert newly-created nt into sequence under construction
-        self.nt_mark(f_star_sep, Mark::Skip)
+        self.nt_mark(f_star_sep, Mark::Mute)
     }
 
     /// internal identifier for synthesized rules

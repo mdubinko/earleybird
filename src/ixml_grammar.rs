@@ -1,4 +1,4 @@
-use crate::grammar::{Grammar, Rule, Mark};
+use crate::grammar::{Grammar, Rule, Mark, TMark};
 
 // TODO: -rules and @rules
 
@@ -27,10 +27,10 @@ pub fn grammar() -> Grammar {
         .opt(Rule::seq().nt("mark").nt("s"))
         .nt("name")
         .nt("s")
-        .mark_ch_in("=:", Mark::Skip)
+        .mark_ch_in("=:", TMark::Mute)
         .nt("s")
-        .nt_mark("alts", Mark::Skip)
-        .mark_ch('.', Mark::Skip) );
+        .nt_mark("alts", Mark::Mute)
+        .mark_ch('.', TMark::Mute) );
 
     // @mark: ["@^-"].
     g.define("mark", Rule::seq().ch_in("@^-"));
@@ -44,12 +44,12 @@ pub fn grammar() -> Grammar {
     // alts: alt++(-[";|"], s).
     g.define("alts", Rule::seq().repeat1_sep(
         Rule::seq().nt("alt"),
-        Rule::seq().mark_ch_in(";|", Mark::Skip).nt("s") ));
+        Rule::seq().mark_ch_in(";|", TMark::Mute).nt("s") ));
 
     // alt: term**(-",", s)
     g.define("alt", Rule::seq().repeat0_sep(
         Rule::seq().nt("term"),
-        Rule::seq().mark_ch(',', Mark::Skip).nt("s") ));
+        Rule::seq().mark_ch(',', TMark::Mute).nt("s") ));
 
     // -term: factor; option; repeat0; repeat1.
     // TODO: option; repeat0; repeat1
@@ -69,7 +69,7 @@ pub fn grammar() -> Grammar {
     g.define("factor", Rule::seq().nt("terminal"));
     g.define("factor", Rule::seq().nt("nonterminal"));
     g.define("factor", Rule::seq()
-        .mark_ch('(', Mark::Skip).nt("s").nt("alts").mark_ch(')', Mark::Skip).nt("s"));
+        .mark_ch('(', TMark::Mute).nt("s").nt("alts").mark_ch(')', TMark::Mute).nt("s"));
 
     // -terminal: literal; charset.
     // TODO charset
@@ -91,9 +91,9 @@ pub fn grammar() -> Grammar {
     // @string: -'"', dchar+, -'"'; -"'", schar+, -"'".
     // TODO schar variant
     g.define("string", Rule::seq()
-        .mark_ch('"', Mark::Skip)
+        .mark_ch('"', TMark::Mute)
         .repeat1( Rule::seq().nt("dchar"))
-        .mark_ch('"', Mark::Skip) );
+        .mark_ch('"', TMark::Mute) );
 
     // dchar: ~['"'; #a; #d]; '"', -'"'. {all characters except line breaks; quotes must be doubled}
     // TODO: fixme

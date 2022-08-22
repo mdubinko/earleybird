@@ -1,4 +1,4 @@
-use crate::grammar::{Grammar, Rule, Lit};
+use crate::grammar::{Grammar, Rule, Lit, Mark};
 
 /// temporary hack to get hands-on
 /// TODO: Maybe use traits?
@@ -10,6 +10,7 @@ use crate::grammar::{Grammar, Rule, Lit};
 
 // smoke tests
 pub struct SmokeChars {}
+pub struct SmokeAttr {}
 pub struct SmokeSeq {}
 pub struct SmokeAlt {}
 pub struct SmokeNT {}
@@ -39,6 +40,25 @@ impl SmokeChars {
     }
     pub fn get_expected() -> Vec<&'static str> {
         vec!["<doc>0 Ga</doc>", "<doc>9\u{00a0}!f</doc>"]
+    }
+}
+
+impl SmokeAttr {
+    pub fn get_grammar() -> Grammar {
+        // doc = name, ":", value.
+        // @name = ["a"-"z"]+.
+        // value = ["a"-"z"]+.
+        let mut g = Grammar::new("doc");
+        g.define("doc", Rule::seq().nt("name").ch(':').nt("value"));
+        g.mark_define(Mark::Attr, "name", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
+        g.define("value", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
+        g
+    }
+    pub fn get_inputs() -> Vec<&'static str> {
+        vec!["a:b", "abc:def"]
+    }
+    pub fn get_expected() -> Vec<&'static str> {
+        vec![r#"<doc name="a">:<value>b</value></doc>"#, r#"<doc name="abc">:<value>def</value></doc>"#]
     }
 }
 
