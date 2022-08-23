@@ -251,55 +251,28 @@ impl TraceArena {
 }
 
 struct InputIter {
-    pos: usize,
-    farthest_pos: usize,
-    at_eof: bool,
     tokens: Vec<char>,
+    // actual position is tracked externally, in Tasks
 }
 
 impl InputIter {
     fn new(input: &str) -> InputIter {
         InputIter {
-            pos: 0,
-            farthest_pos: 0,
-            at_eof: 0 == input.len(),
             tokens: input.chars().collect::<Vec<_>>() }
     }
 
-    pub fn pos(&self) -> usize {
-        self.pos
+    pub fn at_eof(&self, pos: usize) -> bool {
+         pos >= self.tokens.len()
     }
 
-    pub fn farthest_pos(&self) -> usize {
-        self.farthest_pos
-    }
-
-    pub fn at_eof(&self) -> bool {
-        self.at_eof 
-    }
-
-    pub fn get_tok(&self) -> char {
-        if self.at_eof {
+    pub fn get_at(&mut self, pos: usize) -> char {
+        if self.at_eof(pos) {
+            println!("📄🚫");
             '\x1f' // EOF char
         } else {
-            self.tokens[self.pos]
+            self.tokens[pos]
         }
     }
-
-    pub fn next(&mut self, amount: usize) -> (char, usize) {
-        let new_pos = self.pos + amount;
-        if new_pos >= self.tokens.len() {
-            self.pos = self.tokens.len(); // one past end
-            self.at_eof = true;
-            println!("Reached EOF at position {}", self.pos());
-        } else {
-            self.pos += amount;
-            println!("⏭ Advanced input to position {} (='{}')", self.pos(), self.get_tok());
-        }
-        self.farthest_pos = self.pos;
-        (self.get_tok(), self.pos())
-    }
-
     // TODO: row/col machinery for input tokens
 }
 
@@ -354,7 +327,7 @@ impl Parser {
         // help avoid borrow-contention on *self
         let g = self.grammar.clone();
     
-        println!("Input now at position {} '{}'", input.pos(), input.get_tok());
+        println!("Input now at position {} '{}'", 0, input.get_at(0));
 
         // Seed with top expr
         let top_rule = g.get_root_definition();
@@ -364,13 +337,18 @@ impl Parser {
         }
         // work through the queue
         while let Some(tid) = self.traces.queue.pop_front() {
-            println!("Pulled from queue {}", self.traces.format_task(tid));
+            let current_pos = self.traces.get(tid).pos;
+            if current_pos > self.farthest_pos {
+                println!("⏭ Advanced input to position {} (='{}')", current_pos, input.get_at(current_pos));
+                self.farthest_pos = current_pos;
+            }
+            println!("Pulled from queue {} at {}", self.traces.format_task(tid), current_pos);
 
             let is_completed = self.traces.get(tid).dot.is_completed();
 
             // task in completed state?
             if is_completed {
-                println!("COMPLETER pos={}", self.traces.get(tid).pos);
+                println!("COMPLETER pos={}", current_pos);
                 self.completed_trace.push(tid);
 
                 // find “parent” states at same origin that can produce this expr;
@@ -430,29 +408,28 @@ impl Parser {
                         let new_pos = self.traces.get(tid).pos;
                         // "origin" for this downstream task now matches current pos
                         let maybe_id = self.traces.task_downstream(&name, effective_mark.clone(), new_pos, new_pos, dot);
-                        //self.queue_front(maybe_id);
-                        self.queue_back(maybe_id);
+                        self.queue_front(maybe_id);
+                        //self.queue_back(maybe_id);
                     }
                 }
                 Factor::Terminal(tmark, matcher) => {
                     // record terminal
-                    println!("SCANNER: Terminal {tmark}{matcher}");
-                    if matcher.accept(input.get_tok()) {
+                    println!("SCANNER: Terminal {tmark}{matcher} at pos={current_pos}");
+                    if matcher.accept(input.get_at(current_pos)) {
                         // Match!
-                        let rec = MatchRec::Term(input.get_tok(), input.pos() + 1, tmark);
+                        let rec = MatchRec::Term(input.get_at(current_pos), current_pos + 1, tmark);
                         println!("advance cursor SCAN");
                         let maybe_id = self.traces.task_advance_cursor(tid, rec);
                         self.queue_back(maybe_id);
 
-                        input.next(1);
+                        //input.next(1);
 
                     } else {
-                        println!("non-matched char '{}' (expecting {matcher}); 🛑", input.get_tok());
+                        println!("non-matched char '{}' (expecting {matcher}); 🛑", input.get_at(current_pos));
                     }
                 }
             }
         } // while
-        self.farthest_pos = input.farthest_pos();
         println!("Finished parse with {} items in trace", self.traces.arena.len());
         //&self.trace
     }

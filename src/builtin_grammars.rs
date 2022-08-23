@@ -10,7 +10,6 @@ use crate::grammar::{Grammar, Rule, Lit, Mark};
 
 // smoke tests
 pub struct SmokeChars {}
-pub struct SmokeAttr {}
 pub struct SmokeSeq {}
 pub struct SmokeAlt {}
 pub struct SmokeNT {}
@@ -19,6 +18,9 @@ pub struct SmokeStar {}
 pub struct SmokePlus {}
 pub struct SmokeStarSep {}
 pub struct SmokePlusSep {}
+/// SmokeElem is intended as a "control" case, identical with SmokeAttr other than the @ Marks
+pub struct SmokeElem {}
+pub struct SmokeAttr {}
 
 // test suites
 pub struct SuiteWiki {}
@@ -40,25 +42,6 @@ impl SmokeChars {
     }
     pub fn get_expected() -> Vec<&'static str> {
         vec!["<doc>0 Ga</doc>", "<doc>9\u{00a0}!f</doc>"]
-    }
-}
-
-impl SmokeAttr {
-    pub fn get_grammar() -> Grammar {
-        // doc = name, ":", value.
-        // @name = ["a"-"z"]+.
-        // value = ["a"-"z"]+.
-        let mut g = Grammar::new("doc");
-        g.define("doc", Rule::seq().nt("name").ch(':').nt("value"));
-        g.mark_define(Mark::Attr, "name", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
-        g.define("value", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
-        g
-    }
-    pub fn get_inputs() -> Vec<&'static str> {
-        vec!["a:b", "abc:def"]
-    }
-    pub fn get_expected() -> Vec<&'static str> {
-        vec![r#"<doc name="a">:<value>b</value></doc>"#, r#"<doc name="abc">:<value>def</value></doc>"#]
     }
 }
 
@@ -193,6 +176,53 @@ impl SmokePlusSep {
     }
     pub fn get_expected() -> Vec<&'static str> {
         vec!["<doc>a a</doc>", "<doc>a a a</doc>"]
+    }
+}
+
+impl SmokeElem {
+    pub fn get_grammar() -> Grammar {
+        // doc = name, ":", value.
+        // name = ["a"-"z"]+.
+        // value = ["a"-"z"]+.
+        let mut g = Grammar::new("doc");
+        g.define("doc", Rule::seq().nt("name").ch(':').nt("value"));
+        //g.mark_define(Mark::Attr, "name", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
+        //g.define("value", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
+        g.define("name", Rule::seq().ch('a'));
+        g.define("name", Rule::seq().ch('a').ch('b').ch('c'));
+        g.define("value", Rule::seq().ch('b'));
+        g.define("value", Rule::seq().ch('d').ch('e').ch('f'));
+        g
+    }
+    pub fn get_inputs() -> Vec<&'static str> {
+        vec!["a:b", "abc:def"]
+    }
+    pub fn get_expected() -> Vec<&'static str> {
+        vec!["<doc><name>a</name>:<value>b</value></doc>", "<doc><name>abc</name>:<value>def</value></doc>"]
+    }
+}
+
+impl SmokeAttr {
+    pub fn get_grammar() -> Grammar {
+        // n.b. identical to SmokeElem other than @ Mark on the name definition
+        // doc = name, ":", value.
+        // @name = ["a"-"z"]+.
+        // value = ["a"-"z"]+.
+        let mut g = Grammar::new("doc");
+        g.define("doc", Rule::seq().nt("name").ch(':').nt("value"));
+        //g.mark_define(Mark::Attr, "name", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
+        //g.define("value", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
+        g.mark_define(Mark::Attr, "name", Rule::seq().ch('a'));
+        g.mark_define(Mark::Attr, "name", Rule::seq().ch('a').ch('b').ch('c'));
+        g.define("value", Rule::seq().ch('b'));
+        g.define("value", Rule::seq().ch('d').ch('e').ch('f'));
+        g
+    }
+    pub fn get_inputs() -> Vec<&'static str> {
+        vec!["a:b", "abc:def"]
+    }
+    pub fn get_expected() -> Vec<&'static str> {
+        vec![r#"<doc name="a">:<value>b</value></doc>"#, r#"<doc name="abc">:<value>def</value></doc>"#]
     }
 }
 
