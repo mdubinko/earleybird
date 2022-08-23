@@ -59,14 +59,14 @@ impl Grammar {
         // 1) the main rule 
         let main_rule = Rule::new(rb.factors);
         let branching_rule = self.definitions.entry(SmolStr::new(name))
-            .or_insert(BranchingRule::new(mark));
+            .or_insert_with(|| BranchingRule::new(mark));
         branching_rule.add_alt_branch(main_rule);
         
         // 2) synthesized rules
         for (syn_name, builders) in rb.syn_rules {
             for builder in builders {
                 let syn_branching_rule = self.definitions.entry(syn_name.clone())
-                    .or_insert(BranchingRule::new(Mark::Mute));
+                    .or_insert_with(|| BranchingRule::new(Mark::Mute));
                 syn_branching_rule.add_alt_branch(Rule::new(builder.factors));
             }
         }
@@ -76,7 +76,7 @@ impl Grammar {
         &self.root_definition_name
     }
 
-    pub fn get_root_definition<'a>(&'a self) -> &'a BranchingRule {
+    pub fn get_root_definition(&self) -> &BranchingRule {
         self.get_definition(&self.root_definition_name)
     }
     
@@ -84,7 +84,7 @@ impl Grammar {
         self.definitions[name].mark.clone()
     }
 
-    pub fn get_definition<'a>(&'a self, name: &str) -> &'a BranchingRule {
+    pub fn get_definition(&self, name: &str) -> &BranchingRule {
         &self.definitions[name]
     }
 }
@@ -225,7 +225,7 @@ impl Rule {
     }
 
     pub fn dot_notator(&self) -> crate::parser::DotNotation {
-        DotNotation::new(&self)
+        DotNotation::new(self)
     }
 
     pub fn add_term(&mut self, term: Factor) {
@@ -340,7 +340,7 @@ impl CharMatcher {
             CharMatcher::Exact(ch) => *ch==test,
             CharMatcher::OneOf(lst) => lst.contains(test),
             CharMatcher::Range(bot, top) => test <= *top && test >= *bot,
-            CharMatcher::UnicodeRange(name) => UnicodeRange::new(&name).accept(test),
+            CharMatcher::UnicodeRange(name) => UnicodeRange::new(name).accept(test),
         }
     }
 }

@@ -1,4 +1,6 @@
-use crate::grammar::{Grammar, Rule, Mark, TMark};
+use indextree::{Arena, NodeId};
+
+use crate::{grammar::{Grammar, Rule, Mark, TMark}, parser::Content};
 
 // TODO: -rules and @rules
 
@@ -39,7 +41,7 @@ pub fn grammar() -> Grammar {
     // -namestart: ["_"; L].
     // -namefollower: namestart; ["-.·‿⁀"; Nd; Mn].
     // TODO: fixme
-    g.define("name", Rule::seq().repeat1( Rule::seq().ch_in("_abcdefghijklmnopqrstuvwxyzRS")));
+    g.mark_define(Mark::Attr, "name", Rule::seq().repeat1( Rule::seq().ch_in("_abcdefghijklmnopqrstuvwxyzRS")));
 
     // alts: alt++(-[";|"], s).
     g.define("alts", Rule::seq().repeat1_sep(
@@ -119,7 +121,7 @@ fn parse_ixml() {
     let mut parser = crate::parser::Parser::new(g);
     let _trace = parser.parse(ixml);
     let result = crate::parser::Parser::tree_to_testfmt( &parser.unpack_parse_tree("ixml") );
-    let expected = r#"<ixml><rule><name>doc</name><alt><literal string="A"></literal><literal string="B"></literal></alt></rule></ixml>"#;
+    let expected = r#"<ixml><rule name="doc"><alt><literal string="A"></literal><literal string="B"></literal></alt></rule></ixml>"#;
     assert_eq!(result, expected);
 
     // now do a second pass, with the just-generated grammar
@@ -201,3 +203,27 @@ member: string;
 -letter: ["a"-"z"].
 insertion: -"+", s, (string; -"#", hex), s.
 */
+
+/// Accepts the Arena<Content> resulting from the parse of a valid ixml grammar
+/// Produces a new Grammar as output
+pub fn ixml_tree_to_grammar(arena: &Arena<Content>) -> Grammar {
+    let g = Grammar::new("ixml");
+
+    let root_node = arena.iter().next().unwrap(); // first item == root
+    let root_id = arena.get_node_id(root_node).unwrap();
+
+    // first a pass over everything, making some indexes as we go
+    let mut all_rules: Vec<NodeId> = Vec::new();
+    for nid in root_id.descendants(arena) {
+        let content = arena.get(nid).unwrap().get();
+        match content {
+            Content::Element(name) if name=="rule" => all_rules.push(nid),
+            _ => {}
+        }
+    }
+
+
+    for child in all_rules {
+    }
+    g
+}

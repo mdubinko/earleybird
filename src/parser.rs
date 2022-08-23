@@ -9,7 +9,7 @@ use log::{info, debug, trace};
 // TODO: logs ^^^
 // TODO: just make parser.parse return indextree::Arena
 
-const DOTSEP: &'static str = "•";
+const DOTSEP: &str = "•";
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 /// A sort of iterator for a Rule.
@@ -85,8 +85,8 @@ enum MatchRec {
 impl MatchRec {
     fn pos(&self) -> usize {
         match self {
-            MatchRec::Term(_, pos, _) => pos.clone(),
-            MatchRec::NonTerm(_, pos, _) => pos.clone(),
+            MatchRec::Term(_, pos, _) => *pos,
+            MatchRec::NonTerm(_, pos, _) => *pos,
         }
     }
 }
@@ -283,16 +283,10 @@ pub enum Content {
 
 impl Content {
     pub fn is_attr(&self) -> bool {
-        match self {
-            Content::Attribute(_) => true,
-            _ => false,
-        }
+        matches!(self, Content::Attribute(_))
     }
     pub fn is_elem(&self) -> bool {
-        match self {
-            Content::Element(_) => true,
-            _=> false,
-        }
+        matches!(self, Content::Element(_))
     }
 }
 
@@ -428,13 +422,13 @@ impl Parser {
     }
 
     fn queue_front(&mut self, maybe_id: Option<TraceId>) {
-        for id in maybe_id {
+        if let Some(id) = maybe_id {
             self.traces.queue.push_front(id)
         }
     }
 
     fn  queue_back(&mut self, maybe_id: Option<TraceId>) {
-        for id in maybe_id {
+        if let Some(id) = maybe_id {
             self.traces.queue.push_back(id)
         }
     }
@@ -476,14 +470,14 @@ impl Parser {
         arena
     }
 
-    fn unpack_parse_tree_internal(&self, arena: &mut Arena<Content>, name: &str, mark: Mark, origin: usize, end: usize, root: NodeId) -> () {
+    fn unpack_parse_tree_internal(&self, arena: &mut Arena<Content>, name: &str, mark: Mark, origin: usize, end: usize, root: NodeId) {
         let matching_trace = self.filter_completed_trace(name, origin, end);
         let mut new_root = root;
             match matching_trace {
                 Some(task) => {
                     let match_name = &task.name;
 
-                    if task.mark==Mark::Mute || match_name.starts_with("-") {
+                    if task.mark==Mark::Mute || match_name.starts_with('-') {
                         // Skip
                         println!("trace found {mark} {task} -- SKIPPING");
                     } else {
@@ -567,7 +561,7 @@ impl Parser {
                 builder.append(name.to_string());
 
                 // handle attributes before closing start tag...
-                for attr_child in nid.children(arena).filter(|n| arena.get(n.clone()).unwrap().get().is_attr() ) {
+                for attr_child in nid.children(arena).filter(|n| arena.get(*n).unwrap().get().is_attr() ) {
                     builder.append(" ");
                     let attr_desc = arena.get(attr_child).unwrap().get();
                     let attr_name = match attr_desc {
@@ -584,7 +578,7 @@ impl Parser {
                             Content::Text(txt) => attr_builder.append(txt.as_str()),
                             _ => {}
                         }
-                        builder.append(attr_builder.string().unwrap().replace("\"", "&quot;"));
+                        builder.append(attr_builder.string().unwrap().replace('\"', "&quot;"));
                     }
 
                     builder.append("\"");
