@@ -12,15 +12,15 @@ pub fn grammar() -> Grammar {
 
     // -s: (whitespace; comment)*. {Optional spacing}
     // TODO: comment
-    g.define("s", Rule::seq().repeat0( Rule::seq().nt("whitespace")));
+    g.mark_define(Mark::Mute, "s", Rule::seq().repeat0( Rule::seq().nt("whitespace")));
 
     // -RS: (whitespace; comment)+. {Required spacing}
     // TODO: comment
-    g.define("RS", Rule::seq().repeat1( Rule::seq().nt("whitespace")));
+    g.mark_define(Mark::Mute, "RS", Rule::seq().repeat1( Rule::seq().nt("whitespace")));
 
     // -whitespace: -[Zs]; tab; lf; cr.
     // TODO: Unicode
-    g.define("whitespace", Rule::seq().ch_in(" \u{0009}\u{000a}\u{000d}"));
+    g.mark_define(Mark::Mute, "whitespace", Rule::seq().mark_ch_in(" \u{0009}\u{000a}\u{000d}", TMark::Mute));
 
     // rule: (mark, s)?, name, s, -["=:"], s, -alts, -".".
     g.define("rule", Rule::seq()
@@ -33,7 +33,7 @@ pub fn grammar() -> Grammar {
         .mark_ch('.', TMark::Mute) );
 
     // @mark: ["@^-"].
-    g.define("mark", Rule::seq().ch_in("@^-"));
+    g.mark_define(Mark::Attr, "mark", Rule::seq().ch_in("@^-"));
 
     // @name: namestart, namefollower*.
     // -namestart: ["_"; L].
@@ -53,7 +53,7 @@ pub fn grammar() -> Grammar {
 
     // -term: factor; option; repeat0; repeat1.
     // TODO: option; repeat0; repeat1
-    g.define("term", Rule::seq().nt("factor"));
+    g.mark_define(Mark::Mute, "term", Rule::seq().nt("factor"));
 
     // option: factor, -"?", s.
     //g.define("option", Rule::seq().nt("factor").mark_ch('?', Mark::Skip).nt("s"));
@@ -66,14 +66,14 @@ pub fn grammar() -> Grammar {
 
     // -factor: terminal; nonterminal; insertion; -"(", s, alts, -")", s.
     // TODO: insertion
-    g.define("factor", Rule::seq().nt("terminal"));
-    g.define("factor", Rule::seq().nt("nonterminal"));
-    g.define("factor", Rule::seq()
+    g.mark_define(Mark::Mute, "factor", Rule::seq().nt("terminal"));
+    g.mark_define(Mark::Mute, "factor", Rule::seq().nt("nonterminal"));
+    g.mark_define(Mark::Mute, "factor", Rule::seq()
         .mark_ch('(', TMark::Mute).nt("s").nt("alts").mark_ch(')', TMark::Mute).nt("s"));
 
     // -terminal: literal; charset.
     // TODO charset
-    g.define("terminal", Rule::seq().nt("literal"));
+    g.mark_define(Mark::Mute, "terminal", Rule::seq().nt("literal"));
 
     // nonterminal: (mark, s)?, name, s.
     g.define("nonterminal", Rule::seq()
@@ -86,11 +86,11 @@ pub fn grammar() -> Grammar {
 
     // -quoted: (tmark, s)?, string, s.
     // TODO tmark
-    g.define("quoted", Rule::seq().nt("string").nt("s"));
+    g.mark_define(Mark::Mute, "quoted", Rule::seq().nt("string").nt("s"));
 
     // @string: -'"', dchar+, -'"'; -"'", schar+, -"'".
     // TODO schar variant
-    g.define("string", Rule::seq()
+    g.mark_define(Mark::Attr, "string", Rule::seq()
         .mark_ch('"', TMark::Mute)
         .repeat1( Rule::seq().nt("dchar"))
         .mark_ch('"', TMark::Mute) );
@@ -119,7 +119,7 @@ fn parse_ixml() {
     let mut parser = crate::parser::Parser::new(g);
     let _trace = parser.parse(ixml);
     let result = crate::parser::Parser::tree_to_testfmt( &parser.unpack_parse_tree("ixml") );
-    let expected = "<ixml><rule></rule></ixml>"; // TODO: fixme
+    let expected = r#"<ixml><rule><name>doc</name><alt><literal string="A"></literal><literal string="B"></literal></alt></rule></ixml>"#;
     assert_eq!(result, expected);
 
     // now do a second pass, with the just-generated grammar
