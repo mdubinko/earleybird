@@ -29,7 +29,7 @@ pub fn grammar() -> Grammar {
         .nt("s")
         .mark_ch_in("=:", TMark::Mute)
         .nt("s")
-        .nt_mark("alts", Mark::Mute)
+        .mark_nt("alts", Mark::Mute)
         .mark_ch('.', TMark::Mute) );
 
     // @mark: ["@^-"].

@@ -1,6 +1,8 @@
-use crate::grammar::{Grammar, Rule, Lit, Mark};
+use crate::grammar::{Grammar, Rule, Lit, Mark, TMark};
 
-/// temporary hack to get hands-on
+/// I am envisioning these as (semi-documented?) builtin grammars that can be invoked via CLI
+/// as a kind of smoke test -- so useful beyond `cargo test`...
+/// 
 /// TODO: Maybe use traits?
 //trait ParserTestSuite {
 //    fn get_grammar() -> Grammar;
@@ -21,6 +23,7 @@ pub struct SmokePlusSep {}
 /// SmokeElem is intended as a "control" case, identical with SmokeAttr other than the @ Marks
 pub struct SmokeElem {}
 pub struct SmokeAttr {}
+pub struct SmokeMute {}
 
 // test suites
 pub struct SuiteWiki {}
@@ -186,12 +189,8 @@ impl SmokeElem {
         // value = ["a"-"z"]+.
         let mut g = Grammar::new("doc");
         g.define("doc", Rule::seq().nt("name").ch(':').nt("value"));
-        //g.mark_define(Mark::Attr, "name", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
-        //g.define("value", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
-        g.define("name", Rule::seq().ch('a'));
-        g.define("name", Rule::seq().ch('a').ch('b').ch('c'));
-        g.define("value", Rule::seq().ch('b'));
-        g.define("value", Rule::seq().ch('d').ch('e').ch('f'));
+        g.define("name", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
+        g.define("value", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {
@@ -210,12 +209,8 @@ impl SmokeAttr {
         // value = ["a"-"z"]+.
         let mut g = Grammar::new("doc");
         g.define("doc", Rule::seq().nt("name").ch(':').nt("value"));
-        //g.mark_define(Mark::Attr, "name", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
-        //g.define("value", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
-        g.mark_define(Mark::Attr, "name", Rule::seq().ch('a'));
-        g.mark_define(Mark::Attr, "name", Rule::seq().ch('a').ch('b').ch('c'));
-        g.define("value", Rule::seq().ch('b'));
-        g.define("value", Rule::seq().ch('d').ch('e').ch('f'));
+        g.mark_define(Mark::Attr, "name", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
+        g.define("value", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
         g
     }
     pub fn get_inputs() -> Vec<&'static str> {
@@ -223,6 +218,28 @@ impl SmokeAttr {
     }
     pub fn get_expected() -> Vec<&'static str> {
         vec![r#"<doc name="a">:<value>b</value></doc>"#, r#"<doc name="abc">:<value>def</value></doc>"#]
+    }
+}
+
+impl SmokeMute {
+    pub fn get_grammar() -> Grammar {
+        // Several different ways to mute...
+        // doc = a, -":", -b, c.
+        // -a = ["a"-"z"]+.
+        // b = ["a"-"m"]+.
+        // c = ["n"-"z"]+.
+        let mut g = Grammar::new("doc");
+        g.define("doc", Rule::seq().nt("a").mark_ch(':', TMark::Mute).mark_nt("b", Mark::Mute).nt("c"));
+        g.mark_define(Mark::Mute, "a", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
+        g.define("b", Rule::seq().repeat1( Rule::seq().ch_range('a', 'm')));
+        g.define("c", Rule::seq().repeat1( Rule::seq().ch_range('n', 'z')));
+        g
+    }
+    pub fn get_inputs() -> Vec<&'static str> {
+        vec!["a:bz", "abc:defxyz"]
+    }
+    pub fn get_expected() -> Vec<&'static str> {
+        vec!["<doc>ab<c>z</c></doc>", "<doc>abcdef<c>xyz</c></doc>"]
     }
 }
 

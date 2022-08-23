@@ -197,6 +197,21 @@ fn run_smoke_attr() {
 }
 
 #[test]
+fn run_smoke_mute() {
+    let inputs = SmokeMute::get_inputs();
+    let expecteds = SmokeMute::get_expected();
+    for i in 0..inputs.len() {
+        println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
+        let g = SmokeMute::get_grammar();
+        let mut parser = Parser::new(g);
+        parser.parse(inputs[i]);
+        let arena = &parser.unpack_parse_tree("doc");
+        let result = Parser::tree_to_testfmt(arena);
+        assert_eq!(expecteds[i], result);
+    }
+}
+
+#[test]
 fn run_suite_wiki() {
     let inputs = SuiteWiki::get_inputs();
     let expecteds = SuiteWiki::get_expected();

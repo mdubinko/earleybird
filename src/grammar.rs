@@ -480,11 +480,11 @@ impl RuleBuilder {
 
     /// nonterminal
     pub fn nt(mut self, name: &str) -> RuleBuilder {
-        self.nt_mark(name, Mark::Default)
+        self.mark_nt(name, Mark::Default)
     }
 
     /// nonterminal, with specified Mark
-    pub fn nt_mark(mut self, name: &str, mark: Mark) -> RuleBuilder {
+    pub fn mark_nt(mut self, name: &str, mark: Mark) -> RuleBuilder {
         let term = Factor::Nonterm(mark, SmolStr::new(name));
         self.factors.push(term);
         self
@@ -523,7 +523,7 @@ impl RuleBuilder {
         self = self.syn_rule(f_option, Rule::seq()); // empty
         self = self.syn_rule(f_option, sub);
         // 2 insert newly created nt into sequence under construction
-        self.nt_mark(f_option, Mark::Mute)
+        self.mark_nt(f_option, Mark::Mute)
     }
 
     /// f* ⇒ f-star
@@ -534,7 +534,7 @@ impl RuleBuilder {
         let f_star: &str = &self.mint_internal_id("f-star");
         self = self.syn_rule(f_star, Rule::seq().opt(Rule::seq().expr(sub).nt(f_star)));
         // 2 insert newly-created nt into sequence under construction
-        self.nt_mark(f_star, Mark::Mute)
+        self.mark_nt(f_star, Mark::Mute)
     }
 
     /// f+ ⇒ f-plus
@@ -545,7 +545,7 @@ impl RuleBuilder {
         let f_plus: &str = &self.mint_internal_id("f-plus");
         self = self.syn_rule(f_plus, Rule::seq().expr(sub.clone()).repeat0(Rule::seq().expr(sub)));
         // 2 insert newly-created nt into sequence under construction
-        self.nt_mark(f_plus, Mark::Mute)
+        self.mark_nt(f_plus, Mark::Mute)
     }
 
     /// f++sep ⇒ f-plus-sep
@@ -557,7 +557,7 @@ impl RuleBuilder {
         let f_plus_sep: &str = &self.mint_internal_id("f-plus-sep");
         self = self.syn_rule(f_plus_sep, Rule::seq().expr(sub1.clone()).repeat0(Rule::seq().expr(sub2).expr(sub1)));
         // 2 insert newly-created nt into sequence under construction
-        self.nt_mark(f_plus_sep, Mark::Mute)
+        self.mark_nt(f_plus_sep, Mark::Mute)
     }    
 
     /// f**sep ⇒ f-star-sep
@@ -569,7 +569,7 @@ impl RuleBuilder {
         let f_star_sep: &str = &self.mint_internal_id("f-star-sep");
         self = self.syn_rule(f_star_sep, Rule::seq().opt( Rule::seq().repeat1_sep(sub1, sub2)));
         // 2 insert newly-created nt into sequence under construction
-        self.nt_mark(f_star_sep, Mark::Mute)
+        self.mark_nt(f_star_sep, Mark::Mute)
     }
 
     /// internal identifier for synthesized rules

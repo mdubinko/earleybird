@@ -58,7 +58,7 @@ impl fmt::Display for DotNotation {
         let done: String = self.matched_so_far.iter()
             .map(| i |
                 match i {
-                    MatchRec::Term(ch, pos, tmark) => format!("'{tmark}{ch}'@{pos}"),
+                    MatchRec::Term(ch, pos, tmark) => format!("{tmark}'{ch}'@{pos}"),
                     MatchRec::NonTerm(name, pos, mark) => format!("{mark}{name}@{pos}"),
             })
             .collect::<Vec<_>>()
@@ -102,10 +102,6 @@ pub struct Task {
 }
 
 impl Task {
-    /// returns a cloned MatchRec
-    fn last_completed(&self) -> Option<MatchRec> {
-        self.dot.matched_so_far.last().map(|x| x.clone())
-    }
     pub fn mark(&self) -> Mark {
         self.mark.clone()
     }
@@ -421,9 +417,6 @@ impl Parser {
                         println!("advance cursor SCAN");
                         let maybe_id = self.traces.task_advance_cursor(tid, rec);
                         self.queue_back(maybe_id);
-
-                        //input.next(1);
-
                     } else {
                         println!("non-matched char '{}' (expecting {matcher}); 🛑", input.get_at(current_pos));
                     }
@@ -448,7 +441,7 @@ impl Parser {
 
     /// Sift through and find only completed Tasks
     /// this speeds up the unpacking process by omitting parse states irrelevant to the final result
-    fn find_completed_trace(&self, name: &str, origin: usize, pos: usize) -> Option<&Task> {
+    fn filter_completed_trace(&self, name: &str, origin: usize, pos: usize) -> Option<&Task> {
         // TODO: optimize
         for tid in &self.completed_trace {
             let t = self.traces.get(*tid);
@@ -459,6 +452,7 @@ impl Parser {
         None
     }
 
+    /// Only for use in test sutes. Not guaranteed to be stable...
     pub fn test_inspect_trace(&self, filter: Option<SmolStr>) -> Vec<Task> {
         match filter {
             Some(str) => self.traces.arena
@@ -483,7 +477,7 @@ impl Parser {
     }
 
     fn unpack_parse_tree_internal(&self, arena: &mut Arena<Content>, name: &str, mark: Mark, origin: usize, end: usize, root: NodeId) -> () {
-        let matching_trace = self.find_completed_trace(name, origin, end);
+        let matching_trace = self.filter_completed_trace(name, origin, end);
         let mut new_root = root;
             match matching_trace {
                 Some(task) => {
@@ -512,8 +506,10 @@ impl Parser {
                     for match_rec in dot.matches_iter() {
                         match match_rec {
                             MatchRec::Term(ch, pos, tmark) => {
-                                let new_child = arena.new_node(Content::Text(ch.to_string()) );
-                                new_root.append(new_child, arena);
+                                if *tmark != TMark::Mute {
+                                    let new_child = arena.new_node(Content::Text(ch.to_string()) );
+                                   new_root.append(new_child, arena);
+                                }
                                 new_origin = *pos;
                             }
                             MatchRec::NonTerm(nt_name, pos, mark) => {
