@@ -174,10 +174,11 @@ fn run_smoke_attr() {
         assert_ne!(0, arena.count());
         for node in arena.iter() {
             match node.get() {
-                earleybird::parser::Content::Attribute(name) => {
-                    println!("Content::Attribute {name}");
+                earleybird::parser::Content::Attribute(name, value) => {
+                    println!("Content::Attribute {name}=\"{value}\"");
                     if name=="name" {
                         assert!(true, "@ name correctly matched as Attribute");
+                        assert!(value.len() > 0);
                     }
                 }
                 earleybird::parser::Content::Element(name) => {

@@ -4,7 +4,8 @@ use multimap::{MultiMap};
 use smol_str::SmolStr;
 use string_builder::Builder;
 use indextree::{Arena, NodeId};
-use log::{info, debug, trace};
+use unicode_character_database::names;
+//use log::{info, debug, trace};
 
 // TODO: logs ^^^
 // TODO: just make parser.parse return indextree::Arena
@@ -277,16 +278,37 @@ impl InputIter {
 pub enum Content {
     Root,
     Element(String),            // name
-    Attribute(String),          // name
+    Attribute(String, String),  // name, value
     Text(String)                // value
 }
 
 impl Content {
     pub fn is_attr(&self) -> bool {
-        matches!(self, Content::Attribute(_))
+        matches!(self, Content::Attribute(_,_))
     }
     pub fn is_elem(&self) -> bool {
         matches!(self, Content::Element(_))
+    }
+    pub fn get_name(&self) -> Option<String> {
+        match self {
+            Content::Element(name) => Some(name.clone()),
+            Content::Attribute(name, _) => Some(name.clone()),
+            _ => None
+        }
+    }
+    pub fn get_value(&self) -> Option<String> {
+        match self {
+            Content::Attribute(_, value) => Some(value.clone()),
+            Content::Text(value) => Some(value.clone()),
+            _ => None
+        }
+    }
+    pub fn set_value(&mut self, value: String) {
+        match self {
+            Content::Attribute(name, _) => *self = Content::Attribute(name.clone(), value),
+            Content::Text(_) => *self = Content::Text(value),
+            _ => panic!("Setting value on content that cannot hold a value"),
+        }
     }
 }
 
@@ -467,7 +489,35 @@ impl Parser {
         let root = arena.new_node(Content::Root);
         println!("assuming ending pos of {}", self.farthest_pos);
         self.unpack_parse_tree_internal(&mut arena, name, Mark::Default, 0, self.farthest_pos, root);
+
+        // the standard algorithm above leaves attribute nodes in an inconvenient state.
+        // with a bare Content::Attribute node, for which one needs to plumb all descendants to find text nodes
+        // below, we do that once-and-for-all for each Content::Attribute node
+        let attr_node_ids = arena.iter()
+            .filter(|n| matches!(n.get(), Content::Attribute(..) ))
+            .map(|n| arena.get_node_id(n).unwrap())
+            .collect::<Vec<_>>();
+        for attr_nid in attr_node_ids {
+            let attr_val = self.get_attr_value(attr_nid, &mut arena);
+            arena.get_mut(attr_nid).unwrap().get_mut().set_value(attr_val);
+        }
+        // n.b. this doesn't actually delete these original descendent text nodes...
+        // but you should never need to even look for them
+
         arena
+    }
+
+    fn get_attr_value(&self, attr_nid: NodeId, arena: &mut Arena<Content>) -> String {
+        let mut attr_value = Builder::default();
+        for descendant in attr_nid.descendants(arena) {
+            let mut attr_builder = Builder::default();
+            match arena.get(descendant).unwrap().get() {
+                Content::Text(txt) => attr_builder.append(txt.as_str()),
+                _ => {}
+            }
+            attr_value.append(attr_builder.string().unwrap().replace('\"', "&quot;"));
+        }
+        attr_value.string().unwrap()
     }
 
     fn unpack_parse_tree_internal(&self, arena: &mut Arena<Content>, name: &str, mark: Mark, origin: usize, end: usize, root: NodeId) {
@@ -485,7 +535,7 @@ impl Parser {
                         println!("trace found {} {task}", task.mark);
                         let name_str = match_name.to_string();
                         let data = if task.mark==Mark::Attr {
-                            Content::Attribute(name_str)
+                            Content::Attribute(name_str, "".to_string()) // 2nd pass will fill in the atttribute value
                         } else {
                             Content::Element(name_str)
                         };
@@ -564,23 +614,13 @@ impl Parser {
                 for attr_child in nid.children(arena).filter(|n| arena.get(*n).unwrap().get().is_attr() ) {
                     builder.append(" ");
                     let attr_desc = arena.get(attr_child).unwrap().get();
-                    let attr_name = match attr_desc {
-                        Content::Attribute(attr_name) => attr_name,
-                        _ => unreachable!("Filter on children() somewhow didn't work..."),
+                    let (attr_name, attr_value) = match attr_desc {
+                        Content::Attribute(attr_name, attr_value) => (attr_name, attr_value),
+                        _ => unreachable!("Filter on Attribute children() somewhow didn't work..."),
                     };
                     builder.append(attr_name.to_string());
                     builder.append("=\"");
-
-                    // aggregate descendent text nodes; escape &quot;
-                    for descendant in attr_child.descendants(arena) {
-                        let mut attr_builder = Builder::default();
-                        match arena.get(descendant).unwrap().get() {
-                            Content::Text(txt) => attr_builder.append(txt.as_str()),
-                            _ => {}
-                        }
-                        builder.append(attr_builder.string().unwrap().replace('\"', "&quot;"));
-                    }
-
+                    builder.append(attr_value.replace('"', "&quot;"));
                     builder.append("\"");
                 }
 
@@ -595,7 +635,7 @@ impl Parser {
                 builder.append(name.to_string());
                 builder.append(">");
             },
-            Content::Attribute(_) => {}, // handled above
+            Content::Attribute(..) => {}, // handled above
             Content::Text(utf8) => builder.append(utf8.clone()),
         }
     }
