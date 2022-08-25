@@ -1,6 +1,6 @@
 use indextree::{Arena, NodeId};
 
-use crate::{grammar::{Grammar, Rule, Mark, TMark}, parser::Content};
+use crate::{grammar::{Grammar, Rule, Mark, TMark, RuleBuilder}, parser::{Content, Parser}};
 
 // TODO: -rules and @rules
 
@@ -118,15 +118,24 @@ fn parse_ixml() {
     println!("{}", &g);
     let ixml: &str = r#"doc = "A", "B"."#;
     //                  012345678901234
-    let mut parser = crate::parser::Parser::new(g);
-    let _trace = parser.parse(ixml);
-    let result = crate::parser::Parser::tree_to_testfmt( &parser.unpack_parse_tree("ixml") );
+    let mut parser = Parser::new(g);
+    parser.parse(ixml);
+    let arena = &parser.unpack_parse_tree("ixml");
+    let result = Parser::tree_to_testfmt(arena);
     let expected = r#"<ixml><rule name="doc"><alt><literal string="A"></literal><literal string="B"></literal></alt></rule></ixml>"#;
     assert_eq!(result, expected);
 
+    println!("=============");
+    let gen_grammar = ixml_tree_to_grammar(arena, "doc");
+    println!("{gen_grammar}");
+    let mut gen_parser = Parser::new(gen_grammar);
     // now do a second pass, with the just-generated grammar
-    let _input2 = "AB";
-    let _expected2 = "<doc>AB</doc>";
+    let input2 = "AB";
+    gen_parser.parse(input2);
+    let gen_arena = &gen_parser.unpack_parse_tree("doc");
+    let result2 = Parser::tree_to_testfmt(gen_arena);
+    let expected2 = "<doc>AB</doc>";
+    assert_eq!(result2, expected2);
 }
 
 /*
@@ -206,14 +215,17 @@ insertion: -"+", s, (string; -"#", hex), s.
 
 /// Accepts the Arena<Content> resulting from the parse of a valid ixml grammar
 /// Produces a new Grammar as output
-pub fn ixml_tree_to_grammar(arena: &Arena<Content>) -> Grammar {
-    let g = Grammar::new("ixml");
+pub fn ixml_tree_to_grammar(arena: &Arena<Content>, root_definition_name: &str) -> Grammar {
+    let mut g = Grammar::new(root_definition_name);
 
     let root_node = arena.iter().next().unwrap(); // first item == root
     let root_id = arena.get_node_id(root_node).unwrap();
 
     // first a pass over everything, making some indexes as we go
     let mut all_rules: Vec<NodeId> = Vec::new();
+
+    // more validation checks go here...
+
     for nid in root_id.descendants(arena) {
         let content = arena.get(nid).unwrap().get();
         match content {
@@ -221,9 +233,42 @@ pub fn ixml_tree_to_grammar(arena: &Arena<Content>) -> Grammar {
             _ => {}
         }
     }
-
-
-    for child in all_rules {
+    for rule in all_rules {
+        let rule_name = &Parser::get_attributes(arena, rule)["name"];
+        // TODO: rule_mark
+        ixml_build_rule(rule, arena, rule_name, &mut g);
     }
     g
+}
+
+//<rule name="doc"><alt><literal string="A"></literal><literal string="B"></literal></alt></rule>
+
+/// Construct one rule.
+/// If it has multiple alts, we end up calling grammar.define() multiple times
+pub fn ixml_build_rule(rule: NodeId, arena: &Arena<Content>, rule_name: &str, g: &mut Grammar) {
+    // TODO Parser::get_attributes(arena, rule)["mark"] ...
+    for (name, eid) in Parser::get_elements(arena, rule) {
+        if name=="alt" {
+            let rb = ixml_build_alts(eid, arena);
+            g.define(rule_name, rb);
+        }
+    }
+}
+
+/// Construct one alt, which is a sequence built from a single RuleBuilder
+pub fn ixml_build_alts(alt: NodeId, arena: &Arena<Content>) -> RuleBuilder {
+    let mut rb = Rule::seq();
+    for (ename, enid) in Parser::get_elements(arena, alt) {
+        let attrs = Parser::get_attributes(arena, enid);
+        match ename.as_str() {
+            "literal" => {
+                rb = rb.ch(attrs["string"].chars().next().expect("no empty string literals"));
+            }
+            "nonterminal" => {
+                rb = rb.nt(&attrs["name"]);
+            }
+            _ => unimplemented!("unknown element {ename} child of <alt>"),
+        }
+    }
+    rb
 }

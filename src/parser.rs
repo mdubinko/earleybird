@@ -1,10 +1,9 @@
 use crate::grammar::{Grammar, Rule, Factor, TMark, Mark};
-use std::{collections::{VecDeque, HashSet}, fmt};
+use std::{collections::{VecDeque, HashSet, HashMap}, fmt};
 use multimap::{MultiMap};
 use smol_str::SmolStr;
 use string_builder::Builder;
 use indextree::{Arena, NodeId};
-use unicode_character_database::names;
 //use log::{info, debug, trace};
 
 // TODO: logs ^^^
@@ -498,7 +497,7 @@ impl Parser {
             .map(|n| arena.get_node_id(n).unwrap())
             .collect::<Vec<_>>();
         for attr_nid in attr_node_ids {
-            let attr_val = self.get_attr_value(attr_nid, &mut arena);
+            let attr_val = self.unpack_attr_value(attr_nid, &mut arena);
             arena.get_mut(attr_nid).unwrap().get_mut().set_value(attr_val);
         }
         // n.b. this doesn't actually delete these original descendent text nodes...
@@ -507,13 +506,13 @@ impl Parser {
         arena
     }
 
-    fn get_attr_value(&self, attr_nid: NodeId, arena: &mut Arena<Content>) -> String {
+    /// Recurse down through the tree to assemble all the text literals that comprise an attribute value
+    fn unpack_attr_value(&self, attr_nid: NodeId, arena: &mut Arena<Content>) -> String {
         let mut attr_value = Builder::default();
         for descendant in attr_nid.descendants(arena) {
             let mut attr_builder = Builder::default();
-            match arena.get(descendant).unwrap().get() {
-                Content::Text(txt) => attr_builder.append(txt.as_str()),
-                _ => {}
+            if let Content::Text(txt) = arena.get(descendant).unwrap().get() {
+                attr_builder.append(txt.as_str());
             }
             attr_value.append(attr_builder.string().unwrap().replace('\"', "&quot;"));
         }
@@ -638,6 +637,35 @@ impl Parser {
             Content::Attribute(..) => {}, // handled above
             Content::Text(utf8) => builder.append(utf8.clone()),
         }
+    }
+
+    /// Helper function for working with indextree
+    /// Given a NodeId (that should be an element) get all the Attribute nodes
+    /// Returns an easily-digestiable HashMap of Name -> Value
+    pub fn get_attributes(arena: &Arena<Content>, elem: NodeId) -> HashMap<String, String> {
+        elem.children(arena)
+            // from NodeId to Content...
+            .map(|n| arena.get(n).unwrap().get())
+            // and only Content::Attribute...
+            .filter(|c| matches!(*c, Content::Attribute(..)))
+            // and pair it up to put in a HashMap...
+            .map(|node| (node.get_name().unwrap(), node.get_value().unwrap()))
+            .collect()
+    }
+
+    /// Helper function for working with indextree
+    /// get all immediate element children
+    /// Returns a Vec of pairs of (Element Name , NodeId)
+    /// Roughly like the XPath child axis
+    pub fn get_elements(arena: &Arena<Content>, nid: NodeId) -> Vec<(String, NodeId)> {
+        nid.children(arena)
+            // fist pair up as (&Content, NodeId)
+            .map(|nid| (arena.get(nid).unwrap().get(), nid) )
+            // and keep only elements 
+            .filter(|(c,_)| matches!(c, Content::Element(_)))
+            // then pair up as (ElementName, NodeId)
+            .map(|(c,nid)| (c.get_name().unwrap(), nid))
+            .collect()
     }
 
 }

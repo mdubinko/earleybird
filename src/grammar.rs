@@ -85,6 +85,7 @@ impl Grammar {
     }
 
     pub fn get_definition(&self, name: &str) -> &BranchingRule {
+        assert!(self.definitions.contains_key(name));
         &self.definitions[name]
     }
 }
@@ -297,10 +298,6 @@ pub struct Lit {
 impl Lit {
     fn new() -> Self {
         Self { matchers: Vec::new(), is_exclude: false}
-    }
-
-    fn make_excluding(&mut self) {
-        self.is_exclude = true;
     }
 
     /// actually match the input char
