@@ -1,19 +1,13 @@
 # EarleyBird
 Experimental implementation of ixml in Rust. Currently targeting the 20220620 spec.
 
-# Status as of August 20, 2022
+# Status as of August 25, 2022
 
-My overall goal is to get onboard with the ixml test suite. From there, incremental progress in the form of passing %.
+The test case in ixml_grammar is now passing, demonstrating full bootstrapping.
+(Start with an ixml grammar text file. Parse it. Construct a new grammar from the parse tree.
+Use it to parse a target document.)
 
-In ixml_grammar.rs you will find a subset of the core ixml grammar. Once the parser is relatively bug-free it should be straightforward to wire this up in a workflow that
-
-1) parses an input grammar in ixml format,
-
-2) rendering the parse tree into the internal representation of a grammar (with statements like grammar.add_seq and so on), then
-
-3) parse an input stream against this produced grammar.
-
-And you have the happy-path of a useful tool. From there, progress should be measurable and swift.
+My overall goal is to get onboard with the ixml test suite. From there, incremental progress should be measurable and swift.
 
 # Usage
 
