@@ -8,19 +8,12 @@ type XmlString = String;
 #[serde(rename_all = "kebab-case")]
 /// xmlns="https://github.com/invisibleXML/ixml/test-catalog"
 pub struct TestCatalog {
-    //description: String,
-    #[serde(alias = "test-set", alias = "test-set-ref")]
-    test_sets: Vec<TestSet>,
-    //grammar_test_sets: Vec<GrammarTestSet>,
-}
-
-#[derive(Debug, Deserialize)]
-/// A test-set, either inline, or referenced via URL
-pub enum TestSet {
-    #[serde(rename = "test-set-ref")]
-    Href(URL),
+    description: Option<String>,
     #[serde(rename = "test-set")]
-    Inline(TestSetInline),
+    inline_test_sets: Vec<TestSetInline>,
+    #[serde(rename = "test-set-ref")]
+    ref_test_sets: Option<Vec<URL>>,
+    //grammar_test_sets: Vec<GrammarTestSet>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -29,42 +22,33 @@ pub enum TestSet {
 pub struct TestSetInline {
     //#[serde(rename = "grammar-ref")]
     //ixml_grammar_ref: URL,
-    #[serde(alias = "test-case", alias = "test-case-ref")]
-    cases: Vec<TestCase>,
-}
-
-#[derive(Debug, Deserialize)]
-/// an ixml grammar, either inline or referenced via URL
-pub enum IxmlGrammar {
-    Href(URL),
-    Inline(String),
-}
-
-#[derive(Debug, Deserialize)]
-pub enum TestCase {
-    #[serde(rename = "test-case-ref")]
-    Href(URL),
     #[serde(rename = "test-case")]
-    Inline(TestCaseInline)
+    inline_cases: Vec<TestCaseInline>,
+    #[serde(rename = "test-case-ref")]
+    ref_cases: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
 /// a <test-case>
 pub struct TestCaseInline {
     name: String,
-    #[serde(alias = "test-string", alias = "test-string-ref")]
-    input: TestInput,
+    #[serde(rename = "test-string")]
+    inline_input: Option<String>,
+    #[serde(rename = "test-string-ref")]
+    ref_input: Option<URL>,
+
     /// normally only a single expected result, except in ambiguous tests
-    #[serde(alias = "assert-xml", alias = "assert-xml-ref", alias = "assert-not-a-sentence")]
-    expected: Vec<TestResult>,
+    #[serde(rename = "assert-xml")]
+    inline_expected: Option<Vec<String>>,
+    #[serde(rename = "assert-xml-ref")]
+    ref_expected: Option<Vec<URL>>,
+    #[serde(rename = "assert-not-a-sentence")]
+    assert_not_a_sentence: Option<NotASentence>,
 }
 
 #[derive(Debug, Deserialize)]
-pub enum TestInput {
-    #[serde(rename = "test-string-ref")]
-    Href(URL),
-    #[serde(rename = "test-string")]
-    Inline(String),
+pub enum NotASentence {
+    Empty
 }
 
 #[derive(Debug, Deserialize)]
@@ -73,14 +57,12 @@ pub enum TestResult {
     AssertNotASentence,
     #[serde(rename = "assert-xml-ref")]
     AssertXmlHref(URL),
-    #[serde(rename = "$unflatten=assert-xml")]
+    #[serde(rename = "assert-xml")]
     AssertXml(XmlString),
 }
 
 mod arbitrary_xml {
     use serde::{self, Deserialize, Serializer, Deserializer};
-
-    const FORMAT: &'static str = "%Y-%m-%d %H:%M:%S";
 
     // The signature of a serialize_with function must follow the pattern:
     //
@@ -134,7 +116,7 @@ r##"<test-catalog xmlns='https://github.com/invisibleXML/ixml/test-catalog'>
     </test-case>
     <test-case name='inline-xml'>
       <test-string>x</test-string>
-      <assert-xml><x>ok</x></assert-xml>
+      <assert-xml>ok</assert-xml>
     </test-case>
     <!--
     <test-case name='test-string-href'>
