@@ -14,11 +14,12 @@ path = "src/eb.rs"
 name = "earleybird"
 
 [dependencies]
+serde = { version = "1.0", features = [ "derive" ] }
+quick-xml = { version = "0.23", features = [ "serialize" ] }
+smol_str = "0.1"
 indextree = "4.4"
 log = "0.4"
 multimap = "0.8"
-quick-xml = "0.23"
-smol_str = "0.1"
 argh = "0.1"
 string-builder = "0.2"
 unicode-character-database = "0.1"

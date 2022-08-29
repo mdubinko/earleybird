@@ -24,6 +24,6 @@ for now `cargo test` is your best bet.
 
 Invisible XML: https://invisiblexml.org/
 
-Test Suite: https://github.com/invisiblexml/ixml
+Test Suite: https://github.com/invisibleXML/ixml/tree/master/tests
 
 Vulturine Guinea Fowl: https://en.wikipedia.org/wiki/Vulturine_guineafowl
