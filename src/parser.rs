@@ -312,6 +312,25 @@ impl Content {
 }
 
 #[derive(Debug)]
+pub enum ParseError {
+    StaticError(String),
+    DynamicError(String),
+    UncategorizedError(String),
+}
+
+impl ParseError {
+    pub fn static_err(msg: &str) -> Self {
+        Self::StaticError(msg.to_string())
+    }
+    pub fn dynamic_err(msg: &str) -> Self {
+        Self::DynamicError(msg.to_string())
+    }
+    pub fn uncategorized_err(msg: &str) -> Self {
+        Self::UncategorizedError(msg.to_string())
+    }
+}
+
+#[derive(Debug)]
 pub struct Parser {
     grammar: Grammar,
     /// the permanent owner of all tasks, referenced by TraceId
@@ -332,7 +351,8 @@ impl Parser {
         }
     }
 
-    pub fn parse(&mut self, input: &str) {
+    /// Successful return value is an indextree over Content. Consider this temporary
+    pub fn parse(&mut self, input: &str) -> Result<Arena<Content>, ParseError> {
         let mut input = InputIter::new(input);
 
         // help avoid borrow-contention on *self
@@ -341,9 +361,12 @@ impl Parser {
         println!("Input now at position {} '{}'", 0, input.get_at(0));
 
         // Seed with top expr
-        let top_rule = g.get_root_definition();
+        let top_rule = g.get_root_definition()
+            .ok_or(ParseError::static_err("No top grammar rule"))?;
+
         for alt in top_rule.iter() {
-            let maybe_id = self.traces.task(g.get_root_definition_name(), top_rule.mark(), 0, 0, alt.dot_notator());
+            let maybe_id = self.traces.task(&g.get_root_definition_name()
+                .ok_or(ParseError::static_err("No top grammar rule name"))?, top_rule.mark(), 0, 0, alt.dot_notator());
             self.queue_front(maybe_id);
         }
         // work through the queue
@@ -439,7 +462,8 @@ impl Parser {
             }
         } // while
         println!("Finished parse with {} items in trace", self.traces.arena.len());
-        //&self.trace
+        
+        self.unpack_parse_tree()
     }
 
     fn queue_front(&mut self, maybe_id: Option<TraceId>) {
@@ -479,7 +503,7 @@ impl Parser {
         }
     }
 
-    pub fn unpack_parse_tree(&mut self, name: &str) -> Arena<Content> {
+    fn unpack_parse_tree(&mut self) -> Result<Arena<Content>, ParseError> {
         println!("TRACE...");
         for tid in &self.completed_trace {
             println!("{}", self.traces.format_task(*tid));
@@ -487,7 +511,8 @@ impl Parser {
         let mut arena = Arena::new();
         let root = arena.new_node(Content::Root);
         println!("assuming ending pos of {}", self.farthest_pos);
-        self.unpack_parse_tree_internal(&mut arena, name, Mark::Default, 0, self.farthest_pos, root);
+        let name = self.grammar.root_definition_name.as_ref().unwrap();
+        self.unpack_parse_tree_internal(&mut arena, &name, Mark::Default, 0, self.farthest_pos, root);
 
         // the standard algorithm above leaves attribute nodes in an inconvenient state.
         // with a bare Content::Attribute node, for which one needs to plumb all descendants to find text nodes
@@ -503,7 +528,7 @@ impl Parser {
         // n.b. this doesn't actually delete these original descendent text nodes...
         // but you should never need to even look for them
 
-        arena
+        Ok(arena)
     }
 
     /// Recurse down through the tree to assemble all the text literals that comprise an attribute value

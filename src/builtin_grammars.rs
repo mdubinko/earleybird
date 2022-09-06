@@ -32,7 +32,7 @@ impl SmokeChars {
     pub fn get_grammar() -> Grammar {
         // exercise all the different kinds of character matching
         // doc = ["0"-"9"], [Zs], ~["0"-"9"; "a"-"f"; "A"-"F"], ["abcdef"].
-        let mut g = Grammar::new("doc");
+        let mut g = Grammar::new();
         g.define("doc", Rule::seq()
             .ch_range('0', '9')
             .ch_unicode("Zs")
@@ -51,7 +51,7 @@ impl SmokeChars {
 impl SmokeSeq {
     pub fn get_grammar() -> Grammar {
         // doc = "a", "b".
-        let mut g = Grammar::new("doc");
+        let mut g = Grammar::new();
         g.define("doc", Rule::seq().ch('a').ch('b') );
         g
     }
@@ -66,7 +66,7 @@ impl SmokeSeq {
 impl SmokeAlt {
     pub fn get_grammar() -> Grammar {
         // doc = "a" | "b".
-        let mut g = Grammar::new("doc");
+        let mut g = Grammar::new();
         g.define("doc", Rule::seq().ch('a') );
         g.define("doc", Rule::seq().ch('b') );
         g
@@ -84,7 +84,7 @@ impl SmokeNT {
         // doc = a, b.
         // a = "a" | "A".
         // b = "b" | "B".
-        let mut g = Grammar::new("doc");
+        let mut g = Grammar::new();
         g.define("doc", Rule::seq().nt("a").nt("b") );
         g.define("a", Rule::seq().ch('a') );
         g.define("a", Rule::seq().ch('A') );
@@ -104,7 +104,7 @@ impl SmokeNT {
 impl SmokeOpt {
     pub fn get_grammar() -> Grammar {
         // doc = "a"?.
-        let mut g = Grammar::new("doc");
+        let mut g = Grammar::new();
         g.define("doc", Rule::seq().opt(Rule::seq().ch('a')));
         g
     }
@@ -119,7 +119,7 @@ impl SmokeOpt {
 impl SmokeStar {
     pub fn get_grammar() -> Grammar {
         // doc = "a"*.
-        let mut g = Grammar::new("doc");
+        let mut g = Grammar::new();
         g.define("doc", Rule::seq().repeat0( Rule::seq().ch('a')));
         g
     }
@@ -134,7 +134,7 @@ impl SmokeStar {
 impl SmokePlus {
     pub fn get_grammar() -> Grammar {
         // doc = "a"+.
-        let mut g = Grammar::new("doc");
+        let mut g = Grammar::new();
         g.define("doc", Rule::seq().repeat1( Rule::seq().ch('a')));
         g
     }
@@ -149,7 +149,7 @@ impl SmokePlus {
 impl SmokeStarSep {
     pub fn get_grammar() -> Grammar {
         // doc = "a"**" ".
-        let mut g = Grammar::new("doc");
+        let mut g = Grammar::new();
         g.define("doc", Rule::seq().repeat0_sep(
             Rule::seq().ch('a'),
             Rule::seq().ch(' '))
@@ -167,7 +167,7 @@ impl SmokeStarSep {
 impl SmokePlusSep {
     pub fn get_grammar() -> Grammar {
         // doc = "a"++" ".
-        let mut g = Grammar::new("doc");
+        let mut g = Grammar::new();
         g.define("doc", Rule::seq().repeat1_sep(
             Rule::seq().ch('a'),
             Rule::seq().ch(' '))
@@ -187,7 +187,7 @@ impl SmokeElem {
         // doc = name, ":", value.
         // name = ["a"-"z"]+.
         // value = ["a"-"z"]+.
-        let mut g = Grammar::new("doc");
+        let mut g = Grammar::new();
         g.define("doc", Rule::seq().nt("name").ch(':').nt("value"));
         g.define("name", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
         g.define("value", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
@@ -207,7 +207,7 @@ impl SmokeAttr {
         // doc = name, ":", value.
         // @name = ["a"-"z"]+.
         // value = ["a"-"z"]+.
-        let mut g = Grammar::new("doc");
+        let mut g = Grammar::new();
         g.define("doc", Rule::seq().nt("name").ch(':').nt("value"));
         g.mark_define(Mark::Attr, "name", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
         g.define("value", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
@@ -228,7 +228,7 @@ impl SmokeMute {
         // -a = ["a"-"z"]+.
         // b = ["a"-"m"]+.
         // c = ["n"-"z"]+.
-        let mut g = Grammar::new("doc");
+        let mut g = Grammar::new();
         g.define("doc", Rule::seq().nt("a").mark_ch(':', TMark::Mute).mark_nt("b", Mark::Mute).nt("c"));
         g.mark_define(Mark::Mute, "a", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
         g.define("b", Rule::seq().repeat1( Rule::seq().ch_range('a', 'm')));
@@ -251,7 +251,7 @@ impl SuiteWiki {
         // S = S, "+", M | M.
         // M = M, "*", T | T.
         // T = ["1234"].
-        let mut g = Grammar::new("doc");
+        let mut g = Grammar::new();
         g.define("doc", Rule::seq().nt("S") );
         g.define("S", Rule::seq().nt("S").ch('+').nt("M") );
         g.define("S", Rule::seq().nt("M") );

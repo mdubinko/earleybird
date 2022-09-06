@@ -7,6 +7,7 @@
 //! 
 //! A grammar is encoded as a map of definitions: SmolStr -> BranchingRule
 //! (SmolStr is a O(1)-to-clone immutable string type)
+//! The first definition is taken to be the "root" rule of the grammar
 //! 
 //! In the example gramamr there are two possible branches for the "doc" rule - either ("A","B") or ("C","D")
 //! A BranchingRule captures all possible alternatives (called 'alts' in the ixml spec)
@@ -35,22 +36,23 @@ use crate::{parser::DotNotation, unicode_ranges::UnicodeRange};
 #[derive(Debug, Clone)]
 pub struct Grammar {
     definitions: HashMap<SmolStr, BranchingRule>,
-    root_definition_name: SmolStr,
+    pub root_definition_name: Option<SmolStr>,
 }
 
 impl Grammar {
-    pub fn new(root_definition_name: &str) -> Self {
+    pub fn new() -> Self {
         Self {
             definitions: HashMap::new(),
-            root_definition_name: SmolStr::new(root_definition_name)
-            }
+            root_definition_name: None,
+        }
     }
 
     /// merge contents of RuleBuilder (which might include entire synthesized named rules) into Grammar
     /// Including the given Mark
     /// Consumes the RuleBuilder
+    /// The first definition on a grammar is taken as the root rule
     pub fn define(&mut self, name: &str, rb: RuleBuilder) {
-        self.mark_define(Mark::Default, name, rb)
+        self.mark_define(Mark::Default, name, rb);
     }
 
     /// merge contents of RuleBuilder (which might include entire synthesized named rules) into Grammar
@@ -70,14 +72,18 @@ impl Grammar {
                 syn_branching_rule.add_alt_branch(Rule::new(builder.factors));
             }
         }
+        // 3) If this is the first rule, make a note of it as the root rule
+        if self.root_definition_name.is_none() {
+            self.root_definition_name = Some(SmolStr::new(name));
+        }
     }
 
-    pub fn get_root_definition_name(&self) -> &str {
-        &self.root_definition_name
+    pub fn get_root_definition_name(&self) -> Option<String> {
+        self.root_definition_name.as_ref().map(|s| s.to_string())
     }
 
-    pub fn get_root_definition(&self) -> &BranchingRule {
-        self.get_definition(&self.root_definition_name)
+    pub fn get_root_definition(&self) -> Option<&BranchingRule> {
+        self.root_definition_name.as_ref().map(|s| self.get_definition(&s))
     }
     
     pub fn get_definition_mark(&self, name: &str) -> Mark {
@@ -85,6 +91,9 @@ impl Grammar {
     }
 
     pub fn get_definition(&self, name: &str) -> &BranchingRule {
+        if !self.definitions.contains_key(name) {
+            println!("Where is {name}???");
+        }
         assert!(self.definitions.contains_key(name));
         &self.definitions[name]
     }

@@ -1,12 +1,12 @@
 use indextree::{Arena, NodeId};
 
-use crate::{grammar::{Grammar, Rule, Mark, TMark, RuleBuilder}, parser::{Content, Parser}};
+use crate::{grammar::{Grammar, Rule, Mark, TMark, RuleBuilder}, parser::{Content, Parser, ParseError}};
 
 // TODO: -rules and @rules
 
 /// Bootstrap ixml grammar; hand-coded definition
 pub fn grammar() -> Grammar {
-    let mut g = Grammar::new("ixml");
+    let mut g = Grammar::new();
 
     // ixml: s, prolog?, rule++RS, s.
     // TODO: prolog
@@ -113,29 +113,28 @@ pub fn grammar() -> Grammar {
 }
 
 #[test]
-fn parse_ixml() {
+fn parse_ixml() -> Result<(), ParseError> {
     let g = grammar();
     println!("{}", &g);
     let ixml: &str = r#"doc = "A", "B"."#;
     //                  012345678901234
     let mut parser = Parser::new(g);
-    parser.parse(ixml);
-    let arena = &parser.unpack_parse_tree("ixml");
-    let result = Parser::tree_to_testfmt(arena);
+    let arena = parser.parse(ixml)?;
+    let result = Parser::tree_to_testfmt(&arena);
     let expected = r#"<ixml><rule name="doc"><alt><literal string="A"></literal><literal string="B"></literal></alt></rule></ixml>"#;
     assert_eq!(result, expected);
 
     println!("=============");
-    let gen_grammar = ixml_tree_to_grammar(arena, "doc");
+    let gen_grammar = ixml_tree_to_grammar(&arena);
     println!("{gen_grammar}");
     let mut gen_parser = Parser::new(gen_grammar);
     // now do a second pass, with the just-generated grammar
     let input2 = "AB";
-    gen_parser.parse(input2);
-    let gen_arena = &gen_parser.unpack_parse_tree("doc");
-    let result2 = Parser::tree_to_testfmt(gen_arena);
+    let gen_arena = gen_parser.parse(input2)?;
+    let result2 = Parser::tree_to_testfmt(&gen_arena);
     let expected2 = "<doc>AB</doc>";
     assert_eq!(result2, expected2);
+    Ok(())
 }
 
 /*
@@ -215,8 +214,8 @@ insertion: -"+", s, (string; -"#", hex), s.
 
 /// Accepts the Arena<Content> resulting from the parse of a valid ixml grammar
 /// Produces a new Grammar as output
-pub fn ixml_tree_to_grammar(arena: &Arena<Content>, root_definition_name: &str) -> Grammar {
-    let mut g = Grammar::new(root_definition_name);
+pub fn ixml_tree_to_grammar(arena: &Arena<Content>) -> Grammar {
+    let mut g = Grammar::new();
 
     let root_node = arena.iter().next().unwrap(); // first item == root
     let root_id = arena.get_node_id(root_node).unwrap();

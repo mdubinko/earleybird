@@ -1,80 +1,85 @@
 use earleybird::grammar::Mark;
-use earleybird::parser::Parser;
+use earleybird::parser::{Parser, ParseError};
 use earleybird::builtin_grammars::*;
 use smol_str::SmolStr;
 
 #[test]
-fn run_smoke_chars() {
+fn run_smoke_chars() -> Result<(), ParseError> {
     let inputs = SmokeChars::get_inputs();
     let expecteds = SmokeChars::get_expected();
     for i in 0..inputs.len() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SmokeChars::get_grammar();
         let mut parser = Parser::new(g);
-        let _trace = parser.parse(inputs[i]);
-        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
+        let arena = parser.parse(inputs[i])?;
+        let result = Parser::tree_to_testfmt(&arena);
         assert_eq!(expecteds[i], result);
     }
+    Ok(())
 }
 
 #[test]
-fn run_smoke_seq() {
+fn run_smoke_seq() -> Result<(), ParseError> {
     let inputs = SmokeSeq::get_inputs();
     let expecteds = SmokeSeq::get_expected();
     for i in 0..inputs.len() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SmokeSeq::get_grammar();
         let mut parser = Parser::new(g);
-        parser.parse(inputs[i]);
-        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
+        let arena = parser.parse(inputs[i])?;
+        let result = Parser::tree_to_testfmt(&arena);
         assert_eq!(expecteds[i], result);
     }
+    Ok(())
 }
 
 #[test]
-fn run_smoke_alt() {
+fn run_smoke_alt() -> Result<(), ParseError> {
     let inputs = SmokeAlt::get_inputs();
     let expecteds = SmokeAlt::get_expected();
     for i in 0..inputs.len() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SmokeAlt::get_grammar();
         let mut parser = Parser::new(g);
-        parser.parse(inputs[i]);
-        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
+        let arena = parser.parse(inputs[i])?;
+        let result = Parser::tree_to_testfmt(&arena);
         assert_eq!(expecteds[i], result);
     }
+    Ok(())
 }
 
 #[test]
-fn run_smoke_nt() {
+fn run_smoke_nt() -> Result<(), ParseError> {
     let inputs = SmokeNT::get_inputs();
     let expecteds = SmokeNT::get_expected();
     for i in 0..inputs.len() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SmokeNT::get_grammar();
         let mut parser = Parser::new(g);
-        parser.parse(inputs[i]);
-        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
+        let arena = parser.parse(inputs[i])?;
+        let result = Parser::tree_to_testfmt(&arena);
         assert_eq!(expecteds[i], result);
     }
+    Ok(())
 }
 
 #[test]
-fn run_smoke_opt() {
+fn run_smoke_opt() -> Result<(), ParseError> {
     let inputs = SmokeOpt::get_inputs();
     let expecteds = SmokeOpt::get_expected();
     for i in 0..inputs.len() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SmokeOpt::get_grammar();
         let mut parser = Parser::new(g);
-        parser.parse(inputs[i]);
-        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
+        let arena = parser.parse(inputs[i])?;
+        let result = Parser::tree_to_testfmt(&arena);
         assert_eq!(expecteds[i], result);
     }
+    Ok(())
 }
 
 #[test]
-fn run_smoke_star() {
+fn run_smoke_star() -> Result<(), ParseError> {
     let inputs = SmokeStar::get_inputs();
     let expecteds = SmokeStar::get_expected();
     for i in 0..inputs.len() {
@@ -82,14 +87,15 @@ fn run_smoke_star() {
         let g = SmokeStar::get_grammar();
         println!("  Against grammar:\n{}", g);
         let mut parser = Parser::new(g);
-        parser.parse(inputs[i]);
-        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
+        let arena = parser.parse(inputs[i])?;
+        let result = Parser::tree_to_testfmt(&arena);
         assert_eq!(expecteds[i], result);
     }
+    Ok(())
 }
 
 #[test]
-fn run_smoke_plus() {
+fn run_smoke_plus() -> Result<(), ParseError> {
     let inputs = SmokePlus::get_inputs();
     let expecteds = SmokePlus::get_expected();
     for i in 0..inputs.len() {
@@ -97,14 +103,15 @@ fn run_smoke_plus() {
         let g = SmokePlus::get_grammar();
         println!("  Against grammar:\n{}", g);
         let mut parser = Parser::new(g);
-        parser.parse(inputs[i]);
-        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
+        let arena = parser.parse(inputs[i])?;
+        let result = Parser::tree_to_testfmt(&arena);
         assert_eq!(expecteds[i], result);
     }
+    Ok(())
 }
 
 #[test]
-fn run_smoke_star_sep() {
+fn run_smoke_star_sep() -> Result<(), ParseError> {
     let inputs = SmokeStarSep::get_inputs();
     let expecteds = SmokeStarSep::get_expected();
     for i in 0..inputs.len() {
@@ -112,14 +119,15 @@ fn run_smoke_star_sep() {
         let g = SmokeStarSep::get_grammar();
         println!("  Against grammar:\n{}", g);
         let mut parser = Parser::new(g);
-        parser.parse(inputs[i]);
-        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
+        let arena = parser.parse(inputs[i])?;
+        let result = Parser::tree_to_testfmt(&arena);
         assert_eq!(expecteds[i], result);
     }
+    Ok(())
 }
 
 #[test]
-fn run_smoke_plus_sep() {
+fn run_smoke_plus_sep() -> Result<(), ParseError> {
     let inputs = SmokePlusSep::get_inputs();
     let expecteds = SmokePlusSep::get_expected();
     for i in 0..inputs.len() {
@@ -127,29 +135,30 @@ fn run_smoke_plus_sep() {
         let g = SmokePlusSep::get_grammar();
         println!("  Against grammar:\n{}", g);
         let mut parser = Parser::new(g);
-        parser.parse(inputs[i]);
-        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
+        let arena = parser.parse(inputs[i])?;
+        let result = Parser::tree_to_testfmt(&arena);
         assert_eq!(expecteds[i], result);
     }
+    Ok(())
 }
 
 #[test]
-fn run_smoke_elem() {
+fn run_smoke_elem() -> Result<(), ParseError> {
     let inputs = SmokeElem::get_inputs();
     let expecteds = SmokeElem::get_expected();
     for i in 0..inputs.len() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SmokeElem::get_grammar();
         let mut parser = Parser::new(g);
-        parser.parse(inputs[i]);
-        let arena = &parser.unpack_parse_tree("doc");
-        let result = Parser::tree_to_testfmt(arena);
+        let arena = parser.parse(inputs[i])?;
+        let result = Parser::tree_to_testfmt(&arena);
         assert_eq!(expecteds[i], result);
     }
+    Ok(())
 }
 
 #[test]
-fn run_smoke_attr() {
+fn run_smoke_attr() -> Result<(), ParseError> {
     let inputs = SmokeAttr::get_inputs();
     let expecteds = SmokeAttr::get_expected();
     for i in 0..inputs.len() {
@@ -161,7 +170,7 @@ fn run_smoke_attr() {
         assert_eq!(Mark::Attr, def.mark());
 
         let mut parser = Parser::new(g);
-        parser.parse(inputs[i]);
+        let arena = parser.parse(inputs[i])?;
 
         // make sure trace accounts for @name
         let trace = parser.test_inspect_trace(Some(SmolStr::new("name")));
@@ -170,7 +179,6 @@ fn run_smoke_attr() {
         }
 
         // make sure indextree accounts for @name
-        let arena = &parser.unpack_parse_tree("doc");
         assert_ne!(0, arena.count());
         for node in arena.iter() {
             match node.get() {
@@ -192,37 +200,39 @@ fn run_smoke_attr() {
         }
 
         //finally test end-state output
-        let result = Parser::tree_to_testfmt(arena);
+        let result = Parser::tree_to_testfmt(&arena);
         assert_eq!(expecteds[i], result);
     }
+    Ok(())
 }
 
 #[test]
-fn run_smoke_mute() {
+fn run_smoke_mute() -> Result<(), ParseError> {
     let inputs = SmokeMute::get_inputs();
     let expecteds = SmokeMute::get_expected();
     for i in 0..inputs.len() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SmokeMute::get_grammar();
         let mut parser = Parser::new(g);
-        parser.parse(inputs[i]);
-        let arena = &parser.unpack_parse_tree("doc");
-        let result = Parser::tree_to_testfmt(arena);
+        let arena = parser.parse(inputs[i])?;
+        let result = Parser::tree_to_testfmt(&arena);
         assert_eq!(expecteds[i], result);
     }
+    Ok(())
 }
 
 #[test]
-fn run_suite_wiki() {
+fn run_suite_wiki() -> Result<(), ParseError> {
     let inputs = SuiteWiki::get_inputs();
     let expecteds = SuiteWiki::get_expected();
     for i in 0..inputs.len() {
         println!("==== input = {}", inputs[i].chars().take(20).collect::<String>());
         let g = SuiteWiki::get_grammar();
         let mut parser = Parser::new(g);
-        parser.parse(inputs[i]);
-        let result = Parser::tree_to_testfmt( &parser.unpack_parse_tree("doc") );
+        let arena = parser.parse(inputs[i])?;
+        let result = Parser::tree_to_testfmt(&arena);
         assert_eq!(expecteds[i], result);
     }
+    Ok(())
 }
 
