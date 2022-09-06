@@ -14,20 +14,20 @@ const DOTSEP: &str = "•";
 #[derive(Debug, Clone, Eq, PartialEq)]
 /// A sort of iterator for a Rule.
 /// Instead of just calling next(), For completed terms, it tracks positions and specifically-matched chars
-/// matched_so_far.len() is the cursor position
+/// `matched_so_far.len`() is the cursor position
 pub struct DotNotation {
     iteratee: Rule,
     matched_so_far: Vec<MatchRec>,
 }
 
 impl DotNotation {
-    pub fn new(rule: &Rule) -> DotNotation {
-        DotNotation { iteratee: rule.clone(), matched_so_far: Vec::new() }
+    pub fn new(rule: &Rule) -> Self {
+        Self { iteratee: rule.clone(), matched_so_far: Vec::new() }
     }
 
     /// record a new match. Intnded for literal character data
-    /// this returns an entirely new DotNotation
-    fn advance_dot(&self, rec: MatchRec) -> DotNotation {
+    /// this returns an entirely new `DotNotation`
+    fn advance_dot(&self, rec: MatchRec) -> Self {
         let mut clo = self.clone();
         clo.matched_so_far.push(rec);
         clo
@@ -67,7 +67,7 @@ impl fmt::Display for DotNotation {
         // remaining rules
         let remain = self.iteratee.factors.iter()
             .skip(cursor)
-            .map(|t| t.to_string())
+            .map(std::string::ToString::to_string)
             .collect::<Vec<String>>()
             .join(", ");
         write!(f, "{done} {DOTSEP} {remain}")
@@ -85,8 +85,8 @@ enum MatchRec {
 impl MatchRec {
     fn pos(&self) -> usize {
         match self {
-            MatchRec::Term(_, pos, _) => *pos,
-            MatchRec::NonTerm(_, pos, _) => *pos,
+            Self::Term(_, pos, _) => *pos,
+            Self::NonTerm(_, pos, _) => *pos,
         }
     }
 }
@@ -144,8 +144,8 @@ pub struct TraceArena {
 }
 
 impl TraceArena {
-    fn new() -> TraceArena {
-        TraceArena {
+    fn new() -> Self {
+        Self {
             arena: Vec::new(),
             queue: VecDeque::new(),
             continuations: MultiMap::new(),
@@ -174,7 +174,7 @@ impl TraceArena {
     /// if nothing found, returns an empty Vec
     fn get_continuations_for(&self, target_nt: SmolStr) -> Vec<TraceId> {
         let maybe_val = self.continuations.get_vec(&target_nt);
-        let result = maybe_val.unwrap_or(&Vec::new()).to_vec();
+        let result = maybe_val.unwrap_or(&Vec::new()).clone();
         println!("..🔁 retrieving continuation {target_nt} containing {} entries", result.len());
         result
     }
@@ -207,7 +207,7 @@ impl TraceArena {
         }
     }
     
-    /// clone a task, except advancing the cursor (storing given MatchRec for the piece just advanced-over)
+    /// clone a task, except advancing the cursor (storing given `MatchRec` for the piece just advanced-over)
     /// Maintains the same parentage, and position
     fn task_advance_cursor(&mut self, from: TraceId, rec: MatchRec) -> Option<TraceId> {
         let new_pos = rec.pos();
@@ -252,8 +252,8 @@ struct InputIter {
 }
 
 impl InputIter {
-    fn new(input: &str) -> InputIter {
-        InputIter {
+    fn new(input: &str) -> Self {
+        Self {
             tokens: input.chars().collect::<Vec<_>>() }
     }
 
@@ -283,29 +283,29 @@ pub enum Content {
 
 impl Content {
     pub fn is_attr(&self) -> bool {
-        matches!(self, Content::Attribute(_,_))
+        matches!(self, Self::Attribute(_,_))
     }
     pub fn is_elem(&self) -> bool {
-        matches!(self, Content::Element(_))
+        matches!(self, Self::Element(_))
     }
     pub fn get_name(&self) -> Option<String> {
         match self {
-            Content::Element(name) => Some(name.clone()),
-            Content::Attribute(name, _) => Some(name.clone()),
+            Self::Element(name) => Some(name.clone()),
+            Self::Attribute(name, _) => Some(name.clone()),
             _ => None
         }
     }
     pub fn get_value(&self) -> Option<String> {
         match self {
-            Content::Attribute(_, value) => Some(value.clone()),
-            Content::Text(value) => Some(value.clone()),
+            Self::Attribute(_, value) => Some(value.clone()),
+            Self::Text(value) => Some(value.clone()),
             _ => None
         }
     }
     pub fn set_value(&mut self, value: String) {
         match self {
-            Content::Attribute(name, _) => *self = Content::Attribute(name.clone(), value),
-            Content::Text(_) => *self = Content::Text(value),
+            Self::Attribute(name, _) => *self = Self::Attribute(name.clone(), value),
+            Self::Text(_) => *self = Self::Text(value),
             _ => panic!("Setting value on content that cannot hold a value"),
         }
     }
@@ -512,7 +512,7 @@ impl Parser {
         let root = arena.new_node(Content::Root);
         println!("assuming ending pos of {}", self.farthest_pos);
         let name = self.grammar.root_definition_name.as_ref().unwrap();
-        self.unpack_parse_tree_internal(&mut arena, &name, Mark::Default, 0, self.farthest_pos, root);
+        self.unpack_parse_tree_internal(&mut arena, name, Mark::Default, 0, self.farthest_pos, root);
 
         // the standard algorithm above leaves attribute nodes in an inconvenient state.
         // with a bare Content::Attribute node, for which one needs to plumb all descendants to find text nodes
@@ -618,7 +618,7 @@ impl Parser {
         let root = arena.iter().next().unwrap(); // first item == root
         let root_id = arena.get_node_id(root).unwrap();
         for child in root_id.children(arena) {
-            Parser::tree_to_testfmt_recurse(arena, &mut builder, child);
+            Self::tree_to_testfmt_recurse(arena, &mut builder, child);
         }
         builder.string().unwrap()
     }
@@ -652,7 +652,7 @@ impl Parser {
     
                 for child in nid.children(arena) {
                     println!("testfmt found {child} in ::Element");
-                    Parser::tree_to_testfmt_recurse(arena, builder, child);
+                    Self::tree_to_testfmt_recurse(arena, builder, child);
                 }
     
                 builder.append("</");
@@ -665,8 +665,8 @@ impl Parser {
     }
 
     /// Helper function for working with indextree
-    /// Given a NodeId (that should be an element) get all the Attribute nodes
-    /// Returns an easily-digestiable HashMap of Name -> Value
+    /// Given a `NodeId` (that should be an element) get all the Attribute nodes
+    /// Returns an easily-digestiable `HashMap` of Name -> Value
     pub fn get_attributes(arena: &Arena<Content>, elem: NodeId) -> HashMap<String, String> {
         elem.children(arena)
             // from NodeId to Content...
@@ -680,8 +680,8 @@ impl Parser {
 
     /// Helper function for working with indextree
     /// get all immediate element children
-    /// Returns a Vec of pairs of (Element Name , NodeId)
-    /// Roughly like the XPath child axis
+    /// Returns a Vec of pairs of (Element Name , `NodeId`)
+    /// Roughly like the `XPath` child axis
     pub fn get_elements(arena: &Arena<Content>, nid: NodeId) -> Vec<(String, NodeId)> {
         nid.children(arena)
             // fist pair up as (&Content, NodeId)

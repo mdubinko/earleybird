@@ -254,7 +254,7 @@ pub fn ixml_build_rule(rule: NodeId, arena: &Arena<Content>, rule_name: &str, g:
     }
 }
 
-/// Construct one alt, which is a sequence built from a single RuleBuilder
+/// Construct one alt, which is a sequence built from a single `RuleBuilder`
 pub fn ixml_build_alts(alt: NodeId, arena: &Arena<Content>) -> RuleBuilder {
     let mut rb = Rule::seq();
     for (ename, enid) in Parser::get_elements(arena, alt) {

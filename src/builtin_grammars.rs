@@ -20,7 +20,7 @@ pub struct SmokeStar {}
 pub struct SmokePlus {}
 pub struct SmokeStarSep {}
 pub struct SmokePlusSep {}
-/// SmokeElem is intended as a "control" case, identical with SmokeAttr other than the @ Marks
+/// `SmokeElem` is intended as a "control" case, identical with `SmokeAttr` other than the @ Marks
 pub struct SmokeElem {}
 pub struct SmokeAttr {}
 pub struct SmokeMute {}

@@ -5,7 +5,7 @@ use std::str::from_utf8;
 
 use itertools::Itertools;
 use quick_xml::events::Event;
-use quick_xml::events::attributes::{Attributes, AttrError};
+use quick_xml::events::attributes::{Attributes};
 use quick_xml::name::QName;
 use quick_xml::reader::Reader;
 use string_builder::Builder;
@@ -60,15 +60,15 @@ struct TestCaseBuilder {
 
 impl TestCaseBuilder {
     fn new() -> Self {
-        TestCaseBuilder { name: None, grammar: None, input: None, expected: Vec::new() }
+        Self { name: None, grammar: None, input: None, expected: Vec::new() }
     }
 
-    /// Build the [TestCase]. Resets the builder.
+    /// Build the [`TestCase`]. Resets the builder.
     fn build(&mut self) -> TestCase {
         assert!(self.name.is_some());
         assert!(self.grammar.is_some());
         assert!(self.input.is_some());
-        assert!(self.expected.len() > 0);
+        assert!(!self.expected.is_empty());
         let name = self.name.take();
         self.name = None;
         let grammar = self.grammar.take();
@@ -203,9 +203,9 @@ pub fn read_test_catalog(path: String) -> Vec<TestCase> {
                     }
                     _ => {
                         if enable_accum {
-                            raw_xml_accum.push('<' as u8);
+                            raw_xml_accum.push(b'<');
                             raw_xml_accum.extend(e.iter());
-                            raw_xml_accum.push('>' as u8);
+                            raw_xml_accum.push(b'>');
                         }
                     },
                 }
@@ -232,10 +232,10 @@ pub fn read_test_catalog(path: String) -> Vec<TestCase> {
                     }
                     _ => {
                         if enable_accum {
-                            raw_xml_accum.push('<' as u8);
-                            raw_xml_accum.push('/' as u8);
+                            raw_xml_accum.push(b'<');
+                            raw_xml_accum.push(b'/');
                             raw_xml_accum.extend(e.iter());
-                            raw_xml_accum.push('>' as u8);
+                            raw_xml_accum.push(b'>');
                         }
                     }
                 }
@@ -260,7 +260,7 @@ pub fn read_test_catalog(path: String) -> Vec<TestCase> {
 pub fn xml_canonicalize(input_xml: &str) -> String {
     let mut builder = Builder::default();
     
-    let mut reader = Reader::from_str(&input_xml);
+    let mut reader = Reader::from_str(input_xml);
     reader.trim_text(true);
     reader.expand_empty_elements(true);
 
@@ -276,19 +276,19 @@ pub fn xml_canonicalize(input_xml: &str) -> String {
                 let attrs = all_attrs(e.attributes());
                 builder.append("<");
                 builder.append(from_utf8(e.name().into_inner()).expect("UTF-8 parse error on element start"));
-                if attrs.len() > 0 {
+                if !attrs.is_empty() {
                     for (k,v) in attrs.into_iter().sorted() {
                         builder.append(" ");
                         builder.append(k);
                         builder.append("=\"");
-                        builder.append(v.replace("\"", "&quot;"));
+                        builder.append(v.replace('\"', "&quot;"));
                         builder.append("\"")
                     }
                 }
                 builder.append("\n>");
             }
             Ok(Event::Text(t)) => {
-                builder.append(t.unescape().expect("UTF-8 parse error on text").to_string().replace("<", "&lt;"));
+                builder.append(t.unescape().expect("UTF-8 parse error on text").to_string().replace('<', "&lt;"));
             },
             Ok(Event::End(e)) => {
                 builder.append("</");
@@ -314,15 +314,15 @@ fn attr_by_name(attrs: &Attributes, name: &str) -> String {
         .collect()
 }
 
-/// Just grab all the attributes as a HashMap
+/// Just grab all the attributes as a `HashMap`
 /// Assumes everything here is UTF-8 valid, otherwise panics
 /// Silently deletes the xmlns pseudo-attribute
 fn all_attrs(attrs: Attributes) -> HashMap<String, String> {
     let mut hashmap: HashMap<String, String> = HashMap::new();
     for attr in attrs {
-        let _ = match attr {
+        match attr {
             Ok(a) => {
-                let name: String = from_utf8(&a.key.into_inner()).expect("UTF-8 error parsing attribute name").to_string();
+                let name: String = from_utf8(a.key.into_inner()).expect("UTF-8 error parsing attribute name").to_string();
                 if name != "xmlns" {
                     hashmap.insert(name, a.unescape_value().expect("UTF-8 error parsing attribute value").to_string());
                 };
