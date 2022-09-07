@@ -223,8 +223,8 @@ pub struct Rule {
 /// In many cases, individual terms need to get simplified.
 /// For example foo = a, (b | c), d
 /// would need to get broken into two Rules, like:
-/// foo = a, --`synthesized_nt`, d
-/// --`synthesized_nt` = b | c
+/// foo = a, --synthesizedNT, d
+/// --synthesizedNT = b | c
 impl Rule {
     pub fn new(terms: Vec<Factor>) -> Self {
         Self { factors: terms }

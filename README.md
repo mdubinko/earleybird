@@ -1,21 +1,16 @@
 # EarleyBird
 Experimental implementation of ixml in Rust. Currently targeting the 20220620 spec.
 
-# Status as of August 25, 2022
+# Status as of Sep 6, 2022
 
-The test case in ixml_grammar is now passing, demonstrating full bootstrapping.
-(Start with an ixml grammar text file. Parse it. Construct a new grammar from the parse tree.
-Use it to parse a target document.)
+The very early version of running against the test suite is now working. You specify a path the the ixml test suite from the command line
 
-My overall goal is to get onboard with the ixml test suite. From there, incremental progress should be measurable and swift.
 
 # Usage
 
-for now `cargo test` is your best bet.
+    RUST_BACKTRACE=1 cargo run -- suite ../../ixml/tests/correct/test-catalog.xml
 
 # Future work
-
-* move to a better logging system, with a 'verbose' switch
 
 * more generally, performance profiling and optimization
 

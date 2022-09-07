@@ -26,7 +26,7 @@ fn run(dir: String) -> Result<(), earleybird::parser::ParseError> {
 
     for test in tests {
         let name = test.name;
-        println!("Test {name}");
+        println!("🧪 Test {name}");
 
         count += 1;
         let grammar = test.grammar;

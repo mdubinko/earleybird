@@ -27,7 +27,7 @@ impl Subcommand {
 }
 
 fn main() {
-
+    env_logger::init();
 
     argh::from_env::<Args>().subcommand.run();
 }

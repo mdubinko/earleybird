@@ -1,13 +1,10 @@
 use crate::grammar::{Grammar, Rule, Factor, TMark, Mark};
 use std::{collections::{VecDeque, HashSet, HashMap}, fmt};
-use multimap::{MultiMap};
+use multimap::MultiMap;
 use smol_str::SmolStr;
 use string_builder::Builder;
 use indextree::{Arena, NodeId};
-//use log::{info, debug, trace};
-
-// TODO: logs ^^^
-// TODO: just make parser.parse return indextree::Arena
+use log::{info, debug, trace};
 
 const DOTSEP: &str = "•";
 
@@ -166,7 +163,7 @@ impl TraceArena {
 
     /// record the continuation of a Task
     fn save_continuation(&mut self, target_nt: &str, tid: TraceId) {
-        println!("..⏸️ saving continuation {target_nt}->{:?}", tid);
+        debug!("..⏸️ saving continuation {target_nt}->{:?}", tid);
         self.continuations.insert(SmolStr::from(target_nt), tid);
     }
 
@@ -175,7 +172,7 @@ impl TraceArena {
     fn get_continuations_for(&self, target_nt: SmolStr) -> Vec<TraceId> {
         let maybe_val = self.continuations.get_vec(&target_nt);
         let result = maybe_val.unwrap_or(&Vec::new()).clone();
-        println!("..🔁 retrieving continuation {target_nt} containing {} entries", result.len());
+        debug!("..🔁 retrieving continuation {target_nt} containing {} entries", result.len());
         result
     }
 
@@ -230,10 +227,10 @@ impl TraceArena {
     fn have_we_seen(&mut self, task: &Task) -> bool {
         let hash = task.to_string();
         if self.hashes.contains(&hash) {
-            println!("...Skipping this task -- previously seen {} @ {}:{} {}", task.name, task.origin, task.pos, hash);
+            debug!("...Skipping this task -- previously seen {} @ {}:{} {}", task.name, task.origin, task.pos, hash);
             true
         } else {
-            println!("...caching task {}", hash);
+            debug!("...caching task {}", hash);
             self.hashes.insert(hash);
             false
         }
@@ -263,7 +260,7 @@ impl InputIter {
 
     pub fn get_at(&mut self, pos: usize) -> char {
         if self.at_eof(pos) {
-            println!("📄🚫");
+            debug!("📄🚫");
             '\x1f' // EOF char
         } else {
             self.tokens[pos]
@@ -358,7 +355,7 @@ impl Parser {
         // help avoid borrow-contention on *self
         let g = self.grammar.clone();
     
-        println!("Input now at position {} '{}'", 0, input.get_at(0));
+        debug!("Input now at position {} '{}'", 0, input.get_at(0));
 
         // Seed with top expr
         let top_rule = g.get_root_definition()
@@ -373,16 +370,16 @@ impl Parser {
         while let Some(tid) = self.traces.queue.pop_front() {
             let current_pos = self.traces.get(tid).pos;
             if current_pos > self.farthest_pos {
-                println!("⏭ Advanced input to position {} (='{}')", current_pos, input.get_at(current_pos));
+                debug!("⏭ Advanced input to position {} (='{}')", current_pos, input.get_at(current_pos));
                 self.farthest_pos = current_pos;
             }
-            println!("Pulled from queue {} at {}", self.traces.format_task(tid), current_pos);
+            debug!("Pulled from queue {} at {}", self.traces.format_task(tid), current_pos);
 
             let is_completed = self.traces.get(tid).dot.is_completed();
 
             // task in completed state?
             if is_completed {
-                println!("COMPLETER pos={}", current_pos);
+                debug!("COMPLETER pos={}", current_pos);
                 self.completed_trace.push(tid);
 
                 // find “parent” states at same origin that can produce this expr;
@@ -394,7 +391,7 @@ impl Parser {
                     if self.traces.get(continue_id).pos != self.traces.get(tid).origin {
                         continue;
                     }
-                    println!("...continuing Task... {}", self.traces.format_task(continue_id));
+                    debug!("...continuing Task... {}", self.traces.format_task(continue_id));
 
                     let now_finished_via_child = self.traces.get(continue_id).dot.next_unparsed();
                     let match_rec = 
@@ -402,7 +399,7 @@ impl Parser {
                         Factor::Nonterm(mark, name) => MatchRec::NonTerm(name, self.traces.get(tid).pos, mark),
                         Factor::Terminal(tmark, _ch ) => MatchRec::Term('?', self.traces.get(tid).pos, tmark),
                     };
-                    println!("MatchRec {:?}", &match_rec);
+                    trace!("MatchRec {:?}", &match_rec);
                     // child may have made progress; next item in parent seq needs to account for this
                     //let new_origin = self.traces.get(parent).begin;
                     let maybe_id = self.traces.task_advance_cursor(continue_id, match_rec);
@@ -419,7 +416,7 @@ impl Parser {
             match factor {
                 Factor::Nonterm(mark, name) => {
                     // go one level deeper
-                    println!("PREDICTOR: Nonterm {mark}{name}");
+                    debug!("PREDICTOR: Nonterm {mark}{name}");
 
                     self.traces.save_continuation(&name, tid);
 
@@ -448,20 +445,20 @@ impl Parser {
                 }
                 Factor::Terminal(tmark, matcher) => {
                     // record terminal
-                    println!("SCANNER: Terminal {tmark}{matcher} at pos={current_pos}");
+                    debug!("SCANNER: Terminal {tmark}{matcher} at pos={current_pos}");
                     if matcher.accept(input.get_at(current_pos)) {
                         // Match!
                         let rec = MatchRec::Term(input.get_at(current_pos), current_pos + 1, tmark);
-                        println!("advance cursor SCAN");
+                        debug!("advance cursor SCAN");
                         let maybe_id = self.traces.task_advance_cursor(tid, rec);
                         self.queue_back(maybe_id);
                     } else {
-                        println!("non-matched char '{}' (expecting {matcher}); 🛑", input.get_at(current_pos));
+                        debug!("non-matched char '{}' (expecting {matcher}); 🛑", input.get_at(current_pos));
                     }
                 }
             }
         } // while
-        println!("Finished parse with {} items in trace", self.traces.arena.len());
+        info!("Finished parse with {} items in trace", self.traces.arena.len());
         
         self.unpack_parse_tree()
     }
@@ -504,13 +501,13 @@ impl Parser {
     }
 
     fn unpack_parse_tree(&mut self) -> Result<Arena<Content>, ParseError> {
-        println!("TRACE...");
+        debug!("TRACE...");
         for tid in &self.completed_trace {
-            println!("{}", self.traces.format_task(*tid));
+            debug!("{}", self.traces.format_task(*tid));
         }
         let mut arena = Arena::new();
         let root = arena.new_node(Content::Root);
-        println!("assuming ending pos of {}", self.farthest_pos);
+        debug!("assuming ending pos of {}", self.farthest_pos);
         let name = self.grammar.root_definition_name.as_ref().unwrap();
         self.unpack_parse_tree_internal(&mut arena, name, Mark::Default, 0, self.farthest_pos, root);
 
@@ -553,10 +550,10 @@ impl Parser {
 
                     if task.mark==Mark::Mute || match_name.starts_with('-') {
                         // Skip
-                        println!("trace found {mark} {task} -- SKIPPING");
+                        debug!("trace found {mark} {task} -- SKIPPING");
                     } else {
                         // Element or Attribute
-                        println!("trace found {} {task}", task.mark);
+                        debug!("trace found {} {task}", task.mark);
                         let name_str = match_name.to_string();
                         let data = if task.mark==Mark::Attr {
                             Content::Attribute(name_str, "".to_string()) // 2nd pass will fill in the atttribute value
@@ -591,7 +588,7 @@ impl Parser {
             
                 }
                 None => {
-                    println!("  No matching traces for {}@{}:{}", name, origin, end);
+                    info!("  No matching traces for {}@{}:{}", name, origin, end);
                 }
             }
 
