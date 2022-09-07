@@ -327,6 +327,16 @@ impl ParseError {
     }
 }
 
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        match self {
+            Self::StaticError(e) => write!(f, "StaticError: {e}"),
+            Self::DynamicError(e) => write!(f, "DynamicError: {e}"),
+            Self::UncategorizedError(e) => write!(f, "UncategorizedError: {e}"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Parser {
     grammar: Grammar,

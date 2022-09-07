@@ -8,7 +8,7 @@ The very early version of running against the test suite is now working. You spe
 
 # Usage
 
-    RUST_BACKTRACE=1 cargo run -- suite ../../ixml/tests/correct/test-catalog.xml
+    RUST_LOG=info RUST_BACKTRACE=1 cargo run -- suite ../../ixml/tests/correct/test-catalog.xml
 
 # Future work
 

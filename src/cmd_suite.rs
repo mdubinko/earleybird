@@ -33,12 +33,28 @@ fn run(dir: String) -> Result<(), earleybird::parser::ParseError> {
         println!("{grammar}");
         let ixml_grammar = ixml_grammar::grammar();
         let mut grammar_parser = Parser::new(ixml_grammar);
-        let target_grammar_tree = grammar_parser.parse(&grammar)?;
+        let target_grammar_tree = match grammar_parser.parse(&grammar) {
+            Ok(tree) => tree,
+            Err(e) => {
+                println!("{e}");
+                fail += 1;
+                failures.push(name);
+                continue;
+            }
+        };
         let target_grammar = ixml_tree_to_grammar(&target_grammar_tree);
 
         let mut target_parser = Parser::new(target_grammar);
         let input = test.input;
-        let target_tree = target_parser.parse(&input)?;
+        let target_tree = match target_parser.parse(&input) {
+            Ok(tree) => tree,
+            Err(e) => {
+                println!("{e}");
+                fail += 1;
+                failures.push(name);
+                break;
+            }
+        };
         let target_xml = Parser::tree_to_testfmt(&target_tree);
 
         let expecteds = test.expected;
@@ -62,6 +78,8 @@ fn run(dir: String) -> Result<(), earleybird::parser::ParseError> {
     }
 
     println!("Total tests: {count}. ({pass} passed, {fail} failed, {abort} aborted)");
+    println!("Failures:");
+    println!("{}", failures.join("\n"));
     Ok(())
 }
 
