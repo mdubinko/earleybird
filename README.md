@@ -1,9 +1,11 @@
 # EarleyBird
 Experimental implementation of ixml in Rust. Currently targeting the 20220620 spec.
 
-# Status as of Sep 6, 2022
+# Status as of Sep 12, 2022
 
 The very early version of running against the test suite is now working. You specify a path the the ixml test suite from the command line
+
+Currently re-thinking error handling, in a more Rust-idiomatic way. Also looking at error-stack
 
 
 # Usage
@@ -12,7 +14,11 @@ The very early version of running against the test suite is now working. You spe
 
 # Future work
 
+* enlarge the subset of supported ixml toward 100%
+
 * more generally, performance profiling and optimization
+
+* flamegraph profiling?
 
 
 # References
