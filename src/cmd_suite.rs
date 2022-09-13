@@ -40,7 +40,7 @@ fn run(dir: String) {
                     Ok(tree) => tree,
                     Err(e) => {
                         println!("{e}");
-                        fail += 1;
+                        abort += 1;
                         failures.push(name);
                         continue;
                     }
