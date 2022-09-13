@@ -1,4 +1,4 @@
-use crate::grammar::{Grammar, Rule, Lit, Mark, TMark};
+use crate::{grammar::{Grammar, Rule, Lit, Mark, TMark}, testsuite_utils::TestCase};
 
 /// I am envisioning these as (semi-documented?) builtin grammars that can be invoked via CLI
 /// as a kind of smoke test -- so useful beyond `cargo test`...
@@ -9,6 +9,20 @@ use crate::grammar::{Grammar, Rule, Lit, Mark, TMark};
 //    fn get_inputs() -> Vec<&'static str>;
 //    fn get_expected() -> Vec<&'static str>;
 //}
+
+#[derive(Debug)]
+pub struct SmokeTests {
+    tests: Vec<TestCase>
+}
+
+impl SmokeTests {
+    fn default() -> Self {
+        let v = vec![
+
+        ];
+        SmokeTests { tests: v }
+    }
+}
 
 // smoke tests
 pub struct SmokeChars {}

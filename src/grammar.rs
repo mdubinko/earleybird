@@ -47,6 +47,10 @@ impl Grammar {
         }
     }
 
+    pub fn get_rule_count(&self) -> usize {
+        self.definitions.len()
+    }
+
     /// merge contents of `RuleBuilder` (which might include entire synthesized named rules) into Grammar
     /// Including the given Mark
     /// Consumes the `RuleBuilder`

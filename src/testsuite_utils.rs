@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::fs;
+use std::{fs, fmt};
 use std::path::PathBuf;
 use std::str::from_utf8;
 
@@ -9,6 +9,8 @@ use quick_xml::events::attributes::{Attributes};
 use quick_xml::name::QName;
 use quick_xml::reader::Reader;
 use string_builder::Builder;
+
+use crate::grammar::Grammar;
 
 type XmlString = String;
 
@@ -38,10 +40,25 @@ static TEST_CATALOGS: [&str; 16] = [
 /// a test case. We duplicate the grammar (from parent test-set) if needed, for one-stop shopping
 pub struct TestCase {
     pub name: String,
-    pub grammar: String,
+    pub grammar: TestGrammar,
     pub input: String,
     /// normally only a single expected result, except in ambiguous tests
     pub expected: Vec<TestResult>,
+}
+
+#[derive(Clone, Debug)]
+pub enum TestGrammar {
+    Unparsed(String),
+    Parsed(Grammar)
+}
+
+impl fmt::Display for TestGrammar {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unparsed(s) => write!(f, "{s}"),
+            Self::Parsed(g) => write!(f, "Grammar with {} rules", g.get_rule_count())
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -79,7 +96,7 @@ impl TestCaseBuilder {
         self.expected.clear();
         println!("built test case ===={}====", name.clone().unwrap());
 
-        TestCase { name: name.unwrap(), grammar: grammar.unwrap(), input: input.unwrap(), expected }
+        TestCase { name: name.unwrap(), grammar: TestGrammar::Unparsed(grammar.unwrap()), input: input.unwrap(), expected }
     }
 }
 

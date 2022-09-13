@@ -1,6 +1,6 @@
 
 use argh::FromArgs;
-use earleybird::{testsuite_utils::{self, xml_canonicalize}, parser::Parser, ixml_grammar::{ixml_tree_to_grammar, self}};
+use earleybird::{testsuite_utils::{self, xml_canonicalize, TestGrammar}, parser::Parser, ixml_grammar::{ixml_tree_to_grammar, self}};
 use crate::cmd_suite::testsuite_utils::TestResult::*;
 
 #[derive(FromArgs)]
@@ -12,7 +12,7 @@ pub struct RunSuite {
     dir: String,
 }
 
-fn run(dir: String) -> Result<(), earleybird::parser::ParseError> {
+fn run(dir: String) {
     println!("_{}_", dir);
 
     let tests = testsuite_utils::read_test_catalog(dir);
@@ -33,16 +33,21 @@ fn run(dir: String) -> Result<(), earleybird::parser::ParseError> {
         println!("{grammar}");
         let ixml_grammar = ixml_grammar::grammar();
         let mut grammar_parser = Parser::new(ixml_grammar);
-        let target_grammar_tree = match grammar_parser.parse(&grammar) {
-            Ok(tree) => tree,
-            Err(e) => {
-                println!("{e}");
-                fail += 1;
-                failures.push(name);
-                continue;
+        let target_grammar = match grammar {
+            TestGrammar::Parsed(g) => g,
+            TestGrammar::Unparsed(g) => {
+                let target_grammar_tree = match grammar_parser.parse(&g) {
+                    Ok(tree) => tree,
+                    Err(e) => {
+                        println!("{e}");
+                        fail += 1;
+                        failures.push(name);
+                        continue;
+                    }
+                };
+                ixml_tree_to_grammar(&target_grammar_tree)
             }
         };
-        let target_grammar = ixml_tree_to_grammar(&target_grammar_tree);
 
         let mut target_parser = Parser::new(target_grammar);
         let input = test.input;
@@ -80,7 +85,6 @@ fn run(dir: String) -> Result<(), earleybird::parser::ParseError> {
     println!("Total tests: {count}. ({pass} passed, {fail} failed, {abort} aborted)");
     println!("Failures:");
     println!("{}", failures.join("\n"));
-    Ok(())
 }
 
 impl RunSuite {
