@@ -1,8 +1,10 @@
 
 use crate::{grammar::{Grammar, Rule, Lit, Mark, TMark}, testsuite_utils::{TestCase, TestGrammar, TestResult}};
+use indoc::indoc;
 
 pub trait ParserTestSet {
     fn get_name(&self) -> &'static str;
+    fn get_ixml(&self) -> &'static str;
     fn get_grammar(&self) -> Grammar;
     fn get_inputs_expected(&self) -> Vec<(&'static str, &'static str)>;
 }
@@ -82,11 +84,16 @@ pub struct SmokeMute {}
 // test suites
 pub struct SmokeWiki {}
 
+ /// exercise all the different kinds of character matching
 impl ParserTestSet for SmokeChars {
     fn get_name(&self) -> &'static str { "SmokeChars" }
+    fn get_ixml(&self) -> &'static str {
+        indoc!{r#"
+            doc = ["0"-"9"], [Zs], ~["0"-"9"; "a"-"f"; "A"-"F"], ["abcdef"].
+        "#}
+    }
     fn get_grammar(&self) -> Grammar {
-        // exercise all the different kinds of character matching
-        // doc = ["0"-"9"], [Zs], ~["0"-"9"; "a"-"f"; "A"-"F"], ["abcdef"].
+       
         let mut g = Grammar::new();
         g.define("doc", Rule::seq()
             .ch_range('0', '9')
@@ -103,10 +110,15 @@ impl ParserTestSet for SmokeChars {
     }
 }
 
+/// basic sequence
 impl ParserTestSet for SmokeSeq {
     fn get_name(&self) -> &'static str { "SmokeSeq" }
+    fn get_ixml(&self) -> &'static str {
+        indoc! {r#"
+            doc = "a", "b".
+        "#}
+    }
     fn get_grammar(&self) -> Grammar {
-        // doc = "a", "b".
         let mut g = Grammar::new();
         g.define("doc", Rule::seq().ch('a').ch('b') );
         g
@@ -118,10 +130,15 @@ impl ParserTestSet for SmokeSeq {
     }
 }
 
+/// basic alternation
 impl ParserTestSet for SmokeAlt {
     fn get_name(&self) -> &'static str { "SmokeAlt" }
+    fn get_ixml(&self) -> &'static str {
+        indoc! {r#"
+            doc = "a" | "b".
+        "#}
+    }
     fn get_grammar(&self) -> Grammar {
-        // doc = "a" | "b".
         let mut g = Grammar::new();
         g.define("doc", Rule::seq().ch('a') );
         g.define("doc", Rule::seq().ch('b') );
@@ -135,12 +152,17 @@ impl ParserTestSet for SmokeAlt {
     }
 }
 
+/// Nonterminal reference
 impl ParserTestSet for SmokeNT {
     fn get_name(&self) -> &'static str { "SmokeNT" }
+    fn get_ixml(&self) -> &'static str {
+        indoc! {r#"
+           doc = a, b.
+           a = "a" | "A".
+           b = "b" | "B".
+        "#}
+    }
     fn get_grammar(&self) -> Grammar {
-        // doc = a, b.
-        // a = "a" | "A".
-        // b = "b" | "B".
         let mut g = Grammar::new();
         g.define("doc", Rule::seq().nt("a").nt("b") );
         g.define("a", Rule::seq().ch('a') );
@@ -159,10 +181,15 @@ impl ParserTestSet for SmokeNT {
     }
 }
 
+/// Your basic ?
 impl ParserTestSet for SmokeOpt {
     fn get_name(&self) -> &'static str { "SmokeOpt" }
+    fn get_ixml(&self) -> &'static str {
+        indoc! {r#"
+            doc = "a"?.
+        "#}
+    }
     fn get_grammar(&self) -> Grammar {
-        // doc = "a"?.
         let mut g = Grammar::new();
         g.define("doc", Rule::seq().opt(Rule::seq().ch('a')));
         g
@@ -175,10 +202,15 @@ impl ParserTestSet for SmokeOpt {
     }
 }
 
+/// Kleene *
 impl ParserTestSet for SmokeStar {
     fn get_name(&self) -> &'static str { "SmokeStar" }
+    fn get_ixml(&self) -> &'static str {
+        indoc! {r#"
+            doc = "a"*.
+        "#}
+    }
     fn get_grammar(&self) -> Grammar {
-        // doc = "a"*.
         let mut g = Grammar::new();
         g.define("doc", Rule::seq().repeat0( Rule::seq().ch('a')));
         g
@@ -190,13 +222,19 @@ impl ParserTestSet for SmokeStar {
             ("aa", "<doc>aa</doc>"),
             ("aaa", "<doc>aaa</doc>"),
             ]
-    }
+   }
 }
 
+/// Kleene +
 impl ParserTestSet for SmokePlus {
     fn get_name(&self) -> &'static str { "SmokePlus" }
+    fn get_ixml(&self) -> &'static str {
+        indoc! {r#"
+            doc = "a"+.
+        "#}
+    }
     fn get_grammar(&self) -> Grammar {
-        // doc = "a"+.
+
         let mut g = Grammar::new();
         g.define("doc", Rule::seq().repeat1( Rule::seq().ch('a')));
         g
@@ -210,10 +248,15 @@ impl ParserTestSet for SmokePlus {
     }
 }
 
+/// the ixml **
 impl ParserTestSet for SmokeStarSep {
     fn get_name(&self) -> &'static str { "SmokeStarSep" }
+    fn get_ixml(&self) -> &'static str {
+        indoc! {r#"
+            doc = "a"**" ".
+        "#}
+    }
     fn get_grammar(&self) -> Grammar {
-        // doc = "a"**" ".
         let mut g = Grammar::new();
         g.define("doc", Rule::seq().repeat0_sep(
             Rule::seq().ch('a'),
@@ -230,10 +273,15 @@ impl ParserTestSet for SmokeStarSep {
     }
 }
 
+/// the ixml ++
 impl ParserTestSet for SmokePlusSep {
     fn get_name(&self) -> &'static str { "SmokePlusSep" }
+    fn get_ixml(&self) -> &'static str {
+        indoc! {r#"
+            doc = "a"++" ".
+        "#}
+    }
     fn get_grammar(&self) -> Grammar {
-        // doc = "a"++" ".
         let mut g = Grammar::new();
         g.define("doc", Rule::seq().repeat1_sep(
             Rule::seq().ch('a'),
@@ -249,12 +297,17 @@ impl ParserTestSet for SmokePlusSep {
     }
 }
 
+/// testing element production
 impl ParserTestSet for SmokeElem {
     fn get_name(&self) -> &'static str { "SmokeElem" }
+    fn get_ixml(&self) -> &'static str {
+        indoc! {r#"
+            doc = name, ":", value.
+            name = ["a"-"z"]+.
+            value = ["a"-"z"]+.
+        "#}
+    }
     fn get_grammar(&self) -> Grammar {
-        // doc = name, ":", value.
-        // name = ["a"-"z"]+.
-        // value = ["a"-"z"]+.
         let mut g = Grammar::new();
         g.define("doc", Rule::seq().nt("name").ch(':').nt("value"));
         g.define("name", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
@@ -269,13 +322,18 @@ impl ParserTestSet for SmokeElem {
     }
 }
 
+/// testing attribute production
+/// n.b. identical to SmokeElem other than @ Mark on the name definition
 impl ParserTestSet for SmokeAttr {
     fn get_name(&self) -> &'static str { "SmokeAttr" }
+    fn get_ixml(&self) -> &'static str {
+        indoc! {r#"
+           doc = name, ":", value.
+           @name = ["a"-"z"]+.
+           value = ["a"-"z"]+.
+        "#}
+    }
     fn get_grammar(&self) -> Grammar {
-        // n.b. identical to SmokeElem other than @ Mark on the name definition
-        // doc = name, ":", value.
-        // @name = ["a"-"z"]+.
-        // value = ["a"-"z"]+.
         let mut g = Grammar::new();
         g.define("doc", Rule::seq().nt("name").ch(':').nt("value"));
         g.mark_define(Mark::Attr, "name", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
@@ -290,14 +348,20 @@ impl ParserTestSet for SmokeAttr {
     }
 }
 
+/// turning off rules or literals with -
+/// Several different ways to mute...
+
 impl ParserTestSet for SmokeMute {
     fn get_name(&self) -> &'static str { "SmokeMute" }
+    fn get_ixml(&self) -> &'static str {
+        indoc! {r#"
+            doc = a, -":", -b, c.
+            -a = ["a"-"z"]+.
+            b = ["a"-"m"]+.
+            c = ["n"-"z"]+.
+        "#}
+    }
     fn get_grammar(&self) -> Grammar {
-        // Several different ways to mute...
-        // doc = a, -":", -b, c.
-        // -a = ["a"-"z"]+.
-        // b = ["a"-"m"]+.
-        // c = ["n"-"z"]+.
         let mut g = Grammar::new();
         g.define("doc", Rule::seq().nt("a").mark_ch(':', TMark::Mute).mark_nt("b", Mark::Mute).nt("c"));
         g.mark_define(Mark::Mute, "a", Rule::seq().repeat1( Rule::seq().ch_range('a', 'z')));
@@ -317,11 +381,15 @@ impl ParserTestSet for SmokeMute {
 /// The example grammar from https://en.wikipedia.org/wiki/Earley_parser
 impl ParserTestSet for SmokeWiki {
     fn get_name(&self) -> &'static str { "SmokeWiki" }
+    fn get_ixml(&self) -> &'static str {
+        indoc! {r#"
+            doc = S.
+            S = S, "+", M | M.
+            M = M, "*", T | T.
+            T = ["1234"].
+        "#}
+    }
     fn get_grammar(&self) -> Grammar {
-        // doc = S.
-        // S = S, "+", M | M.
-        // M = M, "*", T | T.
-        // T = ["1234"].
         let mut g = Grammar::new();
         g.define("doc", Rule::seq().nt("S") );
         g.define("S", Rule::seq().nt("S").ch('+').nt("M") );
