@@ -33,7 +33,7 @@ impl Parse {
 
         // 5. Parse input file against target grammar
 
-        // 6. Present output
+        // 6. Format output
     }
 }
 

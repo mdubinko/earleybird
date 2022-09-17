@@ -1,6 +1,6 @@
 
 use argh::FromArgs;
-use earleybird::{testsuite_utils::{self, xml_canonicalize, TestGrammar}, parser::Parser, ixml_grammar::{ixml_tree_to_grammar, self}};
+use earleybird::{testsuite_utils::{self, xml_canonicalize, TestGrammar}, parser::Parser, ixml_grammar::ixml_str_to_grammar, grammar::{Grammar, Rule}};
 use crate::cmd_suite::testsuite_utils::TestResult::*;
 
 #[derive(FromArgs)]
@@ -29,23 +29,19 @@ fn run(dir: String) {
         println!("🧪 Test {name}");
 
         count += 1;
-        let grammar = test.grammar;
+        let grammar = test.grammars.into_iter().next().expect("no grammars available for this test");
         println!("{grammar}");
-        let ixml_grammar = ixml_grammar::grammar();
-        let mut grammar_parser = Parser::new(ixml_grammar);
         let target_grammar = match grammar {
             TestGrammar::Parsed(g) => g,
-            TestGrammar::Unparsed(g) => {
-                let target_grammar_tree = match grammar_parser.parse(&g) {
-                    Ok(tree) => tree,
-                    Err(e) => {
-                        println!("{e}");
-                        abort += 1;
-                        failures.push(name);
-                        continue;
-                    }
-                };
-                ixml_tree_to_grammar(&target_grammar_tree)
+            TestGrammar::Unparsed(ixml) => {
+                ixml_str_to_grammar(&ixml).unwrap_or_else(|e| {
+                     abort+=1;
+                     failures.push(name.clone());
+                     println!("{e}");
+                     let mut g = Grammar::new();
+                     g.define("error", Rule::seq().ch_in(&e.to_string())); // hack
+                     g
+                })
             }
         };
 
@@ -56,7 +52,7 @@ fn run(dir: String) {
             Err(e) => {
                 println!("{e}");
                 fail += 1;
-                failures.push(name);
+                failures.push(name.clone());
                 break;
             }
         };
@@ -68,7 +64,7 @@ fn run(dir: String) {
         for expected in expecteds {
             let passed = match expected {
                 AssertNotASentence => (todo!()),
-                AssertDynamicError(de) => todo!(),
+                AssertDynamicError(_de) => todo!(),
                 AssertXml(x) => {
                     xml_canonicalize(&target_xml) == xml_canonicalize(&x)
                 }

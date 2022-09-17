@@ -40,7 +40,8 @@ static TEST_CATALOGS: [&str; 16] = [
 /// a test case. We duplicate the grammar (from parent test-set) if needed, for one-stop shopping
 pub struct TestCase {
     pub name: String,
-    pub grammar: TestGrammar,
+    /// if multiple test grammars present, identical results expected from using each
+    pub grammars: Vec<TestGrammar>,
     pub input: String,
     /// normally only a single expected result, except in ambiguous tests
     pub expected: Vec<TestResult>,
@@ -70,33 +71,33 @@ pub enum TestResult {
 
 struct TestCaseBuilder {
     pub name: Option<String>,
-    pub grammar: Option<String>,
+    pub grammar: Vec<TestGrammar>,
     pub input: Option<String>,
     pub expected: Vec<TestResult>,
 }
 
 impl TestCaseBuilder {
     fn new() -> Self {
-        Self { name: None, grammar: None, input: None, expected: Vec::new() }
+        Self { name: None, grammar: Vec::new(), input: None, expected: Vec::new() }
     }
 
     /// Build the [`TestCase`]. Resets the builder.
     fn build(&mut self) -> TestCase {
         assert!(self.name.is_some());
-        assert!(self.grammar.is_some());
+        assert!(!self.grammar.is_empty());
         assert!(self.input.is_some());
         assert!(!self.expected.is_empty());
         let name = self.name.take();
         self.name = None;
-        let grammar = self.grammar.take();
-        self.grammar = None;
+        let grammar = self.grammar.drain(..).collect();
+        self.grammar.clear();
         let input = self.input.take();
         self.input = None;
         let expected = self.expected.drain(..).collect();
         self.expected.clear();
         println!("built test case ===={}====", name.clone().unwrap());
 
-        TestCase { name: name.unwrap(), grammar: TestGrammar::Unparsed(grammar.unwrap()), input: input.unwrap(), expected }
+        TestCase { name: name.unwrap(), grammars: grammar, input: input.unwrap(), expected }
     }
 }
 
@@ -181,7 +182,7 @@ pub fn read_test_catalog(path: String) -> Vec<TestCase> {
                         fullname.push('/');
                         fullname.push_str(&name);
                         builder.name = Some(fullname);
-                        builder.grammar = Some(current_grammar.clone());
+                        builder.grammar.push(TestGrammar::Unparsed(current_grammar.clone()));
                     },
                     b"test-case-ref" => {
                         // TODO: maybe just note these somewhere...

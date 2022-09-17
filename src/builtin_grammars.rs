@@ -25,12 +25,14 @@ impl SmokeTests {
     /// add one or more test cases against a provided grammar
     fn add<T: ParserTestSet>(&mut self, testset: &T) {
         let name = testset.get_name();
+        let ixml = testset.get_ixml();
+        let grammar = testset.get_grammar();
         let ins_outs = testset.get_inputs_expected();
         for (input, expected) in ins_outs {
             self.tests.push(
                 TestCase {
-                    name: testset.get_name().to_owned(),
-                    grammar: TestGrammar::Parsed(testset.get_grammar()),
+                    name: name.to_owned(),
+                    grammars: vec![TestGrammar::Unparsed(ixml.to_string()), TestGrammar::Parsed(grammar.clone())],
                     input: input.to_string(),
                     expected: vec![TestResult::AssertXml(expected.to_string())],
                 }
