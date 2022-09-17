@@ -87,8 +87,8 @@ pub fn ixml_grammar() -> Grammar {
         .nt("factor").mark_ch('*', TMark::Mute).mark_ch('*', TMark::Mute).nt("s").nt("sep"));
 
     // repeat1: factor, (-"+", s; -"++", s, sep).
-    g.define("repeat0", Rule::seq().nt("factor").mark_ch('+', TMark::Mute).nt("s"));
-    g.define("repeat0", Rule::seq()
+    g.define("repeat1", Rule::seq().nt("factor").mark_ch('+', TMark::Mute).nt("s"));
+    g.define("repeat1", Rule::seq()
         .nt("factor").mark_ch('+', TMark::Mute).mark_ch('+', TMark::Mute).nt("s").nt("sep"));
 
     // option: factor, -"?", s.

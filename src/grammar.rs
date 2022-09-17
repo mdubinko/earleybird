@@ -91,6 +91,10 @@ impl Grammar {
     }
     
     pub fn get_definition_mark(&self, name: &str) -> Mark {
+        if !self.definitions.contains_key(name) {
+            // TODO: make this return a ParseError...
+            println!("missing rule named {name}!");
+        }
         self.definitions[name].mark.clone()
     }
 
