@@ -16,9 +16,9 @@
 //! 
 //! A (non-branching) Rule is always a sequence of zero or more Factors, a Vec<Factor>
 //! A Factor is an enum of either
-//! Terminal(TMark, Lit)  (a `TMark` is like a Mark, except there is no @ prefix)
+//! `Terminal`(TMark, Lit)  (a `TMark` is like a Mark, except there is no @ prefix)
 //! or
-//! Nonterm(Mark, `SmolStr`) which is a reference to a different definition (which must exist elsewhere in the grammar)
+//! `Nonterm`(Mark, `SmolStr`) which is a reference to a different definition (which must exist elsewhere in the grammar)
 //!
 //! More complicated structures like x? or x+ or x* or x++y or x**y
 //! are built from the existing primitives and recursive definitions
@@ -143,7 +143,7 @@ impl<'a> Iterator for RuleIter<'a> {
     }
 }
 
-/// within a Rule, iterate through individual Terms
+/// within a Rule, iterate through individual `Term`s
 pub struct TermIter<'a>(&'a Vec<Factor>, usize);
 
 impl<'a> Iterator for TermIter<'a> {
@@ -279,7 +279,8 @@ impl fmt::Display for Rule {
 }
 
 
-/// At thit low level, an individual Factor is either a terminal or a nonterminal
+/// At this low level, an individual `Factor` is either a terminal or a nonterminal
+/// TODO: insertions
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Factor {
     Terminal(TMark, Lit),
@@ -306,11 +307,12 @@ impl fmt::Display for Factor {
     }
 }
 
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 struct CharMatchId(usize);
 
 /// A character matcher can be an arbitrarily long set of matchspecs (which are considered logically OR'd)
-/// e.g. ["0"-"9"; "?": Nd]
+/// e.g. ["0"-"9" | "?" | #64 | Nd]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Lit {
     matchers: Vec<CharMatcher>,
@@ -591,6 +593,28 @@ impl RuleBuilder {
         self = self.syn_rule(f_star_sep, Rule::seq().opt( Rule::seq().repeat1_sep(sub1, sub2)));
         // 2 insert newly-created nt into sequence under construction
         self.mark_nt(f_star_sep, Mark::Mute)
+    }
+
+    /// inline set of options, one of which must match
+    /// for example for
+    /// a: "{", (b, "c" | a), "}".
+    /// g.define("a", Rule::seq()
+    ///     .ch('{')
+    ///     .alts(vec![
+    ///         Rule::seq().nt("b").ch('c'),
+    ///         Rule::seq().nt("a"),
+    ///     ]})
+    ///     .ch('}')
+    /// );
+    pub fn alts(mut self, exprs: Vec<RuleBuilder>) -> Self {
+        // create new rule f_opt
+        let f_opt = &self.mint_internal_id("f-opt");
+        for expr in exprs {
+            self = self.syn_rule(f_opt, expr);
+        }
+
+        // 2 insert newly-created nt into sequence under construction
+        self.nt(f_opt)
     }
 
     /// internal identifier for synthesized rules

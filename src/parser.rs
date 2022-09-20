@@ -688,7 +688,7 @@ impl Parser {
     /// get all immediate element children
     /// Returns a Vec of pairs of (Element Name , `NodeId`)
     /// Roughly like the `XPath` child axis
-    pub fn get_elements(arena: &Arena<Content>, nid: NodeId) -> Vec<(String, NodeId)> {
+    pub fn get_child_elements(arena: &Arena<Content>, nid: NodeId) -> Vec<(String, NodeId)> {
         nid.children(arena)
             // fist pair up as (&Content, NodeId)
             .map(|nid| (arena.get(nid).unwrap().get(), nid) )
@@ -699,4 +699,19 @@ impl Parser {
             .collect()
     }
 
+    /// Helper function for working with indextree
+    /// get all immediate element children matching a given name
+    /// Returns a Vec of `NodeId`
+    pub fn get_child_elements_named(arena: &Arena<Content>, nid: NodeId, name: &str) -> Vec<NodeId> {
+        nid.children(arena)
+            .filter(|n| {
+                let content = arena.get(*n).unwrap().get();
+                if let Content::Element(nam) = content {
+                    nam==name
+                } else {
+                    false
+                }
+            })
+            .collect()
+    }
 }

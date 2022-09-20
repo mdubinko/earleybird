@@ -338,9 +338,9 @@ pub fn ixml_tree_to_grammar(arena: &Arena<Content>) -> Grammar {
 /// Fully construct one rule. (which may involve multiple calls to ixml_rulebuilder if there are multiple alts)
 pub fn ixml_construct_rule(rule: NodeId, mark: Mark, arena: &Arena<Content>, rule_name: &str, g: &mut Grammar) {
     //println!("Build rule ... {rule_name}");
-    for (name, eid) in Parser::get_elements(arena, rule) {
+    for (name, eid) in Parser::get_child_elements(arena, rule) {
         if name=="alt" {
-            let rb = ixml_rulebuilder(eid, arena);
+            let rb = ixml_rulebuilder_new(eid, arena);
             g.mark_define(mark, rule_name, rb);
         }
     }
@@ -348,44 +348,81 @@ pub fn ixml_construct_rule(rule: NodeId, mark: Mark, arena: &Arena<Content>, rul
 
 /// Construct one alt, which is a sequence built from a single `RuleBuilder`
 /// @param `node` is the nodeID of current element, expected to be <alt>, <repeat0>, <repeat1>, <option>, or <sep>
-pub fn ixml_rulebuilder(node: NodeId, arena: &Arena<Content>) -> RuleBuilder {
+pub fn ixml_rulebuilder_new(node: NodeId, arena: &Arena<Content>) -> RuleBuilder {
     let mut rb = Rule::seq();
-    for (ename, enid) in Parser::get_elements(arena, node) {
-        let attrs = Parser::get_attributes(arena, enid);
-        match ename.as_str() {
-            "alts" => {
-                unimplemented!("need to handle <alts>");
-            }
-            "literal" => {
-                rb = rb.ch(attrs["string"].chars().next().expect("no empty string literals"));
-            }
-            "inclusion" => {
-                // character classes
-                unimplemented!("need to handle character <inclusion>");
-            }
-            "exclusion" => {
-                // character classes
-                unimplemented!("need to handle character <exclusion>");
-            }
-            "nonterminal" => {
-                rb = rb.nt(&attrs["name"]);
-            }
-            "option" => {
-                //rb = rb.opt(sub)
-                unimplemented!("need to handle <option>");
-            }
-            "repeat0" => {
-                unimplemented!("need to handle <repeat0>");
-            }
-            "repeat1" => {
-                unimplemented!("need to handle <repeat1>");
-            }
-            _ => unimplemented!("unknown element {ename} child of <alt>"),
-        }
+    for (name, nid) in Parser::get_child_elements(arena, node) {
+        rb = ixml_ruleappend(rb, name, nid, arena);
     }
     rb
 }
 
+/// Add additional factors onto the given `RuleBuilder`, possibly recursively
+/// @param `node` is the nodeID of current element, expected to be <alt>, <repeat0>, <repeat1>, <option>, or <sep>
+pub fn ixml_ruleappend(mut rb: RuleBuilder, name: String, nid: NodeId, arena: &Arena<Content>) -> RuleBuilder {
+
+    let attrs = Parser::get_attributes(arena, nid);
+    match name.as_str() {
+        "alts" => {
+            // an <alts> with only one <alt> child can be inlined, otherwise we give it the full treatment
+            let alt_elements = Parser::get_child_elements_named(arena, nid, "alt");
+            if alt_elements.len()==1 {
+                rb = ixml_ruleappend(rb, "alt".to_string(), alt_elements[0], arena);
+            } else {
+                let altrules: Vec<RuleBuilder> = alt_elements.iter()
+                    .map(|n| ixml_rulebuilder_new(*n, arena))
+                    .collect();
+                rb = rb.alts(altrules);
+            }
+        }
+        "literal" => {
+            rb = rb.ch(attrs["string"].chars().next().expect("no empty string literals"));
+        }
+        "inclusion" => {
+            // character classes
+            unimplemented!("need to handle character <inclusion>");
+        }
+        "exclusion" => {
+            // character classes
+            unimplemented!("need to handle character <exclusion>");
+        }
+        "nonterminal" => {
+            rb = rb.nt(&attrs["name"]);
+        }
+        "option" => {
+            let subexpr = ixml_rulebuilder_new(nid, arena);
+            rb = rb.opt(subexpr);
+        }
+        "repeat0" => {
+            // if a <sep> child exists, this is a ** rule, otherwise just *
+            let alts_elements = Parser::get_child_elements_named(arena, nid, "alts");
+            let repeat_this = ixml_rulebuilder_new(alts_elements[0], arena);
+
+            let sep_elements = Parser::get_child_elements_named(arena, nid, "sep");
+            if sep_elements.len()==1 {
+                let separated_by = ixml_rulebuilder_new(sep_elements[0], arena);
+                rb = rb.repeat0_sep(repeat_this, separated_by)
+            } else {
+                rb = rb.repeat0(repeat_this);
+            }
+        }
+        "repeat1" => {
+            // if a <sep> child exists, this is a ++ rule, othewise just +
+            let alts_elements = Parser::get_child_elements_named(arena, nid, "alts");
+            let repeat_this = ixml_rulebuilder_new(alts_elements[0], arena);
+
+            let sep_elements = Parser::get_child_elements_named(arena, nid, "sep");
+            if sep_elements.len()==1 {
+                let separated_by = ixml_rulebuilder_new(sep_elements[0], arena);
+                rb = rb.repeat1_sep(repeat_this, separated_by);
+            } else {
+                rb = rb.repeat1(repeat_this);
+            }
+
+        }
+        _ => unimplemented!("unknown element {name} child of <alt>"),
+    }
+    rb
+}
 
 
 #[test]
