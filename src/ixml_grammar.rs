@@ -10,7 +10,7 @@ pub fn ixml_grammar() -> Grammar {
 
     // ixml: s, prolog?, rule++RS, s.
     // TODO: prolog
-    g.define("ixml", Rule::seq().nt("s").repeat1_sep(Rule::seq().nt("rule"), Rule::seq().nt("RS")));
+    g.define("ixml", Rule::seq().nt("s").repeat1_sep(Rule::seq().nt("rule"), Rule::seq().nt("RS")).nt("s"));
 
     // -s: (whitespace; comment)*. {Optional spacing}
     // TODO: comment
@@ -293,7 +293,7 @@ insertion: -"+", s, (string; -"#", hex), s.
 /// one stop shopping for ixml String -> Result<Grammar, ParseError>
 pub fn ixml_str_to_grammar(ixml: &str) -> Result<Grammar, ParseError> {
     let mut ixml_parser = Parser::new(ixml_grammar());
-    let ixml_arena = ixml_parser.parse(ixml)?;
+    let ixml_arena = ixml_parser.parse(ixml.trim())?;
     let grammar = ixml_tree_to_grammar(&ixml_arena);
     Ok(grammar)
 }
@@ -319,45 +319,74 @@ pub fn ixml_tree_to_grammar(arena: &Arena<Content>) -> Grammar {
             _ => {}
         }
     }
+    assert!(all_rules.len() > 0, "can't convert ixml tree to grammar: no rules present! {:?}", &arena);
     for rule in all_rules {
-        let rule_name = &Parser::get_attributes(arena, rule)["name"];
-        // TODO: rule_mark
-        ixml_build_rule(rule, arena, rule_name, &mut g);
+        let rule_attrs = Parser::get_attributes(arena, rule);
+        let rule_name = &rule_attrs["name"];
+        let rule_mark = rule_attrs.get("mark");
+        let mark = match rule_mark.map(|s| s.as_str()) {
+            Some("@") => Mark::Attr,
+            Some("-") => Mark::Mute,
+            Some("^") => Mark::Unmute,
+            _ => Mark::Default,
+        };
+        ixml_construct_rule(rule, mark, arena, rule_name, &mut g);
     }
     g
 }
 
-//<rule name="doc"><alt><literal string="A"></literal><literal string="B"></literal></alt></rule>
-
-/// Construct one rule.
-/// If it has multiple alts, we end up calling grammar.define() multiple times
-pub fn ixml_build_rule(rule: NodeId, arena: &Arena<Content>, rule_name: &str, g: &mut Grammar) {
-    // TODO Parser::get_attributes(arena, rule)["mark"] ...
+/// Fully construct one rule. (which may involve multiple calls to ixml_rulebuilder if there are multiple alts)
+pub fn ixml_construct_rule(rule: NodeId, mark: Mark, arena: &Arena<Content>, rule_name: &str, g: &mut Grammar) {
+    //println!("Build rule ... {rule_name}");
     for (name, eid) in Parser::get_elements(arena, rule) {
         if name=="alt" {
-            let rb = ixml_build_alts(eid, arena);
-            g.define(rule_name, rb);
+            let rb = ixml_rulebuilder(eid, arena);
+            g.mark_define(mark, rule_name, rb);
         }
     }
 }
 
 /// Construct one alt, which is a sequence built from a single `RuleBuilder`
-pub fn ixml_build_alts(alt: NodeId, arena: &Arena<Content>) -> RuleBuilder {
+/// @param `node` is the nodeID of current element, expected to be <alt>, <repeat0>, <repeat1>, <option>, or <sep>
+pub fn ixml_rulebuilder(node: NodeId, arena: &Arena<Content>) -> RuleBuilder {
     let mut rb = Rule::seq();
-    for (ename, enid) in Parser::get_elements(arena, alt) {
+    for (ename, enid) in Parser::get_elements(arena, node) {
         let attrs = Parser::get_attributes(arena, enid);
         match ename.as_str() {
+            "alts" => {
+                unimplemented!("need to handle <alts>");
+            }
             "literal" => {
                 rb = rb.ch(attrs["string"].chars().next().expect("no empty string literals"));
             }
+            "inclusion" => {
+                // character classes
+                unimplemented!("need to handle character <inclusion>");
+            }
+            "exclusion" => {
+                // character classes
+                unimplemented!("need to handle character <exclusion>");
+            }
             "nonterminal" => {
                 rb = rb.nt(&attrs["name"]);
+            }
+            "option" => {
+                //rb = rb.opt(sub)
+                unimplemented!("need to handle <option>");
+            }
+            "repeat0" => {
+                unimplemented!("need to handle <repeat0>");
+            }
+            "repeat1" => {
+                unimplemented!("need to handle <repeat1>");
             }
             _ => unimplemented!("unknown element {ename} child of <alt>"),
         }
     }
     rb
 }
+
+
 
 #[test]
 fn parse_ixml() -> Result<(), ParseError> {

@@ -92,7 +92,7 @@ impl ParserTestSet for SmokeChars {
     fn get_ixml(&self) -> &'static str {
         indoc!{r#"
             doc = ["0"-"9"], [Zs], ~["0"-"9"; "a"-"f"; "A"-"F"], ["abcdef"].
-        "#}
+        "#} // doc = ["0"-"9"], [Zs], ~["0123456789"; "a"-"f"; "A"-"E"; #46], ["abcdef"].
     }
     fn get_grammar(&self) -> Grammar {
        

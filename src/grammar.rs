@@ -36,18 +36,20 @@ use crate::{parser::DotNotation, unicode_ranges::UnicodeRange};
 #[derive(Debug, Clone)]
 pub struct Grammar {
     definitions: HashMap<SmolStr, BranchingRule>,
-    pub root_definition_name: Option<SmolStr>,
+    /// remember insertion order of rules (used for tests & comparing grammars)
+    defn_order: Vec<SmolStr>,
 }
 
 impl Grammar {
     pub fn new() -> Self {
         Self {
             definitions: HashMap::new(),
-            root_definition_name: None,
+            defn_order: Vec::new(),
         }
     }
 
     pub fn get_rule_count(&self) -> usize {
+        assert_eq!(self.definitions.len(), self.defn_order.len());
         self.definitions.len()
     }
 
@@ -63,31 +65,34 @@ impl Grammar {
     /// Consumes the `RuleBuilder`
     pub fn mark_define(&mut self, mark: Mark, name: &str, rb: RuleBuilder) {
         // 1) the main rule 
+        let name_smol = SmolStr::new(name);
         let main_rule = Rule::new(rb.factors);
-        let branching_rule = self.definitions.entry(SmolStr::new(name))
-            .or_insert_with(|| BranchingRule::new(mark));
+        let branching_rule = self.definitions.entry(name_smol.clone())
+            .or_insert_with(|| {
+                self.defn_order.push(name_smol.clone());
+                BranchingRule::new(mark)
+            });
         branching_rule.add_alt_branch(main_rule);
         
         // 2) synthesized rules
         for (syn_name, builders) in rb.syn_rules {
             for builder in builders {
                 let syn_branching_rule = self.definitions.entry(syn_name.clone())
-                    .or_insert_with(|| BranchingRule::new(Mark::Mute));
+                    .or_insert_with(|| {
+                        self.defn_order.push(syn_name.clone());
+                        BranchingRule::new(Mark::Mute)
+                    });
                 syn_branching_rule.add_alt_branch(Rule::new(builder.factors));
             }
-        }
-        // 3) If this is the first rule, make a note of it as the root rule
-        if self.root_definition_name.is_none() {
-            self.root_definition_name = Some(SmolStr::new(name));
         }
     }
 
     pub fn get_root_definition_name(&self) -> Option<String> {
-        self.root_definition_name.as_ref().map(smol_str::SmolStr::to_string)
+        self.defn_order.get(0).map(smol_str::SmolStr::to_string)
     }
 
     pub fn get_root_definition(&self) -> Option<&BranchingRule> {
-        self.root_definition_name.as_ref().map(|s| self.get_definition(s))
+        self.defn_order.get(0).map(|s| self.get_definition(s))
     }
     
     pub fn get_definition_mark(&self, name: &str) -> Mark {
@@ -95,7 +100,7 @@ impl Grammar {
             // TODO: make this return a ParseError...
             println!("missing rule named {name}!");
         }
-        self.definitions[name].mark.clone()
+        self.definitions[name].mark
     }
 
     pub fn get_definition(&self, name: &str) -> &BranchingRule {
@@ -110,10 +115,12 @@ impl Grammar {
 impl fmt::Display for Grammar {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut builder = string_builder::Builder::default();
-        for (name, branching_rule) in &self.definitions {
+        // iterate in insertion order...
+        for name in &self.defn_order {
+            let branching_rule = &self.definitions[name];
             builder.append(branching_rule.mark.to_string());
             builder.append(name.to_string());
-            builder.append(": ");
+            builder.append("= ");
             let rules: Vec<String> = branching_rule.alts.clone().iter()
                 .map(std::string::ToString::to_string)
                 .collect();
@@ -172,7 +179,7 @@ impl BranchingRule {
     }
 
     pub fn mark(&self) -> Mark {
-        self.mark.clone()
+        self.mark
     }
 }
 
@@ -181,7 +188,7 @@ impl BranchingRule {
 /// @ for attribute
 /// - for hidden
 /// ^ for visible (default)
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Mark {
     Default,
     Unmute,
@@ -205,7 +212,7 @@ impl fmt::Display for Mark {
 /// These get used often, so the varient names are kept short
 /// - for hidden
 /// ^ for visible (default)
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum TMark {
     Default,
     Unmute,

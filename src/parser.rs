@@ -250,8 +250,7 @@ struct InputIter {
 
 impl InputIter {
     fn new(input: &str) -> Self {
-        Self {
-            tokens: input.chars().collect::<Vec<_>>() }
+        Self { tokens: input.chars().collect::<Vec<_>>() }
     }
 
     pub fn at_eof(&self, pos: usize) -> bool {
@@ -518,8 +517,8 @@ impl Parser {
         let mut arena = Arena::new();
         let root = arena.new_node(Content::Root);
         debug!("assuming ending pos of {}", self.farthest_pos);
-        let name = self.grammar.root_definition_name.as_ref().unwrap();
-        self.unpack_parse_tree_internal(&mut arena, name, Mark::Default, 0, self.farthest_pos, root);
+        let name = self.grammar.get_root_definition_name().unwrap();
+        self.unpack_parse_tree_internal(&mut arena, &name, Mark::Default, 0, self.farthest_pos, root);
 
         // the standard algorithm above leaves attribute nodes in an inconvenient state.
         // with a bare Content::Attribute node, for which one needs to plumb all descendants to find text nodes
