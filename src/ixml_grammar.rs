@@ -1,6 +1,6 @@
 use indextree::{Arena, NodeId};
 
-use crate::{grammar::{Grammar, Rule, Mark, TMark, RuleBuilder, Lit}, parser::{Content, Parser, ParseError}};
+use crate::{grammar::{Grammar, Rule, Mark, TMark, RuleBuilder, Lit, reset_internal_id}, parser::{Content, Parser, ParseError}};
 
 // TODO: -rules and @rules
 
@@ -294,6 +294,7 @@ insertion: -"+", s, (string; -"#", hex), s.
 pub fn ixml_str_to_grammar(ixml: &str) -> Result<Grammar, ParseError> {
     let mut ixml_parser = Parser::new(ixml_grammar());
     let ixml_arena = ixml_parser.parse(ixml.trim())?;
+    reset_internal_id();
     let grammar = ixml_tree_to_grammar(&ixml_arena);
     Ok(grammar)
 }
@@ -348,25 +349,26 @@ pub fn ixml_construct_rule(rule: NodeId, mark: Mark, arena: &Arena<Content>, rul
 
 /// Construct one alt, which is a sequence built from a single `RuleBuilder`
 /// @param `node` is the nodeID of current element, expected to be <alt>, <repeat0>, <repeat1>, <option>, or <sep>
+/// as it only looks at child elements downstream from the `NodeId` passed in
 pub fn ixml_rulebuilder_new(node: NodeId, arena: &Arena<Content>) -> RuleBuilder {
     let mut rb = Rule::seq();
     for (name, nid) in Parser::get_child_elements(arena, node) {
-        rb = ixml_ruleappend(rb, name, nid, arena);
+        rb = ixml_ruleappend(rb, &name, nid, arena);
     }
     rb
 }
 
 /// Add additional factors onto the given `RuleBuilder`, possibly recursively
-/// @param `node` is the nodeID of current element, expected to be <alt>, <repeat0>, <repeat1>, <option>, or <sep>
-pub fn ixml_ruleappend(mut rb: RuleBuilder, name: String, nid: NodeId, arena: &Arena<Content>) -> RuleBuilder {
+/// @param `node` is the nodeID of current element, which is diectly processed
+pub fn ixml_ruleappend(mut rb: RuleBuilder, name: &str, nid: NodeId, arena: &Arena<Content>) -> RuleBuilder {
 
     let attrs = Parser::get_attributes(arena, nid);
-    match name.as_str() {
+    match name {
         "alts" => {
             // an <alts> with only one <alt> child can be inlined, otherwise we give it the full treatment
             let alt_elements = Parser::get_child_elements_named(arena, nid, "alt");
             if alt_elements.len()==1 {
-                rb = ixml_ruleappend(rb, "alt".to_string(), alt_elements[0], arena);
+                rb = ixml_ruleappend(rb, "alt", alt_elements[0], arena);
             } else {
                 let altrules: Vec<RuleBuilder> = alt_elements.iter()
                     .map(|n| ixml_rulebuilder_new(*n, arena))
@@ -393,31 +395,38 @@ pub fn ixml_ruleappend(mut rb: RuleBuilder, name: String, nid: NodeId, arena: &A
             rb = rb.opt(subexpr);
         }
         "repeat0" => {
-            // if a <sep> child exists, this is a ** rule, otherwise just *
-            let alts_elements = Parser::get_child_elements_named(arena, nid, "alts");
-            let repeat_this = ixml_rulebuilder_new(alts_elements[0], arena);
+            let children = Parser::get_child_elements(arena, nid);
+            // assume first child is what-to-repeat (from `factor`)
+            let expr = children.get(0).expect("Should always be at least one child here");
+            let repeat_this_node = expr.1;
+            let mut repeat_this = Rule::seq();
+            repeat_this = ixml_ruleappend(repeat_this, &expr.0, repeat_this_node, arena);
 
-            let sep_elements = Parser::get_child_elements_named(arena, nid, "sep");
-            if sep_elements.len()==1 {
-                let separated_by = ixml_rulebuilder_new(sep_elements[0], arena);
+            // if a <sep> child exists, this is a ** rule, otherwise just *
+            if let Some(sep) = children.get(1) {
+                assert_eq!(sep.0, "sep");
+                let separated_by = ixml_rulebuilder_new(sep.1, arena);
                 rb = rb.repeat0_sep(repeat_this, separated_by)
             } else {
                 rb = rb.repeat0(repeat_this);
             }
         }
         "repeat1" => {
-            // if a <sep> child exists, this is a ++ rule, othewise just +
-            let alts_elements = Parser::get_child_elements_named(arena, nid, "alts");
-            let repeat_this = ixml_rulebuilder_new(alts_elements[0], arena);
+            let children = Parser::get_child_elements(arena, nid);
+            // assume first child is what-to-repeat (from `factor`)
+            let expr = children.get(0).expect("Should always be at least one child here");
+            let repeat_this_node = expr.1;
+            let mut repeat_this = Rule::seq();
+            repeat_this = ixml_ruleappend(repeat_this, &expr.0, repeat_this_node, arena);
 
-            let sep_elements = Parser::get_child_elements_named(arena, nid, "sep");
-            if sep_elements.len()==1 {
-                let separated_by = ixml_rulebuilder_new(sep_elements[0], arena);
-                rb = rb.repeat1_sep(repeat_this, separated_by);
+            // if a <sep> child exists, this is a ++ rule, otherwise just +
+            if let Some(sep) = children.get(1) {
+                assert_eq!(sep.0, "sep");
+                let separated_by = ixml_rulebuilder_new(sep.1, arena);
+                rb = rb.repeat1_sep(repeat_this, separated_by)
             } else {
                 rb = rb.repeat1(repeat_this);
             }
-
         }
         _ => unimplemented!("unknown element {name} child of <alt>"),
     }

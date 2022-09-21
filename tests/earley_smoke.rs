@@ -1,4 +1,5 @@
 use earleybird::builtin_grammars::all_builtin_tests;
+use earleybird::grammar::{reset_internal_id, peek_internal_id};
 use earleybird::ixml_grammar::ixml_str_to_grammar;
 use earleybird::parser::Parser;
 use earleybird::testsuite_utils::{TestResult, TestGrammar, xml_canonicalize};
@@ -62,16 +63,21 @@ fn test_ixml_parser() {
 
         let mut grammars_under_test = Vec::new();
         let mut grammar_comparison: Vec<String> = Vec::new();
+        let mut index_for_parsed = 0;
+        let mut index_for_unparsed = 0;
 
-        for grammar in testcase.grammars {
+        for (i, grammar) in testcase.grammars.into_iter().enumerate() {
             let grammar_under_test = match grammar {
                 TestGrammar::Parsed(g) => {
-                    println!("...no need to parse");
+                    println!("...no need to parse ({})", peek_internal_id());
+                    index_for_parsed = i;
                     g
                 }
                 TestGrammar::Unparsed(ixml) => {
                     println!("...parsing >>>{}<<<", &ixml);
+                    //reset_internal_id();
                     let x = ixml_str_to_grammar(&ixml); //.unwrap_or_else(|e| panic!("{e}"));
+                    index_for_unparsed = i;
                     //dbg!(&x);
                     x.unwrap()
                 }
@@ -83,8 +89,9 @@ fn test_ixml_parser() {
         }
 
         // make sure grammar parses to something that matches the hand-built grammar
+        // "left" will always be the one provided as an unparsed string
         if grammar_comparison.len() > 1 {
-            assert_eq!(grammar_comparison[0], grammar_comparison[1], "comparing grammars for {}", name);
+            assert_eq!(grammar_comparison[index_for_unparsed], grammar_comparison[index_for_parsed], "comparing grammars for {}; left was parsed from string", name);
         }
 
     }

@@ -426,7 +426,7 @@ static mut NEXT_ID: i32 = 0;
 
 /// build rules in an ergonomic and efficient fashion
 /// this format is explicitly accepted (merged) by `grammar.add_rule`
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RuleBuilder {
     /// the "main" TermList being built here
     factors: Vec<Factor>,
@@ -627,4 +627,17 @@ impl RuleBuilder {
         }
     }
 
+}
+
+/// Only for testing: when comparing two grammars for equivalence, reset the internal ID before building each
+pub fn peek_internal_id() -> i32 {
+    unsafe {
+        NEXT_ID
+    }
+}
+
+pub fn reset_internal_id() {
+    unsafe {
+        NEXT_ID = 0;
+    }
 }
