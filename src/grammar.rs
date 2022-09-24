@@ -26,7 +26,7 @@
 //! This module includes an ergonomic interface for building grammars by hand,
 //! or from the output of upstream processes (including ixml parsing!)
 
-use std::{fmt, collections::HashMap};
+use std::{fmt, collections::HashMap, cell::Cell};
 use smol_str::SmolStr;
 use crate::{parser::DotNotation, unicode_ranges::UnicodeRange};
 
@@ -38,6 +38,8 @@ pub struct Grammar {
     definitions: HashMap<SmolStr, BranchingRule>,
     /// remember insertion order of rules (used for tests & comparing grammars)
     defn_order: Vec<SmolStr>,
+    /// counter to ensure generated names are unique (NOT threadsafe)
+    next_id: Cell<i32>,
 }
 
 impl Grammar {
@@ -45,6 +47,7 @@ impl Grammar {
         Self {
             definitions: HashMap::new(),
             defn_order: Vec::new(),
+            next_id: Cell::new(0),
         }
     }
 
@@ -109,6 +112,11 @@ impl Grammar {
         }
         assert!(self.definitions.contains_key(name));
         &self.definitions[name]
+    }
+
+    /// builder interface
+    pub fn seq(&self) -> RuleBuilder {
+        RuleBuilder::new(&self)
     }
 }
 
@@ -259,11 +267,6 @@ impl Rule {
 
     pub fn iter(&self) -> TermIter<'_> {
         TermIter(&self.factors, 0)
-    }
-
-    /// builder interface
-    pub fn seq() -> RuleBuilder {
-        RuleBuilder::new()
     }
 }
 
@@ -427,18 +430,20 @@ static mut NEXT_ID: i32 = 0;
 /// build rules in an ergonomic and efficient fashion
 /// this format is explicitly accepted (merged) by `grammar.add_rule`
 #[derive(Debug, Clone)]
-pub struct RuleBuilder {
+pub struct RuleBuilder<'g> {
     /// the "main" TermList being built here
     factors: Vec<Factor>,
 
     /// in the course of building a rule, we may end up synthesizing additional rules.
     /// These need to eventually get added into the resulting grammar
-    syn_rules: HashMap<SmolStr, Vec<RuleBuilder>>,
+    syn_rules: HashMap<SmolStr, Vec<RuleBuilder<'g>>>,
+    target_grammar: &'g Grammar,
 }
 
-impl RuleBuilder {
-    pub fn new() -> Self {
-        Self { factors: Vec::new(), syn_rules: HashMap::new() }
+impl<'g> RuleBuilder<'g> {
+    /// end-users should access this through g.seq()
+    fn new(target_grammar: &'g Grammar) -> Self {
+        Self { factors: Vec::new(), syn_rules: HashMap::new(), target_grammar }
     }
 
     /// Convenience function: accept a single char
@@ -543,7 +548,7 @@ impl RuleBuilder {
         self = self.siphon(&mut sub);
         // 1 create new rule 'f-option'
         let f_option: &str = &self.mint_internal_id("f-option");
-        self = self.syn_rule(f_option, Rule::seq()); // empty
+        self = self.syn_rule(f_option, self.target_grammar.seq()); // empty
         self = self.syn_rule(f_option, sub);
         // 2 insert newly created nt into sequence under construction
         self.mark_nt(f_option, Mark::Mute)
@@ -555,7 +560,8 @@ impl RuleBuilder {
         self = self.siphon(&mut sub);
         // 1 create new rule 'f-star'
         let f_star: &str = &self.mint_internal_id("f-star");
-        self = self.syn_rule(f_star, Rule::seq().opt(Rule::seq().expr(sub).nt(f_star)));
+        self = self.syn_rule(f_star, self.target_grammar.seq()
+            .opt(self.target_grammar.seq().expr(sub).nt(f_star)));
         // 2 insert newly-created nt into sequence under construction
         self.mark_nt(f_star, Mark::Mute)
     }
@@ -566,7 +572,8 @@ impl RuleBuilder {
         self = self.siphon(&mut sub);
         // create new rule 'f-plus'
         let f_plus: &str = &self.mint_internal_id("f-plus");
-        self = self.syn_rule(f_plus, Rule::seq().expr(sub.clone()).repeat0(Rule::seq().expr(sub)));
+        self = self.syn_rule(f_plus, self.target_grammar.seq()
+            .expr(sub.clone()).repeat0(self.target_grammar.seq().expr(sub)));
         // 2 insert newly-created nt into sequence under construction
         self.mark_nt(f_plus, Mark::Mute)
     }
@@ -578,7 +585,8 @@ impl RuleBuilder {
         self = self.siphon(&mut sub2);
         // create new rule 'f-plus-sep'
         let f_plus_sep: &str = &self.mint_internal_id("f-plus-sep");
-        self = self.syn_rule(f_plus_sep, Rule::seq().expr(sub1.clone()).repeat0(Rule::seq().expr(sub2).expr(sub1)));
+        self = self.syn_rule(f_plus_sep, self.target_grammar.seq()
+            .expr(sub1.clone()).repeat0(self.target_grammar.seq().expr(sub2).expr(sub1)));
         // 2 insert newly-created nt into sequence under construction
         self.mark_nt(f_plus_sep, Mark::Mute)
     }    
@@ -590,7 +598,8 @@ impl RuleBuilder {
         self = self.siphon(&mut sub2);
         // create new rule 'f-star-sep'
         let f_star_sep: &str = &self.mint_internal_id("f-star-sep");
-        self = self.syn_rule(f_star_sep, Rule::seq().opt( Rule::seq().repeat1_sep(sub1, sub2)));
+        self = self.syn_rule(f_star_sep, self.target_grammar.seq()
+            .opt(self.target_grammar.seq().repeat1_sep(sub1, sub2)));
         // 2 insert newly-created nt into sequence under construction
         self.mark_nt(f_star_sep, Mark::Mute)
     }
@@ -598,7 +607,7 @@ impl RuleBuilder {
     /// inline set of options, one of which must match
     /// for example for
     /// a: "{", (b, "c" | a), "}".
-    /// g.define("a", Rule::seq()
+    /// g.define("a", 
     ///     .ch('{')
     ///     .alts(vec![
     ///         Rule::seq().nt("b").ch('c'),
@@ -619,7 +628,7 @@ impl RuleBuilder {
 
     /// internal identifier for synthesized rules
     /// all internal ids start with double hyphens
-    fn mint_internal_id(&mut self, hint: &str) -> String {
+    fn mint_internal_id(&self, hint: &str) -> String {
         unsafe {
             let s = format!("--{}{}", hint, NEXT_ID);
             NEXT_ID += 1;
@@ -629,15 +638,3 @@ impl RuleBuilder {
 
 }
 
-/// Only for testing: when comparing two grammars for equivalence, reset the internal ID before building each
-pub fn peek_internal_id() -> i32 {
-    unsafe {
-        NEXT_ID
-    }
-}
-
-pub fn reset_internal_id() {
-    unsafe {
-        NEXT_ID = 0;
-    }
-}

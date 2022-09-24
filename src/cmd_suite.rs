@@ -39,7 +39,7 @@ fn run(dir: String) {
                      failures.push(name.clone());
                      println!("{e}");
                      let mut g = Grammar::new();
-                     g.define("error", Rule::seq().ch_in(&e.to_string())); // hack
+                     g.define("error", g.seq().ch_in(&e.to_string())); // hack
                      g
                 })
             }

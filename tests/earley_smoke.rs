@@ -1,5 +1,4 @@
 use earleybird::builtin_grammars::all_builtin_tests;
-use earleybird::grammar::{reset_internal_id, peek_internal_id};
 use earleybird::ixml_grammar::ixml_str_to_grammar;
 use earleybird::parser::Parser;
 use earleybird::testsuite_utils::{TestResult, TestGrammar, xml_canonicalize};
@@ -69,7 +68,7 @@ fn test_ixml_parser() {
         for (i, grammar) in testcase.grammars.into_iter().enumerate() {
             let grammar_under_test = match grammar {
                 TestGrammar::Parsed(g) => {
-                    println!("...no need to parse ({})", peek_internal_id());
+                    println!("...no need to parse");
                     index_for_parsed = i;
                     g
                 }
