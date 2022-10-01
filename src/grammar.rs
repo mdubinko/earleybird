@@ -26,7 +26,7 @@
 //! This module includes an ergonomic interface for building grammars by hand,
 //! or from the output of upstream processes (including ixml parsing!)
 
-use std::{fmt, collections::HashMap};
+use std::{fmt, collections::HashMap, cell::Cell};
 use smol_str::SmolStr;
 use crate::{parser::DotNotation, unicode_ranges::UnicodeRange};
 
@@ -37,7 +37,7 @@ use crate::{parser::DotNotation, unicode_ranges::UnicodeRange};
 pub struct Grammar {
     definitions: HashMap<SmolStr, BranchingRule>,
     /// remember insertion order of rules (used for tests & comparing grammars)
-    defn_order: Vec<SmolStr>,
+    pub defn_order: Vec<SmolStr>,
 }
 
 impl Grammar {
@@ -57,16 +57,16 @@ impl Grammar {
     /// Including the given Mark
     /// Consumes the `RuleBuilder`
     /// The first definition on a grammar is taken as the root rule
-    pub fn define(&mut self, name: &str, rb: RuleBuilder) {
-        self.mark_define(Mark::Default, name, rb);
+    pub fn define(&mut self, name: &str, sb: SeqBuilder) {
+        self.mark_define(Mark::Default, name, sb);
     }
 
     /// merge contents of `RuleBuilder` (which might include entire synthesized named rules) into Grammar
     /// Consumes the `RuleBuilder`
-    pub fn mark_define(&mut self, mark: Mark, name: &str, rb: RuleBuilder) {
+    pub fn mark_define(&mut self, mark: Mark, name: &str, sb: SeqBuilder) {
         // 1) the main rule 
         let name_smol = SmolStr::new(name);
-        let main_rule = Rule::new(rb.factors);
+        let main_rule = Rule::new(sb.factors);
         let branching_rule = self.definitions.entry(name_smol.clone())
             .or_insert_with(|| {
                 self.defn_order.push(name_smol.clone());
@@ -75,7 +75,9 @@ impl Grammar {
         branching_rule.add_alt_branch(main_rule);
         
         // 2) synthesized rules
-        for (syn_name, builders) in rb.syn_rules {
+        //for (syn_name, builders) in sb.syn_rules {
+        for syn_name in sb.defn_order {
+            let builders = sb.syn_rules[&syn_name].to_vec(); // TODO: NOT copy
             for builder in builders {
                 let syn_branching_rule = self.definitions.entry(syn_name.clone())
                     .or_insert_with(|| {
@@ -260,11 +262,6 @@ impl Rule {
     pub fn iter(&self) -> TermIter<'_> {
         TermIter(&self.factors, 0)
     }
-
-    /// builder interface
-    pub fn seq() -> RuleBuilder {
-        RuleBuilder::new()
-    }
 }
 
 impl fmt::Display for Rule {
@@ -422,23 +419,57 @@ impl LitBuilder {
     }
 }
 
-static mut NEXT_ID: i32 = 0;
+/// A general way to track specifics needed to name rules
+/// You should construct a new `BuilderContext` for each named rule when building a grammar
+/// (either hand-assembling, or parsing)
+/// Do not re-use a `BuilderContext` iff you're interested in testing and comparability
+#[derive(Debug)]
+pub struct RuleContext {
+    rulename: String,
+    next_id: Cell<i32>,
+}
+
+impl RuleContext {
+    pub fn new(rulename: &str) -> Self {
+        RuleContext { rulename: rulename.to_string(), next_id: Cell::new(1) }
+    }
+
+    pub fn seq(&self) -> SeqBuilder {
+        SeqBuilder::new(self)
+    }
+
+    /// NOT threadsafe. Note interior mutability
+    /// designed to be called from a `SeqBuilder` holding a backreference to this context
+    fn get_and_increment_next_id(&self) -> i32 {
+        let nid = self.next_id.get();
+        self.next_id.set(nid + 1);
+        nid
+    }
+
+    fn get_rulename(&self) -> &str {
+        &self.rulename
+    }
+}
 
 /// build rules in an ergonomic and efficient fashion
 /// this format is explicitly accepted (merged) by `grammar.add_rule`
 #[derive(Debug, Clone)]
-pub struct RuleBuilder {
+pub struct SeqBuilder<'a> {
     /// the "main" TermList being built here
     factors: Vec<Factor>,
 
     /// in the course of building a rule, we may end up synthesizing additional rules.
     /// These need to eventually get added into the resulting grammar
-    syn_rules: HashMap<SmolStr, Vec<RuleBuilder>>,
+    syn_rules: HashMap<SmolStr, Vec<SeqBuilder<'a>>>,
+    defn_order: Vec<SmolStr>,
+
+    context: &'a RuleContext,
 }
 
-impl RuleBuilder {
-    pub fn new() -> Self {
-        Self { factors: Vec::new(), syn_rules: HashMap::new() }
+impl<'a> SeqBuilder<'a> {
+
+    fn new(context: &'a RuleContext) -> Self {
+        Self { factors: Vec::new(), syn_rules: HashMap::new(), defn_order: Vec::new(), context }
     }
 
     /// Convenience function: accept a single char
@@ -518,6 +549,10 @@ impl RuleBuilder {
         self = self.siphon(&mut rb);
         let vec = self.syn_rules.entry(SmolStr::new(name)).or_insert(Vec::new());
         vec.push(rb);
+        let smol_name = SmolStr::new(name);
+        if !self.defn_order.contains(&smol_name) {
+            self.defn_order.push(smol_name); // maintain insertion order
+        }
         self
     }
 
@@ -531,7 +566,15 @@ impl RuleBuilder {
     
     /// call this on any sub-rules to make sure any generated `syn_rules` get passed along.
     fn siphon(mut self, sub: &mut Self) -> Self {
-        for (name, rule) in sub.syn_rules.drain() {
+        for name in sub.defn_order.drain(..) { // maintain insertion order
+            let rule = sub.syn_rules.remove(&name); //.expect("intenal syn_rules and defn_order out of sync");
+            if rule.is_none() {
+                println!("###### {name} ######");
+                dbg!(&self.defn_order);
+                dbg!(&self.syn_rules);
+            }
+            let rule = rule.expect("defn_order and syn_rules out of sync");
+            self.defn_order.push(name.clone());
             self.syn_rules.insert(name, rule);
         }
         self
@@ -543,7 +586,8 @@ impl RuleBuilder {
         self = self.siphon(&mut sub);
         // 1 create new rule 'f-option'
         let f_option: &str = &self.mint_internal_id("f-option");
-        self = self.syn_rule(f_option, Rule::seq()); // empty
+        let empty = self.context.seq();
+        self = self.syn_rule(f_option, empty); // empty
         self = self.syn_rule(f_option, sub);
         // 2 insert newly created nt into sequence under construction
         self.mark_nt(f_option, Mark::Mute)
@@ -555,7 +599,9 @@ impl RuleBuilder {
         self = self.siphon(&mut sub);
         // 1 create new rule 'f-star'
         let f_star: &str = &self.mint_internal_id("f-star");
-        self = self.syn_rule(f_star, Rule::seq().opt(Rule::seq().expr(sub).nt(f_star)));
+        let subseq1 = self.context.seq();
+        let subseq2 = self.context.seq();
+        self = self.syn_rule(f_star, subseq1.opt(subseq2.expr(sub).nt(f_star)));
         // 2 insert newly-created nt into sequence under construction
         self.mark_nt(f_star, Mark::Mute)
     }
@@ -566,7 +612,9 @@ impl RuleBuilder {
         self = self.siphon(&mut sub);
         // create new rule 'f-plus'
         let f_plus: &str = &self.mint_internal_id("f-plus");
-        self = self.syn_rule(f_plus, Rule::seq().expr(sub.clone()).repeat0(Rule::seq().expr(sub)));
+        let subseq1 = self.context.seq();
+        let subseq2 = self.context.seq();
+        self = self.syn_rule(f_plus, subseq1.expr(sub.clone()).repeat0(subseq2.expr(sub)));
         // 2 insert newly-created nt into sequence under construction
         self.mark_nt(f_plus, Mark::Mute)
     }
@@ -578,7 +626,9 @@ impl RuleBuilder {
         self = self.siphon(&mut sub2);
         // create new rule 'f-plus-sep'
         let f_plus_sep: &str = &self.mint_internal_id("f-plus-sep");
-        self = self.syn_rule(f_plus_sep, Rule::seq().expr(sub1.clone()).repeat0(Rule::seq().expr(sub2).expr(sub1)));
+        let subseq1 = self.context.seq();
+        let subseq2 = self.context.seq();
+        self = self.syn_rule(f_plus_sep, subseq1.expr(sub1.clone()).repeat0(subseq2.expr(sub2).expr(sub1)));
         // 2 insert newly-created nt into sequence under construction
         self.mark_nt(f_plus_sep, Mark::Mute)
     }    
@@ -590,7 +640,9 @@ impl RuleBuilder {
         self = self.siphon(&mut sub2);
         // create new rule 'f-star-sep'
         let f_star_sep: &str = &self.mint_internal_id("f-star-sep");
-        self = self.syn_rule(f_star_sep, Rule::seq().opt( Rule::seq().repeat1_sep(sub1, sub2)));
+        let subseq1 = self.context.seq();
+        let subseq2 = self.context.seq();
+        self = self.syn_rule(f_star_sep, subseq1.opt( subseq2.repeat1_sep(sub1, sub2)));
         // 2 insert newly-created nt into sequence under construction
         self.mark_nt(f_star_sep, Mark::Mute)
     }
@@ -606,7 +658,7 @@ impl RuleBuilder {
     ///     ]})
     ///     .ch('}')
     /// );
-    pub fn alts(mut self, exprs: Vec<RuleBuilder>) -> Self {
+    pub fn alts(mut self, exprs: Vec<SeqBuilder<'a>>) -> Self {
         // create new rule f_opt
         let f_opt = &self.mint_internal_id("f-opt");
         for expr in exprs {
@@ -620,24 +672,11 @@ impl RuleBuilder {
     /// internal identifier for synthesized rules
     /// all internal ids start with double hyphens
     fn mint_internal_id(&mut self, hint: &str) -> String {
-        unsafe {
-            let s = format!("--{}{}", hint, NEXT_ID);
-            NEXT_ID += 1;
-            s
-        }
+        let nid = self.context.get_and_increment_next_id();
+        let rulename = self.context.get_rulename();
+        let s = format!("--{}.{}{}", rulename, hint, nid);
+        s
     }
 
 }
 
-/// Only for testing: when comparing two grammars for equivalence, reset the internal ID before building each
-pub fn peek_internal_id() -> i32 {
-    unsafe {
-        NEXT_ID
-    }
-}
-
-pub fn reset_internal_id() {
-    unsafe {
-        NEXT_ID = 0;
-    }
-}

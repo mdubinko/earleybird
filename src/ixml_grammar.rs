@@ -1,6 +1,6 @@
 use indextree::{Arena, NodeId};
 
-use crate::{grammar::{Grammar, Rule, Mark, TMark, RuleBuilder, Lit, reset_internal_id}, parser::{Content, Parser, ParseError}};
+use crate::{grammar::{Grammar, Mark, TMark, SeqBuilder, Lit, RuleContext}, parser::{Content, Parser, ParseError}};
 
 // TODO: -rules and @rules
 
@@ -10,19 +10,23 @@ pub fn ixml_grammar() -> Grammar {
 
     // ixml: s, prolog?, rule++RS, s.
     // TODO: prolog
-    g.define("ixml", Rule::seq().nt("s").repeat1_sep(Rule::seq().nt("rule"), Rule::seq().nt("RS")).nt("s"));
+    let ctx = RuleContext::new("ixml");
+    g.define("ixml", ctx.seq().nt("s").repeat1_sep(ctx.seq().nt("rule"), ctx.seq().nt("RS")).nt("s"));
 
     // -s: (whitespace; comment)*. {Optional spacing}
     // TODO: comment
-    g.mark_define(Mark::Mute, "s", Rule::seq().repeat0( Rule::seq().nt("whitespace")));
+    let ctx = RuleContext::new("s");
+    g.mark_define(Mark::Mute, "s", ctx.seq().repeat0(ctx.seq().nt("whitespace")));
 
     // -RS: (whitespace; comment)+. {Required spacing}
     // TODO: comment
-    g.mark_define(Mark::Mute, "RS", Rule::seq().repeat1( Rule::seq().nt("whitespace")));
+    let ctx = RuleContext::new("RS");
+    g.mark_define(Mark::Mute, "RS", ctx.seq().repeat1( ctx.seq().nt("whitespace")));
 
     // -whitespace: -[Zs]; tab; lf; cr.
     // TODO: Unicode
-    g.mark_define(Mark::Mute, "whitespace", Rule::seq().mark_ch_in(" \u{0009}\u{000a}\u{000d}", TMark::Mute));
+    let ctx = RuleContext::new("whitespace");
+    g.mark_define(Mark::Mute, "whitespace", ctx.seq().mark_ch_in(" \u{0009}\u{000a}\u{000d}", TMark::Mute));
 
     // -tab: -#9.
     // DNO = Deliberately Not Implemented
@@ -46,8 +50,9 @@ pub fn ixml_grammar() -> Grammar {
     // TODO
 
     // rule: (mark, s)?, name, s, -["=:"], s, -alts, -".".
-    g.define("rule", Rule::seq()
-        .opt(Rule::seq().nt("mark").nt("s"))
+    let ctx = RuleContext::new("rule");
+    g.define("rule", ctx.seq()
+        .opt(ctx.seq().nt("mark").nt("s"))
         .nt("name")
         .nt("s")
         .mark_ch_in("=:", TMark::Mute)
@@ -56,55 +61,66 @@ pub fn ixml_grammar() -> Grammar {
         .mark_ch('.', TMark::Mute) );
 
     // @mark: ["@^-"].
-    g.mark_define(Mark::Attr, "mark", Rule::seq().ch_in("@^-"));
+    let ctx = RuleContext::new("mark");
+    g.mark_define(Mark::Attr, "mark", ctx.seq().ch_in("@^-"));
 
     // alts: alt++(-[";|"], s).
-    g.define("alts", Rule::seq().repeat1_sep(
-        Rule::seq().nt("alt"),
-        Rule::seq().mark_ch_in(";|", TMark::Mute).nt("s") ));
+    let ctx = RuleContext::new("alts");
+    g.define("alts", ctx.seq().repeat1_sep(
+        ctx.seq().nt("alt"),
+        ctx.seq().mark_ch_in(";|", TMark::Mute).nt("s") ));
 
     // alt: term**(-",", s)
-    g.define("alt", Rule::seq().repeat0_sep(
-        Rule::seq().nt("term"),
-        Rule::seq().mark_ch(',', TMark::Mute).nt("s") ));
+    let ctx = RuleContext::new("alt");
+    g.define("alt", ctx.seq().repeat0_sep(
+        ctx.seq().nt("term"),
+        ctx.seq().mark_ch(',', TMark::Mute).nt("s") ));
 
     // -term: factor; option; repeat0; repeat1.
-    g.mark_define(Mark::Mute, "term", Rule::seq().nt("factor"));
-    g.mark_define(Mark::Mute, "term", Rule::seq().nt("option"));
-    g.mark_define(Mark::Mute, "term", Rule::seq().nt("repeat0"));
-    g.mark_define(Mark::Mute, "term", Rule::seq().nt("repeat1"));
+    let ctx = RuleContext::new("term");
+    g.mark_define(Mark::Mute, "term", ctx.seq().nt("factor"));
+    g.mark_define(Mark::Mute, "term", ctx.seq().nt("option"));
+    g.mark_define(Mark::Mute, "term", ctx.seq().nt("repeat0"));
+    g.mark_define(Mark::Mute, "term", ctx.seq().nt("repeat1"));
 
     // -factor: terminal; nonterminal; insertion; -"(", s, alts, -")", s.
     // TODO: insertion
-    g.mark_define(Mark::Mute, "factor", Rule::seq().nt("terminal"));
-    g.mark_define(Mark::Mute, "factor", Rule::seq().nt("nonterminal"));
-    g.mark_define(Mark::Mute, "factor", Rule::seq()
+    let ctx = RuleContext::new("factor");
+    g.mark_define(Mark::Mute, "factor", ctx.seq().nt("terminal"));
+    g.mark_define(Mark::Mute, "factor", ctx.seq().nt("nonterminal"));
+    g.mark_define(Mark::Mute, "factor", ctx.seq()
         .mark_ch('(', TMark::Mute).nt("s").nt("alts").mark_ch(')', TMark::Mute).nt("s"));
 
     // repeat0: factor, (-"*", s; -"**", s, sep).
-    g.define("repeat0", Rule::seq().nt("factor").mark_ch('*', TMark::Mute).nt("s"));
-    g.define("repeat0", Rule::seq()
+    let ctx = RuleContext::new("repeat0");
+    g.define("repeat0", ctx.seq().nt("factor").mark_ch('*', TMark::Mute).nt("s"));
+    g.define("repeat0", ctx.seq()
         .nt("factor").mark_ch('*', TMark::Mute).mark_ch('*', TMark::Mute).nt("s").nt("sep"));
 
     // repeat1: factor, (-"+", s; -"++", s, sep).
-    g.define("repeat1", Rule::seq().nt("factor").mark_ch('+', TMark::Mute).nt("s"));
-    g.define("repeat1", Rule::seq()
+    let ctx = RuleContext::new("repeat1");
+    g.define("repeat1", ctx.seq().nt("factor").mark_ch('+', TMark::Mute).nt("s"));
+    g.define("repeat1", ctx.seq()
         .nt("factor").mark_ch('+', TMark::Mute).mark_ch('+', TMark::Mute).nt("s").nt("sep"));
 
     // option: factor, -"?", s.
-    g.define("option", Rule::seq().nt("factor").mark_ch('?', TMark::Mute).nt("s"));
+    let ctx = RuleContext::new("option");
+    g.define("option", ctx.seq().nt("factor").mark_ch('?', TMark::Mute).nt("s"));
 
     // sep: factor.
-    g.define("sep", Rule::seq().nt("factor"));
+    let ctx = RuleContext::new("sep");
+    g.define("sep", ctx.seq().nt("factor"));
 
     // nonterminal: (mark, s)?, name, s.
-    g.define("nonterminal", Rule::seq()
-        .opt( Rule::seq().nt("mark").nt("s") )
+    let ctx = RuleContext::new("nonterminal");
+    g.define("nonterminal", ctx.seq()
+        .opt( ctx.seq().nt("mark").nt("s") )
         .nt("name").nt("s") );
 
     // @name: namestart, namefollower*.
     // TODO: fixme
-    g.mark_define(Mark::Attr, "name", Rule::seq().repeat1( Rule::seq().ch_in("_abcdefghijklmnopqrstuvwxyzRS")));
+    let ctx = RuleContext::new("name");
+    g.mark_define(Mark::Attr, "name", ctx.seq().repeat1( ctx.seq().ch_in("_abcdefghijklmnopqrstuvwxyzRS")));
     
     // -namestart: ["_"; L].
     // TODO
@@ -113,101 +129,122 @@ pub fn ixml_grammar() -> Grammar {
     // TODO
 
     // -terminal: literal; charset.
-    g.mark_define(Mark::Mute, "terminal", Rule::seq().nt("literal"));
-    g.mark_define(Mark::Mute, "terminal", Rule::seq().nt("charset"));
+    let ctx = RuleContext::new("terminal");
+    g.mark_define(Mark::Mute, "terminal", ctx.seq().nt("literal"));
+    g.mark_define(Mark::Mute, "terminal", ctx.seq().nt("charset"));
     
     // literal: quoted; encoded.
-    g.define("literal", Rule::seq().nt("quoted"));
-    g.define("literal", Rule::seq().nt("encoded"));
+    let ctx = RuleContext::new("literal");
+    g.define("literal", ctx.seq().nt("quoted"));
+    g.define("literal", ctx.seq().nt("encoded"));
 
     // -quoted: (tmark, s)?, string, s.
-    g.mark_define(Mark::Mute, "quoted", Rule::seq()
-        .opt( Rule::seq().nt("mark").nt("s") )
+    let ctx = RuleContext::new("quoted");
+    g.mark_define(Mark::Mute, "quoted", ctx.seq()
+        .opt( ctx.seq().nt("mark").nt("s") )
         .nt("string").nt("s"));
 
     // @tmark: ["^-"].
-    g.mark_define(Mark::Attr, "tmark", Rule::seq().ch_in("^-"));
+    let ctx = RuleContext::new("tmark");
+    g.mark_define(Mark::Attr, "tmark", ctx.seq().ch_in("^-"));
 
     // @string: -'"', dchar+, -'"'; -"'", schar+, -"'".
     // TODO schar variant
-    g.mark_define(Mark::Attr, "string", Rule::seq()
+    let ctx = RuleContext::new("string");
+    g.mark_define(Mark::Attr, "string", ctx.seq()
         .mark_ch('"', TMark::Mute)
-        .repeat1( Rule::seq().nt("dchar"))
+        .repeat1( ctx.seq().nt("dchar"))
         .mark_ch('"', TMark::Mute) );
 
     // dchar: ~['"'; #a; #d]; '"', -'"'. {all characters except line breaks; quotes must be doubled}
     // TODO: fixme
-    g.define("dchar", Rule::seq().ch_in("abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ"));
+    let ctx = RuleContext::new("dchar");
+    g.define("dchar", ctx.seq().ch_in("abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ"));
   
     // schar: ~["'"; #a; #d]; "'", -"'". {all characters except line breaks; quotes must be doubled}
     // TODO
 
     // -encoded: (tmark, s)?, -"#", hex, s.
-    g.mark_define(Mark::Mute, "encoded", Rule::seq()
-        .opt(Rule::seq().nt("tmark").nt("s"))
+    let ctx = RuleContext::new("encoded");
+    g.mark_define(Mark::Mute, "encoded", ctx.seq()
+        .opt(ctx.seq().nt("tmark").nt("s"))
         .mark_ch('#', TMark::Mute).nt("hex").nt("s"));
 
     // @hex: ["0"-"9"; "a"-"f"; "A"-"F"]+.
-    g.mark_define(Mark::Attr, "hex", Rule::seq()
-        .repeat1(Rule::seq().lit(Lit::union()
+    let ctx = RuleContext::new("hex");
+    g.mark_define(Mark::Attr, "hex", ctx.seq()
+        .repeat1(ctx.seq().lit(Lit::union()
             .ch_range('0', '9').ch_range('a', 'f').ch_range('A', 'F'))));
 
     // -charset: inclusion; exclusion.
-    g.mark_define(Mark::Mute, "charset", Rule::seq().nt("inclusion"));
-    g.mark_define(Mark::Mute, "charset", Rule::seq().nt("exclusion"));
+    let ctx = RuleContext::new("charset");
+    g.mark_define(Mark::Mute, "charset", ctx.seq().nt("inclusion"));
+    g.mark_define(Mark::Mute, "charset", ctx.seq().nt("exclusion"));
 
     // inclusion: (tmark, s)?,          set.
-    g.define("inclusion", Rule::seq()
-        .opt( Rule::seq().nt("tmark").nt("s"))
+    let ctx = RuleContext::new("inclusion");
+    g.define("inclusion", ctx.seq()
+        .opt( ctx.seq().nt("tmark").nt("s"))
         .nt("set"));
 
     // exclusion: (tmark, s)?, -"~", s, set.
-    g.define("exclusion", Rule::seq()
-        .opt( Rule::seq().nt("tmark").nt("s"))
+    let ctx = RuleContext::new("exclusion");
+    g.define("exclusion", ctx.seq()
+        .opt( ctx.seq().nt("tmark").nt("s"))
         .mark_ch('~', TMark::Mute).nt("s")
         .nt("set"));
 
     // -set: -"[", s,  (member, s)**(-[";|"], s), -"]", s.
-    g.mark_define(Mark::Mute, "set", Rule::seq()
+    let ctx = RuleContext::new("set");
+    g.mark_define(Mark::Mute, "set", ctx.seq()
         .mark_ch('[', TMark::Mute).nt("s")
         .repeat0_sep(
-            Rule::seq().nt("member").nt("s"),
-            Rule::seq().mark_ch_in(";|", TMark::Mute).nt("s"))
+            ctx.seq().nt("member").nt("s"),
+            ctx.seq().mark_ch_in(";|", TMark::Mute).nt("s"))
         .mark_ch(']', TMark::Mute).nt("s"));
 
     // member: string; -"#", hex; range; class.
-    g.define("member", Rule::seq().nt("string"));
-    g.define("member", Rule::seq().mark_ch('#', TMark::Mute).nt("hex"));
-    g.define("member", Rule::seq().nt("range"));
-    g.define("member", Rule::seq().nt("class"));
+    let ctx = RuleContext::new("member");
+    g.define("member", ctx.seq().nt("string"));
+    g.define("member", ctx.seq().mark_ch('#', TMark::Mute).nt("hex"));
+    g.define("member", ctx.seq().nt("range"));
+    g.define("member", ctx.seq().nt("class"));
 
     // -range: from, s, -"-", s, to.
-    g.mark_define(Mark::Mute, "range", Rule::seq().nt("from").nt("s").mark_ch('-', TMark::Mute)
+    let ctx = RuleContext::new("range");
+    g.mark_define(Mark::Mute, "range", ctx.seq().nt("from").nt("s").mark_ch('-', TMark::Mute)
         .nt("s").nt("to"));
 
     // @from: character.
-    g.mark_define(Mark::Attr, "from", Rule::seq().nt("character"));
+    let ctx = RuleContext::new("from");
+    g.mark_define(Mark::Attr, "from", ctx.seq().nt("character"));
 
     // @to: character.
-    g.mark_define(Mark::Attr, "to", Rule::seq().nt("character"));
+    let ctx = RuleContext::new("to");
+    g.mark_define(Mark::Attr, "to", ctx.seq().nt("character"));
 
     // -character: -'"', dchar, -'"'; -"'", schar, -"'"; "#", hex.
     // TODO: schar variant
-    g.mark_define(Mark::Mute, "character", Rule::seq()
+    let ctx = RuleContext::new("character");
+    g.mark_define(Mark::Mute, "character", ctx.seq()
         .mark_ch('"', TMark::Mute).nt("dchar").mark_ch('"', TMark::Mute));
-    g.mark_define(Mark::Mute, "character", Rule::seq().ch('#').nt("hex"));
+    g.mark_define(Mark::Mute, "character", ctx.seq().ch('#').nt("hex"));
 
     // -class: code.
-    g.mark_define(Mark::Mute, "class", Rule::seq().nt("code"));
+    let ctx = RuleContext::new("class");
+    g.mark_define(Mark::Mute, "class", ctx.seq().nt("code"));
 
     // @code: capital, letter?.
-    g.mark_define(Mark::Attr, "code", Rule::seq().nt("capital").opt(Rule::seq().nt("letter")));
+    let ctx = RuleContext::new("code");
+    g.mark_define(Mark::Attr, "code", ctx.seq().nt("capital").opt(ctx.seq().nt("letter")));
 
     // -capital: ["A"-"Z"].
-    g.mark_define(Mark::Mute, "capital", Rule::seq().ch_range('A', 'Z'));
+    let ctx = RuleContext::new("capital");
+    g.mark_define(Mark::Mute, "capital", ctx.seq().ch_range('A', 'Z'));
 
     // -letter: ["a"-"z"].
-    g.mark_define(Mark::Mute, "letter", Rule::seq().ch_range('a', 'z'));
+    let ctx = RuleContext::new("letter");
+    g.mark_define(Mark::Mute, "letter", ctx.seq().ch_range('a', 'z'));
 
     // insertion: -"+", s, (string; -"#", hex), s.
     // TODO
@@ -294,7 +331,6 @@ insertion: -"+", s, (string; -"#", hex), s.
 pub fn ixml_str_to_grammar(ixml: &str) -> Result<Grammar, ParseError> {
     let mut ixml_parser = Parser::new(ixml_grammar());
     let ixml_arena = ixml_parser.parse(ixml.trim())?;
-    reset_internal_id();
     let grammar = ixml_tree_to_grammar(&ixml_arena);
     Ok(grammar)
 }
@@ -339,28 +375,29 @@ pub fn ixml_tree_to_grammar(arena: &Arena<Content>) -> Grammar {
 /// Fully construct one rule. (which may involve multiple calls to ixml_rulebuilder if there are multiple alts)
 pub fn ixml_construct_rule(rule: NodeId, mark: Mark, arena: &Arena<Content>, rule_name: &str, g: &mut Grammar) {
     //println!("Build rule ... {rule_name}");
+    let ctx = RuleContext::new(rule_name);
     for (name, eid) in Parser::get_child_elements(arena, rule) {
         if name=="alt" {
-            let rb = ixml_rulebuilder_new(eid, arena);
+            let rb = ixml_rulebuilder_new(eid, arena, &ctx);
             g.mark_define(mark, rule_name, rb);
         }
     }
 }
 
-/// Construct one alt, which is a sequence built from a single `RuleBuilder`
+/// Construct one of what ixml grammar calls an "alt", which is a sequence built from a single `SeqBuilder`
 /// @param `node` is the nodeID of current element, expected to be <alt>, <repeat0>, <repeat1>, <option>, or <sep>
 /// as it only looks at child elements downstream from the `NodeId` passed in
-pub fn ixml_rulebuilder_new(node: NodeId, arena: &Arena<Content>) -> RuleBuilder {
-    let mut rb = Rule::seq();
+pub fn ixml_rulebuilder_new<'a>(node: NodeId, arena: &'a Arena<Content>, ctx: &'a RuleContext) -> SeqBuilder<'a> {
+    let mut seq = ctx.seq();
     for (name, nid) in Parser::get_child_elements(arena, node) {
-        rb = ixml_ruleappend(rb, &name, nid, arena);
+        seq = ixml_ruleappend(seq, &name, nid, arena, ctx);
     }
-    rb
+    seq
 }
 
-/// Add additional factors onto the given `RuleBuilder`, possibly recursively
+/// Add additional factors onto the given `SeqBuilder`, possibly recursively
 /// @param `node` is the nodeID of current element, which is diectly processed
-pub fn ixml_ruleappend(mut rb: RuleBuilder, name: &str, nid: NodeId, arena: &Arena<Content>) -> RuleBuilder {
+pub fn ixml_ruleappend<'a>(mut seq: SeqBuilder<'a>, name: &str, nid: NodeId, arena: &'a Arena<Content>, ctx: &'a RuleContext) -> SeqBuilder<'a> {
 
     let attrs = Parser::get_attributes(arena, nid);
     match name {
@@ -368,16 +405,16 @@ pub fn ixml_ruleappend(mut rb: RuleBuilder, name: &str, nid: NodeId, arena: &Are
             // an <alts> with only one <alt> child can be inlined, otherwise we give it the full treatment
             let alt_elements = Parser::get_child_elements_named(arena, nid, "alt");
             if alt_elements.len()==1 {
-                rb = ixml_ruleappend(rb, "alt", alt_elements[0], arena);
+                seq = ixml_ruleappend(seq, "alt", alt_elements[0], arena, ctx);
             } else {
-                let altrules: Vec<RuleBuilder> = alt_elements.iter()
-                    .map(|n| ixml_rulebuilder_new(*n, arena))
+                let altrules: Vec<SeqBuilder> = alt_elements.iter()
+                    .map(|n| ixml_rulebuilder_new(*n, arena, &ctx))
                     .collect();
-                rb = rb.alts(altrules);
+                seq = seq.alts(altrules);
             }
         }
         "literal" => {
-            rb = rb.ch(attrs["string"].chars().next().expect("no empty string literals"));
+            seq = seq.ch(attrs["string"].chars().next().expect("no empty string literals"));
         }
         "inclusion" => {
             // character classes
@@ -388,27 +425,27 @@ pub fn ixml_ruleappend(mut rb: RuleBuilder, name: &str, nid: NodeId, arena: &Are
             unimplemented!("need to handle character <exclusion>");
         }
         "nonterminal" => {
-            rb = rb.nt(&attrs["name"]);
+            seq = seq.nt(&attrs["name"]);
         }
         "option" => {
-            let subexpr = ixml_rulebuilder_new(nid, arena);
-            rb = rb.opt(subexpr);
+            let subexpr = ixml_rulebuilder_new(nid, arena, &ctx);
+            seq = seq.opt(subexpr);
         }
         "repeat0" => {
             let children = Parser::get_child_elements(arena, nid);
             // assume first child is what-to-repeat (from `factor`)
             let expr = children.get(0).expect("Should always be at least one child here");
             let repeat_this_node = expr.1;
-            let mut repeat_this = Rule::seq();
-            repeat_this = ixml_ruleappend(repeat_this, &expr.0, repeat_this_node, arena);
+            let mut repeat_this = ctx.seq();
+            repeat_this = ixml_ruleappend(repeat_this, &expr.0, repeat_this_node, arena, ctx);
 
             // if a <sep> child exists, this is a ** rule, otherwise just *
             if let Some(sep) = children.get(1) {
                 assert_eq!(sep.0, "sep");
-                let separated_by = ixml_rulebuilder_new(sep.1, arena);
-                rb = rb.repeat0_sep(repeat_this, separated_by)
+                let separated_by = ixml_rulebuilder_new(sep.1, arena, &ctx);
+                seq = seq.repeat0_sep(repeat_this, separated_by)
             } else {
-                rb = rb.repeat0(repeat_this);
+                seq = seq.repeat0(repeat_this);
             }
         }
         "repeat1" => {
@@ -416,21 +453,21 @@ pub fn ixml_ruleappend(mut rb: RuleBuilder, name: &str, nid: NodeId, arena: &Are
             // assume first child is what-to-repeat (from `factor`)
             let expr = children.get(0).expect("Should always be at least one child here");
             let repeat_this_node = expr.1;
-            let mut repeat_this = Rule::seq();
-            repeat_this = ixml_ruleappend(repeat_this, &expr.0, repeat_this_node, arena);
+            let mut repeat_this = ctx.seq();
+            repeat_this = ixml_ruleappend(repeat_this, &expr.0, repeat_this_node, arena, ctx);
 
             // if a <sep> child exists, this is a ++ rule, otherwise just +
             if let Some(sep) = children.get(1) {
                 assert_eq!(sep.0, "sep");
-                let separated_by = ixml_rulebuilder_new(sep.1, arena);
-                rb = rb.repeat1_sep(repeat_this, separated_by)
+                let separated_by = ixml_rulebuilder_new(sep.1, arena, &ctx);
+                seq = seq.repeat1_sep(repeat_this, separated_by)
             } else {
-                rb = rb.repeat1(repeat_this);
+                seq = seq.repeat1(repeat_this);
             }
         }
         _ => unimplemented!("unknown element {name} child of <alt>"),
     }
-    rb
+    seq
 }
 
 

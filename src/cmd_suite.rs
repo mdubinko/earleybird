@@ -1,6 +1,6 @@
 
 use argh::FromArgs;
-use earleybird::{testsuite_utils::{self, xml_canonicalize, TestGrammar}, parser::Parser, ixml_grammar::ixml_str_to_grammar, grammar::{Grammar, Rule}};
+use earleybird::{testsuite_utils::{self, xml_canonicalize, TestGrammar}, parser::Parser, ixml_grammar::ixml_str_to_grammar, grammar::{Grammar, Rule, RuleContext}};
 use crate::cmd_suite::testsuite_utils::TestResult::*;
 
 #[derive(FromArgs)]
@@ -39,7 +39,8 @@ fn run(dir: String) {
                      failures.push(name.clone());
                      println!("{e}");
                      let mut g = Grammar::new();
-                     g.define("error", Rule::seq().ch_in(&e.to_string())); // hack
+                     let ctx = RuleContext::new("error");
+                     g.define("error", ctx.seq().ch_in(&e.to_string())); // hack
                      g
                 })
             }

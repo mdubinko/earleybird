@@ -1,5 +1,4 @@
 use earleybird::builtin_grammars::all_builtin_tests;
-use earleybird::grammar::{reset_internal_id, peek_internal_id};
 use earleybird::ixml_grammar::ixml_str_to_grammar;
 use earleybird::parser::Parser;
 use earleybird::testsuite_utils::{TestResult, TestGrammar, xml_canonicalize};
@@ -47,6 +46,7 @@ fn test_all_builtin() {
 #[test]
 fn test_ixml_parser() {
     let _ = env_logger::builder().is_test(true).try_init();
+    println!("=== TOTAL TESTCASES = {} ===", all_builtin_tests().len());
 
     for testcase in all_builtin_tests().into_iter() {
 
@@ -65,20 +65,23 @@ fn test_ixml_parser() {
         let mut grammar_comparison: Vec<String> = Vec::new();
         let mut index_for_parsed = 0;
         let mut index_for_unparsed = 0;
+        println!("==== EXAMINING {} TESTCASE GRAMMARS in {name} ========", testcase.grammars.len());
 
         for (i, grammar) in testcase.grammars.into_iter().enumerate() {
             let grammar_under_test = match grammar {
                 TestGrammar::Parsed(g) => {
-                    println!("...no need to parse ({})", peek_internal_id());
+                    println!("...no need to parse ; insertion order = {:?}", &g.defn_order);
                     index_for_parsed = i;
                     g
                 }
                 TestGrammar::Unparsed(ixml) => {
-                    println!("...parsing >>>{}<<<", &ixml);
-                    //reset_internal_id();
+                    println!("..parsing >>>{}<<<", &ixml);
                     let x = ixml_str_to_grammar(&ixml); //.unwrap_or_else(|e| panic!("{e}"));
                     index_for_unparsed = i;
                     //dbg!(&x);
+                    if let Ok(g) = &x {
+                        println!("insertion order = {:?}", &g.defn_order);
+                    }
                     x.unwrap()
                 }
             };
