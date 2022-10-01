@@ -2,8 +2,6 @@ use indextree::{Arena, NodeId};
 
 use crate::{grammar::{Grammar, Mark, TMark, SeqBuilder, Lit, RuleContext}, parser::{Content, Parser, ParseError}};
 
-// TODO: -rules and @rules
-
 /// Bootstrap ixml grammar; hand-coded definition
 pub fn ixml_grammar() -> Grammar {
     let mut g = Grammar::new();
