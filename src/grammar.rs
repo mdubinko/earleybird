@@ -93,24 +93,25 @@ impl Grammar {
         self.defn_order.get(0).map(smol_str::SmolStr::to_string)
     }
 
-    pub fn get_root_definition(&self) -> Option<&BranchingRule> {
-        self.defn_order.get(0).map(|s| self.get_definition(s))
+    pub fn get_root_definition(&self) -> Result<Option<&BranchingRule>, crate::parser::ParseError> {
+        match self.defn_order.get(0) {
+            Some(s) => Ok(Some(self.get_definition(s)?)),
+            None => Ok(None),
+        }
     }
     
-    pub fn get_definition_mark(&self, name: &str) -> Mark {
+    pub fn get_definition_mark(&self, name: &str) -> Result<Mark, crate::parser::ParseError> {
         if !self.definitions.contains_key(name) {
-            // TODO: make this return a ParseError...
-            println!("missing rule named {name}!");
+            return Err(crate::parser::ParseError::static_err(&format!("missing rule named {name}")));
         }
-        self.definitions[name].mark
+        Ok(self.definitions[name].mark)
     }
 
-    pub fn get_definition(&self, name: &str) -> &BranchingRule {
+    pub fn get_definition(&self, name: &str) -> Result<&BranchingRule, crate::parser::ParseError> {
         if !self.definitions.contains_key(name) {
-            println!("Where is {name}???");
+            return Err(crate::parser::ParseError::static_err(&format!("missing rule definition for {name}")));
         }
-        assert!(self.definitions.contains_key(name));
-        &self.definitions[name]
+        Ok(&self.definitions[name])
     }
 }
 
@@ -305,8 +306,8 @@ impl fmt::Display for Factor {
 }
 
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-struct CharMatchId(usize);
+// #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+// struct CharMatchId(usize); // Currently unused
 
 /// A character matcher can be an arbitrarily long set of matchspecs (which are considered logically OR'd)
 /// e.g. ["0"-"9" | "?" | #64 | Nd]

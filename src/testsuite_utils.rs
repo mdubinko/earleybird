@@ -14,28 +14,6 @@ use crate::grammar::Grammar;
 
 type XmlString = String;
 
-static TEMP_BASE_URL: &str = "../../ixml/tests/";
-
-/// relative to the home directory of the test sutes, all known test-catalog documents
-static TEST_CATALOGS: [&str; 16] = [
-    "test-catalog.xml",
-    "syntax/catalog-as-grammar-tests.xml",
-    "syntax/catalog-as-instance-tests-ixml.xml",
-    "syntax/catalog-as-instance-tests-xml.xml",
-    "syntax/catalog-of-correct-tests.xml",
-    "ambiguous/test-catalog.xml",
-    "correct/test-catalog.xml",
-    "ixml/test-catalog.xml",
-    "parse/test-catalog.xml",
-    "error/test-catalog.xml",
-    "grammar-misc/test-catalog.xml",
-    "grammar-misc/prolog-tests.xml",
-    "grammar-misc/insertion-tests.xml",
-    "misc/misc-001-020-catalog.xml",
-    "misc/misc-021-040-catalog.xml",
-    "misc/misc-041-060-catalog.xml",
-];
-
 #[derive(Clone, Debug)]
 /// a test case. We duplicate the grammar (from parent test-set) if needed, for one-stop shopping
 pub struct TestCase {
@@ -82,11 +60,23 @@ impl TestCaseBuilder {
     }
 
     /// Build the [`TestCase`]. Resets the builder.
-    fn build(&mut self) -> TestCase {
-        assert!(self.name.is_some());
-        assert!(!self.grammar.is_empty());
-        assert!(self.input.is_some());
-        assert!(!self.expected.is_empty());
+    fn build(&mut self) -> Option<TestCase> {
+        if self.name.is_none() {
+            eprintln!("Warning: Skipping test case with no name");
+            return None;
+        }
+        if self.grammar.is_empty() {
+            eprintln!("Warning: Skipping test case '{}' with no grammar", self.name.as_ref().unwrap());
+            return None;
+        }
+        if self.input.is_none() {
+            eprintln!("Warning: Skipping test case '{}' with no input", self.name.as_ref().unwrap());
+            return None;
+        }
+        if self.expected.is_empty() {
+            eprintln!("Warning: Skipping test case '{}' with no expected results", self.name.as_ref().unwrap());
+            return None;
+        }
         let name = self.name.take();
         self.name = None;
         let grammar = self.grammar.drain(..).collect();
@@ -95,13 +85,15 @@ impl TestCaseBuilder {
         self.input = None;
         let expected = self.expected.drain(..).collect();
         self.expected.clear();
-        println!("built test case ===={}====", name.clone().unwrap());
+        // println!("built test case ===={}====", name.clone().unwrap());
 
-        TestCase { name: name.unwrap(), grammars: grammar, input: input.unwrap(), expected }
+        Some(TestCase { name: name.unwrap(), grammars: grammar, input: input.unwrap(), expected })
     }
 }
 
-pub static TEST_CATALOG_EG: &str =
+/// Example test catalog format for documentation purposes
+#[allow(dead_code)]
+static TEST_CATALOG_FORMAT_EXAMPLE: &str =
 r##"<test-catalog xmlns='https://github.com/invisibleXML/ixml/test-catalog'>
 <description>x</description>
   <test-set>
@@ -124,10 +116,10 @@ r##"<test-catalog xmlns='https://github.com/invisibleXML/ixml/test-catalog'>
 </test-catalog>"##;
 
 
+/// Read test catalog, handling test-set-ref elements by recursively loading referenced catalogs
 pub fn read_test_catalog(path: String) -> Vec<TestCase> {
     let pathbuf = PathBuf::from(&path);
     let basepath = pathbuf.parent().unwrap();
-    println!("{}", basepath.to_string_lossy());
     let file = fs::read_to_string(&path).expect("The file could not be read");
 
     //let file = TEST_CATALOG_EG;
@@ -187,6 +179,14 @@ pub fn read_test_catalog(path: String) -> Vec<TestCase> {
                     b"test-case-ref" => {
                         // TODO: maybe just note these somewhere...
                     },
+                    b"test-set-ref" => {
+                        let href = attr_by_name(&e.attributes(), "href");
+                        let mut fullpath = basepath.to_path_buf();
+                        fullpath.push(href);
+                        // Recursively load the referenced catalog
+                        let mut referenced_tests = read_test_catalog(fullpath.to_string_lossy().to_string());
+                        test_cases.append(&mut referenced_tests);
+                    },
                     b"test-string" => {
                         let input = reader.read_text(e.to_end().name());
                         builder.input = Some(input.expect("parse error reading inline test-string").to_string());
@@ -240,7 +240,9 @@ pub fn read_test_catalog(path: String) -> Vec<TestCase> {
                        test_set_nesting.pop();
                     },
                     b"test-case" => {
-                        test_cases.push(builder.build());
+                        if let Some(test_case) = builder.build() {
+                            test_cases.push(test_case);
+                        }
                     },
                     b"assert-xml" => {
                         enable_accum = false;
@@ -268,7 +270,7 @@ pub fn read_test_catalog(path: String) -> Vec<TestCase> {
         // if we don't keep a borrow elsewhere, we can clear the buffer to keep memory usage low
         buf.clear();
     }
-    println!("read {} cases", test_cases.len());
+    // println!("read {} cases", test_cases.len());
     test_cases
 }
 

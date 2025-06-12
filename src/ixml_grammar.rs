@@ -329,14 +329,13 @@ insertion: -"+", s, (string; -"#", hex), s.
 pub fn ixml_str_to_grammar(ixml: &str) -> Result<Grammar, ParseError> {
     let mut ixml_parser = Parser::new(ixml_grammar());
     let ixml_arena = ixml_parser.parse(ixml.trim())?;
-    let grammar = ixml_tree_to_grammar(&ixml_arena);
+    let grammar = ixml_tree_to_grammar(&ixml_arena)?;
     Ok(grammar)
 }
 
 /// Accepts the Arena<Content> resulting from the parse of a valid ixml grammar
 /// Produces a new Grammar as output
-/// TODO: Result<> return type.
-pub fn ixml_tree_to_grammar(arena: &Arena<Content>) -> Grammar {
+pub fn ixml_tree_to_grammar(arena: &Arena<Content>) -> Result<Grammar, ParseError> {
     let mut g = Grammar::new();
 
     let root_node = arena.iter().next().unwrap(); // first item == root
@@ -354,7 +353,9 @@ pub fn ixml_tree_to_grammar(arena: &Arena<Content>) -> Grammar {
             _ => {}
         }
     }
-    assert!(all_rules.len() > 0, "can't convert ixml tree to grammar: no rules present! {:?}", &arena);
+    if all_rules.is_empty() {
+        return Err(ParseError::static_err("can't convert ixml tree to grammar: no rules present"));
+    }
     for rule in all_rules {
         let rule_attrs = Parser::get_attributes(arena, rule);
         let rule_name = &rule_attrs["name"];
@@ -367,7 +368,7 @@ pub fn ixml_tree_to_grammar(arena: &Arena<Content>) -> Grammar {
         };
         ixml_construct_rule(rule, mark, arena, rule_name, &mut g);
     }
-    g
+    Ok(g)
 }
 
 /// Fully construct one rule. (which may involve multiple calls to ixml_rulebuilder if there are multiple alts)
@@ -477,18 +478,18 @@ fn parse_ixml() -> Result<(), ParseError> {
     //                  012345678901234
     let mut parser = Parser::new(g);
     let arena = parser.parse(ixml)?;
-    let result = Parser::tree_to_testfmt(&arena);
+    let result = Parser::tree_to_test_format(&arena);
     let expected = r#"<ixml><rule name="doc"><alt><literal string="A"></literal><literal string="B"></literal></alt></rule></ixml>"#;
     assert_eq!(result, expected);
 
     println!("=============");
-    let gen_grammar = ixml_tree_to_grammar(&arena);
+    let gen_grammar = ixml_tree_to_grammar(&arena)?;
     println!("{gen_grammar}");
     let mut gen_parser = Parser::new(gen_grammar);
     // now do a second pass, with the just-generated grammar
     let input2 = "AB";
     let gen_arena = gen_parser.parse(input2)?;
-    let result2 = Parser::tree_to_testfmt(&gen_arena);
+    let result2 = Parser::tree_to_test_format(&gen_arena);
     let expected2 = "<doc>AB</doc>";
     assert_eq!(result2, expected2);
     Ok(())

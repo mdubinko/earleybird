@@ -27,10 +27,21 @@ and will use these solely for helping to generate testing code, harnesses, and s
 copyright of machine-generated code is under debate, I will change the license on affected modules to something
 much more relaxed, though the core modules will remain as-is.
 
+Test suite:
+The test harness expects to locate resources from the official ixml repo
+https://github.com/invisibleXML/ixml
+in a symlinked directory called /ixml.
+
+Assuming you have this repo checked out in a sibling directory to earleybird,
+the command for this is
+    ln -s ../ixml .
+
 
 # References
 
 Invisible XML: https://invisiblexml.org/
+
+IXML Repo: https://github.com/invisibleXML/ixml
 
 Test Suite: https://github.com/invisibleXML/ixml/tree/master/tests
 

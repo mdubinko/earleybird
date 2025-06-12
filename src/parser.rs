@@ -367,7 +367,7 @@ impl Parser {
         debug!("Input now at position {} '{}'", 0, input.get_at(0));
 
         // Seed with top expr
-        let top_rule = g.get_root_definition()
+        let top_rule = g.get_root_definition()?
             .ok_or(ParseError::static_err("No top grammar rule"))?;
 
         for alt in top_rule.iter() {
@@ -433,7 +433,7 @@ impl Parser {
                     // We can have a Mark at the point of definiton,
                     // as well as at the point of reference...
                     // Figure out what to do with all possible combinations
-                    let defn_mark = g.get_definition_mark(&name);
+                    let defn_mark = g.get_definition_mark(&name)?;
                     let effective_mark = match (defn_mark, mark) {
                         (Mark::Default, Mark::Default) => Mark::Default,
                         (Mark::Mute, Mark::Unmute) => Mark::Unmute,       // can 'undo' marking Mute
@@ -442,7 +442,7 @@ impl Parser {
                         (Mark::Unmute, _) | (_, Mark::Unmute) => Mark::Unmute,
                     };
 
-                    for rule in g.get_definition(&name).iter() {
+                    for rule in g.get_definition(&name)?.iter() {
                         // TODO: propertly account for rule-level Mark
                         let dot = rule.dot_notator();
                         let new_pos = self.traces.get(tid).pos;
@@ -619,17 +619,17 @@ impl Parser {
 
 
 
-    pub fn tree_to_testfmt(arena: &Arena<Content>) -> String {
+    pub fn tree_to_test_format(arena: &Arena<Content>) -> String {
         let mut builder = Builder::default();
         let root = arena.iter().next().unwrap(); // first item == root
         let root_id = arena.get_node_id(root).unwrap();
         for child in root_id.children(arena) {
-            Self::tree_to_testfmt_recurse(arena, &mut builder, child);
+            Self::tree_to_test_format_recurse(arena, &mut builder, child);
         }
         builder.string().unwrap()
     }
     
-    fn tree_to_testfmt_recurse(arena: &Arena<Content>, builder: &mut Builder, nid: NodeId) {
+    fn tree_to_test_format_recurse(arena: &Arena<Content>, builder: &mut Builder, nid: NodeId) {
         let maybe_node = arena.get(nid);
         if maybe_node.is_none() {
             return;
@@ -657,8 +657,8 @@ impl Parser {
                 builder.append(">");
     
                 for child in nid.children(arena) {
-                    println!("testfmt found {child} in ::Element");
-                    Self::tree_to_testfmt_recurse(arena, builder, child);
+                    // println!("testfmt found {child} in ::Element");
+                    Self::tree_to_test_format_recurse(arena, builder, child);
                 }
     
                 builder.append("</");
