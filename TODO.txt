@@ -1,0 +1,22 @@
+# earleybird TODO
+
+## Bootstrap Grammar Verification
+
+- [ ] Implement Rust macro for embedding iXML specs with bootstrap implementations (src/ixml_bootstrap.rs) #HIGH
+  - [ ] Design procedural macro to annotate bootstrap rule definitions with iXML specs
+  - [ ] Auto-generate round-trip tests comparing hand-coded vs parsed grammar behavior  
+  - [ ] Create verification that bootstrap implementation matches embedded iXML specification
+  - [ ] Consider declarative grammar builder macro as alternative approach
+
+## Bootstrap Implementation TODOs
+
+- [ ] Fix character range parsing in bootstrap tree processing (src/ixml_bootstrap.rs:428) #HIGH
+  - Bug: `["a"-"z"]` ranges not parsed correctly in `ixml_ruleappend()` 
+  - Current: only handles simple string character classes
+  - Needed: parse `range` elements with `from`/`to` attributes to create Range matchers
+  - Exposed by: SmokeElem test failure comparing parsed vs hand-coded grammars
+- [ ] Implement comment parsing: `{...}` nested comment syntax (src/ixml_bootstrap.rs:38)
+- [ ] Add prolog/version support: Grammar versioning with `ixml version "1.0"` (src/ixml_bootstrap.rs:44)
+- [ ] Complete Unicode character class support (src/ixml_bootstrap.rs:24,98)
+- [ ] Implement insertion syntax: `+` insertion for literal text (src/ixml_bootstrap.rs:247)
+- [x] Improve character handling: proper line break exclusion, quote doubling (src/ixml_bootstrap.rs:164,169)

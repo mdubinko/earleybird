@@ -1,5 +1,5 @@
-use earleybird::builtin_grammars::all_builtin_tests;
-use earleybird::ixml_grammar::ixml_str_to_grammar;
+use earleybird::test_grammars::all_builtin_tests;
+use earleybird::grammar::Grammar;
 use earleybird::parser::Parser;
 use earleybird::testsuite_utils::{TestResult, TestGrammar, xml_canonicalize};
 
@@ -76,7 +76,7 @@ fn test_ixml_parser() {
                 }
                 TestGrammar::Unparsed(ixml) => {
                     println!("..parsing >>>{}<<<", &ixml);
-                    let x = ixml_str_to_grammar(&ixml);
+                    let x = Grammar::from_ixml_str(&ixml);
                     index_for_unparsed = i;
                     //dbg!(&x);
                     match &x {

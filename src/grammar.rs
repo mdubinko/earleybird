@@ -28,6 +28,7 @@
 
 use std::{fmt, collections::HashMap, cell::Cell};
 use smol_str::SmolStr;
+use indextree::{Arena, NodeId};
 use crate::{parser::DotNotation, unicode_ranges::UnicodeRange};
 
 // TODO: Optimization: add CharMatchers at the Grammar level
@@ -113,6 +114,160 @@ impl Grammar {
         }
         Ok(&self.definitions[name])
     }
+
+    /// Parse an iXML grammar string and construct a Grammar
+    pub fn from_ixml_str(ixml: &str) -> Result<Grammar, crate::parser::ParseError> {
+        use crate::{ixml_bootstrap::ixml_grammar, parser::Parser};
+        
+        let mut ixml_parser = Parser::new(ixml_grammar());
+        let ixml_arena = ixml_parser.parse(ixml.trim())?;
+        let grammar = Grammar::from_parse_tree(&ixml_arena)?;
+        Ok(grammar)
+    }
+
+    /// Convert a parse tree (Arena<Content>) from iXML parsing into a Grammar
+    pub fn from_parse_tree(arena: &Arena<crate::parser::Content>) -> Result<Grammar, crate::parser::ParseError> {
+        use crate::parser::{Parser, Content};
+        
+        let mut g = Grammar::new();
+
+        let root_node = arena.iter().next().unwrap(); // first item == root
+        let root_id = arena.get_node_id(root_node).unwrap();
+
+        // first a pass over everything, making some indexes as we go
+        let mut all_rules: Vec<NodeId> = Vec::new();
+
+        // more validation checks go here...
+
+        for nid in root_id.descendants(arena) {
+            let content = arena.get(nid).unwrap().get();
+            match content {
+                Content::Element(name) if name=="rule" => all_rules.push(nid),
+                _ => {}
+            }
+        }
+        if all_rules.is_empty() {
+            return Err(crate::parser::ParseError::static_err("can't convert ixml tree to grammar: no rules present"));
+        }
+        for rule in all_rules {
+            let rule_attrs = Parser::get_attributes(arena, rule);
+            let rule_name = &rule_attrs["name"];
+            let rule_mark = rule_attrs.get("mark");
+            let mark = match rule_mark.map(|s| s.as_str()) {
+                Some("@") => Mark::Attr,
+                Some("-") => Mark::Mute,
+                Some("^") => Mark::Unmute,
+                _ => Mark::Default,
+            };
+            Grammar::construct_rule_from_tree(rule, mark, arena, rule_name, &mut g);
+        }
+        Ok(g)
+    }
+
+    /// Helper function: Fully construct one rule from parse tree
+    fn construct_rule_from_tree(rule: NodeId, mark: Mark, arena: &Arena<crate::parser::Content>, rule_name: &str, g: &mut Grammar) {
+        use crate::parser::Parser;
+        
+        let ctx = RuleContext::new(rule_name);
+        for (name, eid) in Parser::get_child_elements(arena, rule) {
+            if name=="alt" {
+                let rb = Grammar::build_sequence_from_tree(eid, arena, &ctx);
+                g.mark_define(mark, rule_name, rb);
+            }
+        }
+    }
+
+    /// Helper function: Construct a sequence from parse tree node
+    fn build_sequence_from_tree<'a>(node: NodeId, arena: &'a Arena<crate::parser::Content>, ctx: &'a RuleContext) -> SeqBuilder<'a> {
+        use crate::parser::Parser;
+        
+        let mut seq = ctx.seq();
+        for (name, nid) in Parser::get_child_elements(arena, node) {
+            seq = Grammar::append_factor_from_tree(seq, &name, nid, arena, ctx);
+        }
+        seq
+    }
+
+    /// Helper function: Add factors to sequence from parse tree
+    fn append_factor_from_tree<'a>(mut seq: SeqBuilder<'a>, name: &str, nid: NodeId, arena: &'a Arena<crate::parser::Content>, ctx: &'a RuleContext) -> SeqBuilder<'a> {
+        use crate::parser::Parser;
+        
+        let attrs = Parser::get_attributes(arena, nid);
+        match name {
+            "alts" => {
+                // an <alts> with only one <alt> child can be inlined, otherwise we give it the full treatment
+                let alt_elements = Parser::get_child_elements_named(arena, nid, "alt");
+                if alt_elements.len()==1 {
+                    seq = Grammar::append_factor_from_tree(seq, "alt", alt_elements[0], arena, ctx);
+                } else {
+                    let altrules: Vec<SeqBuilder> = alt_elements.iter()
+                        .map(|n| Grammar::build_sequence_from_tree(*n, arena, &ctx))
+                        .collect();
+                    seq = seq.alts(altrules);
+                }
+            }
+            "literal" => {
+                seq = seq.ch(attrs["string"].chars().next().expect("no empty string literals"));
+            }
+            "inclusion" => {
+                // character classes - basic implementation for simple character sets
+                // TODO: handle full Unicode ranges and complex sets
+                if let Some(string_attr) = attrs.get("string") {
+                    seq = seq.ch_in(string_attr);
+                }
+            }
+            "exclusion" => {
+                // character classes - basic implementation for simple character sets  
+                // TODO: handle full Unicode ranges and complex sets
+                if let Some(string_attr) = attrs.get("string") {
+                    seq = seq.lit(Lit::union().exclude().ch_in(string_attr));
+                }
+            }
+            "nonterminal" => {
+                seq = seq.nt(&attrs["name"]);
+            }
+            "option" => {
+                let subexpr = Grammar::build_sequence_from_tree(nid, arena, &ctx);
+                seq = seq.opt(subexpr);
+            }
+            "repeat0" => {
+                let children = Parser::get_child_elements(arena, nid);
+                // assume first child is what-to-repeat (from `factor`)
+                let expr = children.get(0).expect("Should always be at least one child here");
+                let repeat_this_node = expr.1;
+                let mut repeat_this = ctx.seq();
+                repeat_this = Grammar::append_factor_from_tree(repeat_this, &expr.0, repeat_this_node, arena, ctx);
+
+                // if a <sep> child exists, this is a ** rule, otherwise just *
+                if let Some(sep) = children.get(1) {
+                    assert_eq!(sep.0, "sep");
+                    let separated_by = Grammar::build_sequence_from_tree(sep.1, arena, &ctx);
+                    seq = seq.repeat0_sep(repeat_this, separated_by)
+                } else {
+                    seq = seq.repeat0(repeat_this);
+                }
+            }
+            "repeat1" => {
+                let children = Parser::get_child_elements(arena, nid);
+                // assume first child is what-to-repeat (from `factor`)
+                let expr = children.get(0).expect("Should always be at least one child here");
+                let repeat_this_node = expr.1;
+                let mut repeat_this = ctx.seq();
+                repeat_this = Grammar::append_factor_from_tree(repeat_this, &expr.0, repeat_this_node, arena, ctx);
+
+                // if a <sep> child exists, this is a ++ rule, otherwise just +
+                if let Some(sep) = children.get(1) {
+                    assert_eq!(sep.0, "sep");
+                    let separated_by = Grammar::build_sequence_from_tree(sep.1, arena, &ctx);
+                    seq = seq.repeat1_sep(repeat_this, separated_by)
+                } else {
+                    seq = seq.repeat1(repeat_this);
+                }
+            }
+            _ => unimplemented!("unknown element {name} child of <alt>"),
+        }
+        seq
+    }
 }
 
 impl fmt::Display for Grammar {
@@ -194,9 +349,9 @@ impl BranchingRule {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum Mark {
     Default,
-    Unmute,
-    Mute,
-    Attr,
+    Unmute,  // ^
+    Mute,    // -
+    Attr,    // @
 }
 
 impl fmt::Display for Mark {

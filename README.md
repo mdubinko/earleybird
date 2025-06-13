@@ -22,10 +22,9 @@ Currently re-thinking error handling, in a more Rust-idiomatic way. Also looking
 
 As of May 1, 2023, no AI generated code has been used in any part of this project.
 
-Since this is a learning project, I intend to experiment with different code generation products in the future,
-and will use these solely for helping to generate testing code, harnesses, and suites. Since the validity of
-copyright of machine-generated code is under debate, I will change the license on affected modules to something
-much more relaxed, though the core modules will remain as-is.
+The core concepts and architecture were all built 'by hand'.
+
+Since this is a learning project, I intend to experiment with different code generation products in the future, especially for testing and fleshing out the details of the implementation.
 
 Test suite:
 The test harness expects to locate resources from the official ixml repo

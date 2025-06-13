@@ -1,6 +1,4 @@
-use indextree::{Arena, NodeId};
-
-use crate::{grammar::{Grammar, Mark, TMark, SeqBuilder, Lit, RuleContext}, parser::{Content, Parser, ParseError}};
+use crate::{grammar::{Grammar, Mark, TMark, Lit, RuleContext}, parser::{ParseError, Parser}};
 
 /// Bootstrap ixml grammar; hand-coded definition
 pub fn ixml_grammar() -> Grammar {
@@ -116,15 +114,19 @@ pub fn ixml_grammar() -> Grammar {
         .nt("name").nt("s") );
 
     // @name: namestart, namefollower*.
-    // TODO: fixme
     let ctx = RuleContext::new("name");
-    g.mark_define(Mark::Attr, "name", ctx.seq().repeat1( ctx.seq().ch_in("_abcdefghijklmnopqrstuvwxyzRS")));
+    g.mark_define(Mark::Attr, "name", ctx.seq().nt("namestart").repeat0(ctx.seq().nt("namefollower")));
     
     // -namestart: ["_"; L].
-    // TODO
+    // Basic implementation: underscore and letters
+    let ctx = RuleContext::new("namestart");
+    g.mark_define(Mark::Mute, "namestart", ctx.seq().ch_in("_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"));
 
     // -namefollower: namestart; ["-.·‿⁀"; Nd; Mn].
-    // TODO
+    // Basic implementation: namestart chars plus digits and hyphens
+    let ctx = RuleContext::new("namefollower");
+    g.mark_define(Mark::Mute, "namefollower", ctx.seq().nt("namestart"));
+    g.mark_define(Mark::Mute, "namefollower", ctx.seq().ch_in("-0123456789"));
 
     // -terminal: literal; charset.
     let ctx = RuleContext::new("terminal");
@@ -147,20 +149,25 @@ pub fn ixml_grammar() -> Grammar {
     g.mark_define(Mark::Attr, "tmark", ctx.seq().ch_in("^-"));
 
     // @string: -'"', dchar+, -'"'; -"'", schar+, -"'".
-    // TODO schar variant
     let ctx = RuleContext::new("string");
     g.mark_define(Mark::Attr, "string", ctx.seq()
         .mark_ch('"', TMark::Mute)
         .repeat1( ctx.seq().nt("dchar"))
         .mark_ch('"', TMark::Mute) );
+    g.mark_define(Mark::Attr, "string", ctx.seq()
+        .mark_ch('\'', TMark::Mute)
+        .repeat1( ctx.seq().nt("schar"))
+        .mark_ch('\'', TMark::Mute) );
 
     // dchar: ~['"'; #a; #d]; '"', -'"'. {all characters except line breaks; quotes must be doubled}
-    // TODO: fixme
     let ctx = RuleContext::new("dchar");
-    g.define("dchar", ctx.seq().ch_in("abcdefghijklmnopqrstuvwxyz ABCDEFGHIJKLMNOPQRSTUVWXYZ"));
+    g.define("dchar", ctx.seq().lit(Lit::union().exclude().ch('"').ch('\n').ch('\r')));
+    g.define("dchar", ctx.seq().ch('"').mark_ch('"', TMark::Mute));
   
     // schar: ~["'"; #a; #d]; "'", -"'". {all characters except line breaks; quotes must be doubled}
-    // TODO
+    let ctx = RuleContext::new("schar");
+    g.define("schar", ctx.seq().lit(Lit::union().exclude().ch('\'').ch('\n').ch('\r')));
+    g.define("schar", ctx.seq().ch('\'').mark_ch('\'', TMark::Mute));
 
     // -encoded: (tmark, s)?, -"#", hex, s.
     let ctx = RuleContext::new("encoded");
@@ -222,10 +229,11 @@ pub fn ixml_grammar() -> Grammar {
     g.mark_define(Mark::Attr, "to", ctx.seq().nt("character"));
 
     // -character: -'"', dchar, -'"'; -"'", schar, -"'"; "#", hex.
-    // TODO: schar variant
     let ctx = RuleContext::new("character");
     g.mark_define(Mark::Mute, "character", ctx.seq()
         .mark_ch('"', TMark::Mute).nt("dchar").mark_ch('"', TMark::Mute));
+    g.mark_define(Mark::Mute, "character", ctx.seq()
+        .mark_ch('\'', TMark::Mute).nt("schar").mark_ch('\'', TMark::Mute));
     g.mark_define(Mark::Mute, "character", ctx.seq().ch('#').nt("hex"));
 
     // -class: code.
@@ -325,149 +333,6 @@ member: string;
 insertion: -"+", s, (string; -"#", hex), s.
 */
 
-/// one stop shopping for ixml String -> Result<Grammar, ParseError>
-pub fn ixml_str_to_grammar(ixml: &str) -> Result<Grammar, ParseError> {
-    let mut ixml_parser = Parser::new(ixml_grammar());
-    let ixml_arena = ixml_parser.parse(ixml.trim())?;
-    let grammar = ixml_tree_to_grammar(&ixml_arena)?;
-    Ok(grammar)
-}
-
-/// Accepts the Arena<Content> resulting from the parse of a valid ixml grammar
-/// Produces a new Grammar as output
-pub fn ixml_tree_to_grammar(arena: &Arena<Content>) -> Result<Grammar, ParseError> {
-    let mut g = Grammar::new();
-
-    let root_node = arena.iter().next().unwrap(); // first item == root
-    let root_id = arena.get_node_id(root_node).unwrap();
-
-    // first a pass over everything, making some indexes as we go
-    let mut all_rules: Vec<NodeId> = Vec::new();
-
-    // more validation checks go here...
-
-    for nid in root_id.descendants(arena) {
-        let content = arena.get(nid).unwrap().get();
-        match content {
-            Content::Element(name) if name=="rule" => all_rules.push(nid),
-            _ => {}
-        }
-    }
-    if all_rules.is_empty() {
-        return Err(ParseError::static_err("can't convert ixml tree to grammar: no rules present"));
-    }
-    for rule in all_rules {
-        let rule_attrs = Parser::get_attributes(arena, rule);
-        let rule_name = &rule_attrs["name"];
-        let rule_mark = rule_attrs.get("mark");
-        let mark = match rule_mark.map(|s| s.as_str()) {
-            Some("@") => Mark::Attr,
-            Some("-") => Mark::Mute,
-            Some("^") => Mark::Unmute,
-            _ => Mark::Default,
-        };
-        ixml_construct_rule(rule, mark, arena, rule_name, &mut g);
-    }
-    Ok(g)
-}
-
-/// Fully construct one rule. (which may involve multiple calls to ixml_rulebuilder if there are multiple alts)
-pub fn ixml_construct_rule(rule: NodeId, mark: Mark, arena: &Arena<Content>, rule_name: &str, g: &mut Grammar) {
-    //println!("Build rule ... {rule_name}");
-    let ctx = RuleContext::new(rule_name);
-    for (name, eid) in Parser::get_child_elements(arena, rule) {
-        if name=="alt" {
-            let rb = ixml_rulebuilder_new(eid, arena, &ctx);
-            g.mark_define(mark, rule_name, rb);
-        }
-    }
-}
-
-/// Construct one of what ixml grammar calls an "alt", which is a sequence built from a single `SeqBuilder`
-/// @param `node` is the nodeID of current element, expected to be <alt>, <repeat0>, <repeat1>, <option>, or <sep>
-/// as it only looks at child elements downstream from the `NodeId` passed in
-pub fn ixml_rulebuilder_new<'a>(node: NodeId, arena: &'a Arena<Content>, ctx: &'a RuleContext) -> SeqBuilder<'a> {
-    let mut seq = ctx.seq();
-    for (name, nid) in Parser::get_child_elements(arena, node) {
-        seq = ixml_ruleappend(seq, &name, nid, arena, ctx);
-    }
-    seq
-}
-
-/// Add additional factors onto the given `SeqBuilder`, possibly recursively
-/// @param `node` is the nodeID of current element, which is diectly processed
-pub fn ixml_ruleappend<'a>(mut seq: SeqBuilder<'a>, name: &str, nid: NodeId, arena: &'a Arena<Content>, ctx: &'a RuleContext) -> SeqBuilder<'a> {
-
-    let attrs = Parser::get_attributes(arena, nid);
-    match name {
-        "alts" => {
-            // an <alts> with only one <alt> child can be inlined, otherwise we give it the full treatment
-            let alt_elements = Parser::get_child_elements_named(arena, nid, "alt");
-            if alt_elements.len()==1 {
-                seq = ixml_ruleappend(seq, "alt", alt_elements[0], arena, ctx);
-            } else {
-                let altrules: Vec<SeqBuilder> = alt_elements.iter()
-                    .map(|n| ixml_rulebuilder_new(*n, arena, &ctx))
-                    .collect();
-                seq = seq.alts(altrules);
-            }
-        }
-        "literal" => {
-            seq = seq.ch(attrs["string"].chars().next().expect("no empty string literals"));
-        }
-        "inclusion" => {
-            // character classes
-            unimplemented!("need to handle character <inclusion>");
-        }
-        "exclusion" => {
-            // character classes
-            unimplemented!("need to handle character <exclusion>");
-        }
-        "nonterminal" => {
-            seq = seq.nt(&attrs["name"]);
-        }
-        "option" => {
-            let subexpr = ixml_rulebuilder_new(nid, arena, &ctx);
-            seq = seq.opt(subexpr);
-        }
-        "repeat0" => {
-            let children = Parser::get_child_elements(arena, nid);
-            // assume first child is what-to-repeat (from `factor`)
-            let expr = children.get(0).expect("Should always be at least one child here");
-            let repeat_this_node = expr.1;
-            let mut repeat_this = ctx.seq();
-            repeat_this = ixml_ruleappend(repeat_this, &expr.0, repeat_this_node, arena, ctx);
-
-            // if a <sep> child exists, this is a ** rule, otherwise just *
-            if let Some(sep) = children.get(1) {
-                assert_eq!(sep.0, "sep");
-                let separated_by = ixml_rulebuilder_new(sep.1, arena, &ctx);
-                seq = seq.repeat0_sep(repeat_this, separated_by)
-            } else {
-                seq = seq.repeat0(repeat_this);
-            }
-        }
-        "repeat1" => {
-            let children = Parser::get_child_elements(arena, nid);
-            // assume first child is what-to-repeat (from `factor`)
-            let expr = children.get(0).expect("Should always be at least one child here");
-            let repeat_this_node = expr.1;
-            let mut repeat_this = ctx.seq();
-            repeat_this = ixml_ruleappend(repeat_this, &expr.0, repeat_this_node, arena, ctx);
-
-            // if a <sep> child exists, this is a ++ rule, otherwise just +
-            if let Some(sep) = children.get(1) {
-                assert_eq!(sep.0, "sep");
-                let separated_by = ixml_rulebuilder_new(sep.1, arena, &ctx);
-                seq = seq.repeat1_sep(repeat_this, separated_by)
-            } else {
-                seq = seq.repeat1(repeat_this);
-            }
-        }
-        _ => unimplemented!("unknown element {name} child of <alt>"),
-    }
-    seq
-}
 
 
 #[test]
@@ -483,7 +348,7 @@ fn parse_ixml() -> Result<(), ParseError> {
     assert_eq!(result, expected);
 
     println!("=============");
-    let gen_grammar = ixml_tree_to_grammar(&arena)?;
+    let gen_grammar = Grammar::from_parse_tree(&arena)?;
     println!("{gen_grammar}");
     let mut gen_parser = Parser::new(gen_grammar);
     // now do a second pass, with the just-generated grammar
@@ -498,7 +363,7 @@ fn parse_ixml() -> Result<(), ParseError> {
 #[test]
 fn test_ixml_str_to_grammar() -> Result<(), ParseError> {
     let ixml: &str = r#"doc = "A", "B"."#;
-    let grammar = &ixml_str_to_grammar(ixml);
+    let grammar = &Grammar::from_ixml_str(ixml);
     assert!(grammar.is_ok());
     assert_eq!(grammar.as_ref().unwrap().get_rule_count(), 1);
     assert_eq!(grammar.as_ref().unwrap().get_root_definition_name(), Some(String::from("doc")));

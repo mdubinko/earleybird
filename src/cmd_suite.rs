@@ -1,6 +1,6 @@
 
 use argh::FromArgs;
-use earleybird::{testsuite_utils::{self, xml_canonicalize, TestGrammar}, parser::Parser, ixml_grammar::ixml_str_to_grammar, grammar::{Grammar, RuleContext}};
+use earleybird::{testsuite_utils::{self, xml_canonicalize, TestGrammar}, parser::Parser, grammar::{Grammar, RuleContext}};
 use crate::cmd_suite::testsuite_utils::TestResult::*;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -69,7 +69,7 @@ fn run(suite_spec: Option<String>) {
         let target_grammar = match grammar {
             TestGrammar::Parsed(g) => g,
             TestGrammar::Unparsed(ixml) => {
-                ixml_str_to_grammar(&ixml).unwrap_or_else(|e| {
+                Grammar::from_ixml_str(&ixml).unwrap_or_else(|e| {
                      abort+=1;
                      failures.push(name.clone());
                      println!("{e}");
