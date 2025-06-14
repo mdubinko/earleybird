@@ -37,6 +37,7 @@
 - [x] Add --verbose levels to cmd_parse command 
 - [x] Create centralized debug logging module with structured levels
 - [x] Enhance Earley parser logging with key decision points
+- [ ] Write Earley trace to external file and make it easily greppable including by tools
 - [ ] Add grammar tree processing debug output
 
 ### Phase 2: Visual Debugging (Future)
