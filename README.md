@@ -10,7 +10,96 @@ Currently re-thinking error handling, in a more Rust-idiomatic way. Also looking
 
 # Usage
 
-    RUST_LOG=info RUST_BACKTRACE=1 cargo run -- suite ../../ixml/tests/correct/test-catalog.xml
+## Running
+
+The `eb` CLI has several subcommands:
+
+### Parse files
+
+```bash
+eb parse -g grammar.ixml -i input.txt
+```
+
+### Quick inline testing (useful for development)
+
+```bash
+eb test -g 'rule: "a" | "b".' -i 'a'
+```
+
+### Run test suite
+
+```bash
+eb suite
+# Or with legacy path syntax:
+RUST_LOG=info RUST_BACKTRACE=1 cargo run -- suite ../../ixml/tests/correct/test-catalog.xml
+```
+
+The test suite is a git submodule in `ixml/` that contains the reference implementation.
+
+## Debugging and Transparency
+
+This implementation includes comprehensive debugging tools to aid in conformance work and troubleshooting.
+
+### Verbosity Levels
+
+Both `parse` and `test` commands support verbosity levels via `-v` or `--verbose`:
+
+- **`off`** (default): Silent operation, only shows final output or errors
+- **`basic`**: Shows input files/strings being processed and basic error context
+- **`detailed`**: Adds grammar statistics, parsing success confirmations, and enhanced error details  
+- **`trace`**: Reserved for detailed Earley parser step-by-step tracing (future)
+
+Examples:
+```bash
+# Quick debugging with inline strings
+eb test -g 'expr: term, ("+", term)*. term: "a".' -i 'a+a' -v detailed
+
+# Detailed file-based parsing
+eb parse -g examples/simple.ixml -i examples/simple.txt -v detailed
+
+# Basic debugging for parse failures
+eb test -g 'test: "exact".' -i 'wrong' -v basic
+```
+
+### Debug Output Structure
+
+The logging system provides structured, component-specific output:
+
+- **`[GRAMMAR]`**: Grammar construction and validation
+- **`[PARSER]`**: High-level parsing operations  
+- **`[EARLEY]`**: Detailed Earley algorithm steps (trace mode)
+
+### Parse Failure Analysis
+
+When parsing fails, the debug system automatically provides:
+- Input position where parsing stopped
+- Context around the failure point
+- Expected vs actual characters
+- Grammar content that was being processed
+
+### Implementation Notes for Developers
+
+The debug infrastructure is centralized in `src/debug.rs`:
+
+- **`DebugLevel`**: Enum controlling output verbosity
+- **Debug macros**: `debug_basic!()`, `debug_detailed!()`, `debug_trace!()`
+- **Component-specific macros**: `debug_grammar!()`, `debug_parser!()`, `debug_earley!()`
+- **Failure analysis**: `debug_parse_failure()` for detailed error context
+
+Key benefits:
+- No scattered `println!` or `eprintln!` statements throughout codebase
+- Debug levels controlled centrally without conditional bloat in main code
+- Easy to add new debugging without changing existing code structure
+- Perfect for Claude Code workflows - no temporary files needed for quick testing
+
+### Future Debugging Enhancements (Phase 2)
+
+Planned advanced debugging features:
+- HTML trace viewer for step-by-step parse visualization
+- Earley chart state visualization
+- Parse tree diff viewer for comparing expected vs actual results
+- Interactive parser stepper for debugging complex failures
+- Export capabilities (JSON/GraphViz) for external analysis tools
 
 # Future work
 

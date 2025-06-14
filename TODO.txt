@@ -10,13 +10,38 @@
 
 ## Bootstrap Implementation TODOs
 
-- [ ] Fix character range parsing in bootstrap tree processing (src/ixml_bootstrap.rs:428) #HIGH
-  - Bug: `["a"-"z"]` ranges not parsed correctly in `ixml_ruleappend()` 
-  - Current: only handles simple string character classes
-  - Needed: parse `range` elements with `from`/`to` attributes to create Range matchers
-  - Exposed by: SmokeElem test failure comparing parsed vs hand-coded grammars
+- [x] Fix character range parsing in bootstrap tree processing (src/grammar.rs:227-271) #HIGH
+  - Bug: `["a"-"z"]` ranges not parsed correctly in tree processing
+  - Fixed: Updated `inclusion` and `exclusion` handlers to process child `member` elements
+  - Fixed: Added support for `from`/`to` attributes to create Range matchers
+  - Fixed: SmokeElem test now passes with character range parsing working correctly
 - [ ] Implement comment parsing: `{...}` nested comment syntax (src/ixml_bootstrap.rs:38)
 - [ ] Add prolog/version support: Grammar versioning with `ixml version "1.0"` (src/ixml_bootstrap.rs:44)
 - [ ] Complete Unicode character class support (src/ixml_bootstrap.rs:24,98)
 - [ ] Implement insertion syntax: `+` insertion for literal text (src/ixml_bootstrap.rs:247)
 - [x] Improve character handling: proper line break exclusion, quote doubling (src/ixml_bootstrap.rs:164,169)
+- [x] Fix missing 'alt' element handler in grammar tree processing (src/grammar.rs:209-214)
+  - Bug: `("+" | "-")` style nested alternations caused panic with "unknown element alt child of <alt>"
+  - Fixed: Added handler for individual `alt` elements in `append_factor_from_tree` function
+- [x] Fix mute mark preservation during tree processing (src/grammar.rs:217-295) #HIGH
+  - Bug: Mute marks (`-`) on terminals and nonterminals not preserved when parsing ixml grammars
+  - Issue: `Terminal(Default, ...)` generated instead of `Terminal(Mute, ...)` for `-":"` literals
+  - Issue: `Nonterm(Default, "b")` generated instead of `Nonterm(Mute, "b")` for `-b` nonterminals  
+  - Fixed: Added mark attribute extraction for `literal` and `nonterminal` elements in `append_factor_from_tree`
+  - Fixed: SmokeMute test now passes with proper mute mark handling
+
+## Enhanced Debugging & Transparency
+
+### Phase 1: CLI & Logging (In Progress)
+- [x] Add cmd_test for inline string grammar/input testing
+- [x] Add --verbose levels to cmd_parse command 
+- [x] Create centralized debug logging module with structured levels
+- [ ] Enhance Earley parser logging with key decision points
+- [ ] Add grammar tree processing debug output
+
+### Phase 2: Visual Debugging (Future)
+- [ ] HTML trace viewer for step-by-step parse visualization
+- [ ] Earley chart state visualization 
+- [ ] Parse tree diff viewer for comparing expected vs actual
+- [ ] Interactive parser stepper (step through one operation at a time)
+- [ ] Export parse states to JSON/GraphViz formats

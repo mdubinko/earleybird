@@ -1,4 +1,4 @@
-use crate::{grammar::{Grammar, Mark, TMark, Lit, RuleContext}, parser::{ParseError, Parser}};
+use crate::grammar::{Grammar, Mark, TMark, Lit, RuleContext};
 
 /// Bootstrap ixml grammar; hand-coded definition
 pub fn ixml_grammar() -> Grammar {
@@ -336,7 +336,8 @@ insertion: -"+", s, (string; -"#", hex), s.
 
 
 #[test]
-fn parse_ixml() -> Result<(), ParseError> {
+fn parse_ixml() -> Result<(), crate::parser::ParseError> {
+    use crate::parser::Parser;
     let g = ixml_grammar();
     println!("{}", &g);
     let ixml: &str = r#"doc = "A", "B"."#;
@@ -361,7 +362,7 @@ fn parse_ixml() -> Result<(), ParseError> {
 }
 
 #[test]
-fn test_ixml_str_to_grammar() -> Result<(), ParseError> {
+fn test_ixml_str_to_grammar() -> Result<(), crate::parser::ParseError> {
     let ixml: &str = r#"doc = "A", "B"."#;
     let grammar = &Grammar::from_ixml_str(ixml);
     assert!(grammar.is_ok());

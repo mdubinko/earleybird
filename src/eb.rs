@@ -1,6 +1,7 @@
 use argh::FromArgs;
 mod cmd_parse;
 mod cmd_suite;
+mod cmd_test;
 
 #[derive(FromArgs)]
 /// An experimental ixml implementation in Rust
@@ -15,6 +16,7 @@ struct Args {
 enum Subcommand {
     Parse(cmd_parse::Parse),
     Suite(cmd_suite::RunSuite),
+    Test(cmd_test::Test),
 }
 
 impl Subcommand {
@@ -22,6 +24,7 @@ impl Subcommand {
         match self {
             Subcommand::Parse(cmd) => cmd.run(),
             Subcommand::Suite(cmd) => cmd.run(),
+            Subcommand::Test(cmd) => cmd.run(),
         }
     }
 }

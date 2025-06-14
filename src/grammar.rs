@@ -26,7 +26,7 @@
 //! This module includes an ergonomic interface for building grammars by hand,
 //! or from the output of upstream processes (including ixml parsing!)
 
-use std::{fmt, collections::HashMap, cell::Cell};
+use std::{fmt, collections::HashMap, cell::Cell, rc::Rc};
 use smol_str::SmolStr;
 use indextree::{Arena, NodeId};
 use crate::{parser::DotNotation, unicode_ranges::UnicodeRange};
@@ -121,6 +121,8 @@ impl Grammar {
         
         let mut ixml_parser = Parser::new(ixml_grammar());
         let ixml_arena = ixml_parser.parse(ixml.trim())?;
+        
+        
         let grammar = Grammar::from_parse_tree(&ixml_arena)?;
         Ok(grammar)
     }
@@ -178,7 +180,7 @@ impl Grammar {
     }
 
     /// Helper function: Construct a sequence from parse tree node
-    fn build_sequence_from_tree<'a>(node: NodeId, arena: &'a Arena<crate::parser::Content>, ctx: &'a RuleContext) -> SeqBuilder<'a> {
+    fn build_sequence_from_tree(node: NodeId, arena: &Arena<crate::parser::Content>, ctx: &Rc<RuleContext>) -> SeqBuilder {
         use crate::parser::Parser;
         
         let mut seq = ctx.seq();
@@ -189,7 +191,7 @@ impl Grammar {
     }
 
     /// Helper function: Add factors to sequence from parse tree
-    fn append_factor_from_tree<'a>(mut seq: SeqBuilder<'a>, name: &str, nid: NodeId, arena: &'a Arena<crate::parser::Content>, ctx: &'a RuleContext) -> SeqBuilder<'a> {
+    fn append_factor_from_tree(mut seq: SeqBuilder, name: &str, nid: NodeId, arena: &Arena<crate::parser::Content>, ctx: &Rc<RuleContext>) -> SeqBuilder {
         use crate::parser::Parser;
         
         let attrs = Parser::get_attributes(arena, nid);
@@ -201,33 +203,98 @@ impl Grammar {
                     seq = Grammar::append_factor_from_tree(seq, "alt", alt_elements[0], arena, ctx);
                 } else {
                     let altrules: Vec<SeqBuilder> = alt_elements.iter()
-                        .map(|n| Grammar::build_sequence_from_tree(*n, arena, &ctx))
+                        .map(|n| Grammar::build_sequence_from_tree(*n, arena, ctx))
                         .collect();
                     seq = seq.alts(altrules);
                 }
             }
+            "alt" => {
+                // Handle individual alt elements by processing their contents as a sequence
+                for (child_name, child_nid) in Parser::get_child_elements(arena, nid) {
+                    seq = Grammar::append_factor_from_tree(seq, &child_name, child_nid, arena, ctx);
+                }
+            }
             "literal" => {
-                seq = seq.ch(attrs["string"].chars().next().expect("no empty string literals"));
+                let tmark = match attrs.get("mark").map(|s| s.as_str()) {
+                    Some("^") => TMark::Unmute,
+                    Some("-") => TMark::Mute,
+                    _ => TMark::Default,
+                };
+                seq = seq.mark_ch(attrs["string"].chars().next().expect("no empty string literals"), tmark);
             }
             "inclusion" => {
-                // character classes - basic implementation for simple character sets
-                // TODO: handle full Unicode ranges and complex sets
+                let tmark = match attrs.get("tmark").map(|s| s.as_str()) {
+                    Some("^") => TMark::Unmute,
+                    Some("-") => TMark::Mute,
+                    _ => TMark::Default,
+                };
+                // character classes - handle both string attributes and child member elements
                 if let Some(string_attr) = attrs.get("string") {
-                    seq = seq.ch_in(string_attr);
+                    // Simple string character class like ["abc"]
+                    seq = seq.mark_ch_in(string_attr, tmark);
+                } else {
+                    // Process child member elements for ranges and other complex patterns
+                    let mut lit_builder = Lit::union();
+                    for (child_name, child_nid) in Parser::get_child_elements(arena, nid) {
+                        if child_name == "member" {
+                            let member_attrs = Parser::get_attributes(arena, child_nid);
+                            if let (Some(from), Some(to)) = (member_attrs.get("from"), member_attrs.get("to")) {
+                                // Character range like ["a"-"z"]
+                                let from_char = from.chars().next().expect("from attribute should have at least one character");
+                                let to_char = to.chars().next().expect("to attribute should have at least one character");
+                                lit_builder = lit_builder.ch_range(from_char, to_char);
+                            } else if let Some(string_attr) = member_attrs.get("string") {
+                                // Simple string member like ["abc"]
+                                lit_builder = lit_builder.ch_in(string_attr);
+                            }
+                            // TODO: handle hex members and class members
+                        }
+                    }
+                    seq = seq.mark_lit(lit_builder, tmark);
                 }
             }
             "exclusion" => {
-                // character classes - basic implementation for simple character sets  
-                // TODO: handle full Unicode ranges and complex sets
+                let tmark = match attrs.get("tmark").map(|s| s.as_str()) {
+                    Some("^") => TMark::Unmute,
+                    Some("-") => TMark::Mute,
+                    _ => TMark::Default,
+                };
+                // character classes - handle both string attributes and child member elements
                 if let Some(string_attr) = attrs.get("string") {
-                    seq = seq.lit(Lit::union().exclude().ch_in(string_attr));
+                    // Simple string character class like ~["abc"]
+                    seq = seq.mark_lit(Lit::union().exclude().ch_in(string_attr), tmark);
+                } else {
+                    // Process child member elements for ranges and other complex patterns
+                    let mut lit_builder = Lit::union().exclude();
+                    for (child_name, child_nid) in Parser::get_child_elements(arena, nid) {
+                        if child_name == "member" {
+                            let member_attrs = Parser::get_attributes(arena, child_nid);
+                            if let (Some(from), Some(to)) = (member_attrs.get("from"), member_attrs.get("to")) {
+                                // Character range like ~["a"-"z"]
+                                let from_char = from.chars().next().expect("from attribute should have at least one character");
+                                let to_char = to.chars().next().expect("to attribute should have at least one character");
+                                lit_builder = lit_builder.ch_range(from_char, to_char);
+                            } else if let Some(string_attr) = member_attrs.get("string") {
+                                // Simple string member like ~["abc"]
+                                lit_builder = lit_builder.ch_in(string_attr);
+                            }
+                            // TODO: handle hex members and class members
+                        }
+                    }
+                    seq = seq.mark_lit(lit_builder, tmark);
                 }
             }
             "nonterminal" => {
-                seq = seq.nt(&attrs["name"]);
+                let mark = match attrs.get("mark").map(|s| s.as_str()) {
+                    Some("@") => Mark::Attr,
+                    Some("-") => Mark::Mute,
+                    Some("^") => Mark::Unmute,
+                    _ => Mark::Default,
+                };
+                seq = seq.mark_nt(&attrs["name"], mark);
             }
             "option" => {
-                let subexpr = Grammar::build_sequence_from_tree(nid, arena, &ctx);
+                let subexpr = Grammar::build_sequence_from_tree(nid, arena, ctx);
                 seq = seq.opt(subexpr);
             }
             "repeat0" => {
@@ -241,7 +308,7 @@ impl Grammar {
                 // if a <sep> child exists, this is a ** rule, otherwise just *
                 if let Some(sep) = children.get(1) {
                     assert_eq!(sep.0, "sep");
-                    let separated_by = Grammar::build_sequence_from_tree(sep.1, arena, &ctx);
+                    let separated_by = Grammar::build_sequence_from_tree(sep.1, arena, ctx);
                     seq = seq.repeat0_sep(repeat_this, separated_by)
                 } else {
                     seq = seq.repeat0(repeat_this);
@@ -258,7 +325,7 @@ impl Grammar {
                 // if a <sep> child exists, this is a ++ rule, otherwise just +
                 if let Some(sep) = children.get(1) {
                     assert_eq!(sep.0, "sep");
-                    let separated_by = Grammar::build_sequence_from_tree(sep.1, arena, &ctx);
+                    let separated_by = Grammar::build_sequence_from_tree(sep.1, arena, ctx);
                     seq = seq.repeat1_sep(repeat_this, separated_by)
                 } else {
                     seq = seq.repeat1(repeat_this);
@@ -586,12 +653,12 @@ pub struct RuleContext {
 }
 
 impl RuleContext {
-    pub fn new(rulename: &str) -> Self {
-        RuleContext { rulename: rulename.to_string(), next_id: Cell::new(1) }
+    pub fn new(rulename: &str) -> Rc<Self> {
+        Rc::new(RuleContext { rulename: rulename.to_string(), next_id: Cell::new(1) })
     }
 
-    pub fn seq(&self) -> SeqBuilder {
-        SeqBuilder::new(self)
+    pub fn seq(self: &Rc<Self>) -> SeqBuilder {
+        SeqBuilder::new(self.clone())
     }
 
     /// NOT threadsafe. Note interior mutability
@@ -610,21 +677,21 @@ impl RuleContext {
 /// build rules in an ergonomic and efficient fashion
 /// this format is explicitly accepted (merged) by `grammar.add_rule`
 #[derive(Debug, Clone)]
-pub struct SeqBuilder<'a> {
+pub struct SeqBuilder {
     /// the "main" TermList being built here
     factors: Vec<Factor>,
 
     /// in the course of building a rule, we may end up synthesizing additional rules.
     /// These need to eventually get added into the resulting grammar
-    syn_rules: HashMap<SmolStr, Vec<SeqBuilder<'a>>>,
+    syn_rules: HashMap<SmolStr, Vec<SeqBuilder>>,
     defn_order: Vec<SmolStr>,
 
-    context: &'a RuleContext,
+    context: Rc<RuleContext>,
 }
 
-impl<'a> SeqBuilder<'a> {
+impl SeqBuilder {
 
-    fn new(context: &'a RuleContext) -> Self {
+    fn new(context: Rc<RuleContext>) -> Self {
         Self { factors: Vec::new(), syn_rules: HashMap::new(), defn_order: Vec::new(), context }
     }
 
@@ -814,7 +881,7 @@ impl<'a> SeqBuilder<'a> {
     ///     ]})
     ///     .ch('}')
     /// );
-    pub fn alts(mut self, exprs: Vec<SeqBuilder<'a>>) -> Self {
+    pub fn alts(mut self, exprs: Vec<SeqBuilder>) -> Self {
         // create new rule f_opt
         let f_opt = &self.mint_internal_id("f-opt");
         for expr in exprs {
