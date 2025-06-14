@@ -1,7 +1,7 @@
 use std::ffi::OsString;
 use std::fs;
 use argh::FromArgs;
-use earleybird::{grammar::Grammar, parser::Parser, debug::{DebugLevel, set_debug_level}};
+use earleybird::{grammar::Grammar, parser::Parser, debug::DebugLevel};
 use earleybird::{debug_basic, debug_detailed};
 
 #[derive(FromArgs)]
@@ -23,11 +23,15 @@ pub struct Parse {
     /// verbosity level: off, basic, detailed, trace
     #[argh(option, short = 'v', default = "default_verbose()")]
     verbose: String,
+
+    /// debug only at specific input position (for trace mode)
+    #[argh(option, long = "debug-pos")]
+    debug_pos: Option<usize>,
 }
 
 impl Parse {
     pub fn run(self) {
-        // Set up debug level
+        // Set up debug configuration
         let debug_level = match DebugLevel::from_str(&self.verbose) {
             Ok(level) => level,
             Err(e) => {
@@ -35,7 +39,12 @@ impl Parse {
                 std::process::exit(1);
             }
         };
-        set_debug_level(debug_level);
+        let debug_config = earleybird::debug::DebugConfig {
+            level: debug_level,
+            position_filter: self.debug_pos,
+            failure_only: false,
+        };
+        earleybird::debug::set_debug_config(debug_config);
 
         debug_basic!("=== {} DEBUG MODE ===", self.verbose.to_uppercase());
         debug_basic!("Grammar file: {:?}", self.grammar);

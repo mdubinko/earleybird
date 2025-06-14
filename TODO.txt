@@ -36,7 +36,7 @@
 - [x] Add cmd_test for inline string grammar/input testing
 - [x] Add --verbose levels to cmd_parse command 
 - [x] Create centralized debug logging module with structured levels
-- [ ] Enhance Earley parser logging with key decision points
+- [x] Enhance Earley parser logging with key decision points
 - [ ] Add grammar tree processing debug output
 
 ### Phase 2: Visual Debugging (Future)

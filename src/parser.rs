@@ -1,4 +1,6 @@
 use crate::grammar::{Grammar, Rule, Factor, TMark, Mark};
+use crate::debug::DebugLevel;
+use crate::{debug_earley_pos, debug_earley_fail};
 use std::{collections::{VecDeque, HashSet, HashMap}, fmt};
 use multimap::MultiMap;
 use smol_str::SmolStr;
@@ -389,6 +391,7 @@ impl Parser {
             // task in completed state?
             if is_completed {
                 debug!("COMPLETER pos={}", current_pos);
+                debug_earley_pos!(DebugLevel::Trace, current_pos, "COMPLETER: {} completed", self.traces.format_task(tid));
                 self.completed_trace.push(tid);
 
                 // find “parent” states at same origin that can produce this expr;
@@ -426,6 +429,7 @@ impl Parser {
                 Factor::Nonterm(mark, name) => {
                     // go one level deeper
                     debug!("PREDICTOR: Nonterm {mark}{name}");
+                    debug_earley_pos!(DebugLevel::Trace, current_pos, "PREDICTOR: {} predicting {}{}", self.traces.format_task(tid), mark, name);
 
                     self.traces.save_continuation(&name, tid);
 
@@ -455,14 +459,17 @@ impl Parser {
                 Factor::Terminal(tmark, matcher) => {
                     // record terminal
                     debug!("SCANNER: Terminal {tmark}{matcher} at pos={current_pos}");
+                    debug_earley_pos!(DebugLevel::Trace, current_pos, "SCANNER: {} scanning {}{}", self.traces.format_task(tid), tmark, matcher);
                     if matcher.accept(input.get_at(current_pos)) {
                         // Match!
                         let rec = MatchRec::Term(input.get_at(current_pos), current_pos + 1, tmark);
                         debug!("advance cursor SCAN");
+                        debug_earley_pos!(DebugLevel::Trace, current_pos, "SCANNER: MATCH '{}' -> advance to {}", input.get_at(current_pos), current_pos + 1);
                         let maybe_id = self.traces.task_advance_cursor(tid, rec);
                         self.queue_back(maybe_id);
                     } else {
                         debug!("non-matched char '{}' (expecting {matcher}); 🛑", input.get_at(current_pos));
+                        debug_earley_fail!(current_pos, &format!("{}", matcher), input.get_at(current_pos));
                     }
                 }
             }
