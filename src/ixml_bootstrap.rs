@@ -1,7 +1,7 @@
 use crate::grammar::{Grammar, Mark, TMark, Lit, RuleContext};
 
 /// Bootstrap ixml grammar; hand-coded definition
-pub fn ixml_grammar() -> Grammar {
+pub fn bootstrap_ixml_grammar() -> Grammar {
     let mut g = Grammar::new();
 
     // ixml: s, prolog?, rule++RS, s.
@@ -332,41 +332,3 @@ member: string;
 -letter: ["a"-"z"].
 insertion: -"+", s, (string; -"#", hex), s.
 */
-
-
-
-#[test]
-fn parse_ixml() -> Result<(), crate::parser::ParseError> {
-    use crate::parser::Parser;
-    let g = ixml_grammar();
-    println!("{}", &g);
-    let ixml: &str = r#"doc = "A", "B"."#;
-    //                  012345678901234
-    let mut parser = Parser::new(g);
-    let arena = parser.parse(ixml)?;
-    let result = Parser::tree_to_test_format(&arena);
-    let expected = r#"<ixml><rule name="doc"><alt><literal string="A"></literal><literal string="B"></literal></alt></rule></ixml>"#;
-    assert_eq!(result, expected);
-
-    println!("=============");
-    let gen_grammar = Grammar::from_parse_tree(&arena)?;
-    println!("{gen_grammar}");
-    let mut gen_parser = Parser::new(gen_grammar);
-    // now do a second pass, with the just-generated grammar
-    let input2 = "AB";
-    let gen_arena = gen_parser.parse(input2)?;
-    let result2 = Parser::tree_to_test_format(&gen_arena);
-    let expected2 = "<doc>AB</doc>";
-    assert_eq!(result2, expected2);
-    Ok(())
-}
-
-#[test]
-fn test_ixml_str_to_grammar() -> Result<(), crate::parser::ParseError> {
-    let ixml: &str = r#"doc = "A", "B"."#;
-    let grammar = &Grammar::from_ixml_str(ixml);
-    assert!(grammar.is_ok());
-    assert_eq!(grammar.as_ref().unwrap().get_rule_count(), 1);
-    assert_eq!(grammar.as_ref().unwrap().get_root_definition_name(), Some(String::from("doc")));
-    Ok(())
-}

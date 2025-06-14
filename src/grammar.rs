@@ -29,8 +29,8 @@
 use std::{fmt, collections::HashMap, cell::Cell, rc::Rc};
 use smol_str::SmolStr;
 use indextree::{Arena, NodeId};
-use crate::{parser::DotNotation, unicode_ranges::UnicodeRange};
-
+use crate::{parser::{Parser, DotNotation}, unicode_ranges::UnicodeRange};
+use crate::{ixml_bootstrap::bootstrap_ixml_grammar};
 // TODO: Optimization: add CharMatchers at the Grammar level
 
 /// the primary owner of all grammar data structures
@@ -116,12 +116,9 @@ impl Grammar {
     }
 
     /// Parse an iXML grammar string and construct a Grammar
-    pub fn from_ixml_str(ixml: &str) -> Result<Grammar, crate::parser::ParseError> {
-        use crate::{ixml_bootstrap::ixml_grammar, parser::Parser};
-        
-        let mut ixml_parser = Parser::new(ixml_grammar());
+    pub fn from_ixml_str(ixml: &str) -> Result<Grammar, crate::parser::ParseError> {        
+        let mut ixml_parser = Parser::new(bootstrap_ixml_grammar());
         let ixml_arena = ixml_parser.parse(ixml.trim())?;
-        
         
         let grammar = Grammar::from_parse_tree(&ixml_arena)?;
         Ok(grammar)
@@ -474,7 +471,7 @@ impl Rule {
         self.factors.len()
     }
 
-    pub fn dot_notator(&self) -> crate::parser::DotNotation {
+    pub fn dot_notator(&self) -> DotNotation {
         DotNotation::new(self)
     }
 
@@ -903,3 +900,39 @@ impl SeqBuilder {
 
 }
 
+
+
+#[test]
+fn parse_ixml() -> Result<(), crate::parser::ParseError> {
+    let g = bootstrap_ixml_grammar();
+    println!("{}", &g);
+    let ixml: &str = r#"doc = "A", "B"."#;
+    //                    012345678901234
+    let mut parser = Parser::new(g);
+    let arena = parser.parse(ixml)?;
+    let result = Parser::tree_to_test_format(&arena);
+    let expected = r#"<ixml><rule name="doc"><alt><literal string="A"></literal><literal string="B"></literal></alt></rule></ixml>"#;
+    assert_eq!(result, expected);
+
+    println!("=============");
+    let gen_grammar = Grammar::from_parse_tree(&arena)?;
+    println!("{gen_grammar}");
+    let mut gen_parser = Parser::new(gen_grammar);
+    // now do a second pass, with the just-generated grammar
+    let input2 = "AB";
+    let gen_arena = gen_parser.parse(input2)?;
+    let result2 = Parser::tree_to_test_format(&gen_arena);
+    let expected2 = "<doc>AB</doc>";
+    assert_eq!(result2, expected2);
+    Ok(())
+}
+
+#[test]
+fn test_ixml_str_to_grammar() -> Result<(), crate::parser::ParseError> {
+    let ixml: &str = r#"doc = "A", "B"."#;
+    let grammar = &Grammar::from_ixml_str(ixml);
+    assert!(grammar.is_ok());
+    assert_eq!(grammar.as_ref().unwrap().get_rule_count(), 1);
+    assert_eq!(grammar.as_ref().unwrap().get_root_definition_name(), Some(String::from("doc")));
+    Ok(())
+}
