@@ -27,6 +27,10 @@ pub struct Parse {
     /// debug only at specific input position (for trace mode)
     #[argh(option, long = "debug-pos")]
     debug_pos: Option<usize>,
+
+    /// write trace output to file instead of stdout
+    #[argh(option, long = "trace-file")]
+    trace_file: Option<String>,
 }
 
 impl Parse {
@@ -43,6 +47,7 @@ impl Parse {
             level: debug_level,
             position_filter: self.debug_pos,
             failure_only: false,
+            trace_file: self.trace_file.clone(),
         };
         earleybird::debug::set_debug_config(debug_config);
 

@@ -47,6 +47,17 @@ pub enum TestResult {
     AssertXml(XmlString),
 }
 
+#[derive(Clone, Debug)]
+pub enum TestOutcome {
+    Pass,
+    Fail { expected: String, actual: String },
+    GrammarParseError(String),
+    InputParseError(String), 
+    Panic(String),
+    Skip(String),
+    Todo(String),
+}
+
 struct TestCaseBuilder {
     pub name: Option<String>,
     pub grammar: Vec<TestGrammar>,
@@ -118,6 +129,11 @@ r##"<test-catalog xmlns='https://github.com/invisibleXML/ixml/test-catalog'>
 
 /// Read test catalog, handling test-set-ref elements by recursively loading referenced catalogs
 pub fn read_test_catalog(path: String) -> Vec<TestCase> {
+    read_test_catalog_with_prefix(path, None)
+}
+
+/// Helper function that includes directory prefix in test names
+fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Vec<TestCase> {
     let pathbuf = PathBuf::from(&path);
     let basepath = pathbuf.parent().unwrap();
     let file = fs::read_to_string(&path).expect("The file could not be read");
@@ -170,8 +186,20 @@ pub fn read_test_catalog(path: String) -> Vec<TestCase> {
                     b"test-case" => {
                         let name = attr_by_name(&e.attributes(), "name");
                         builder = TestCaseBuilder::new();
-                        let mut fullname = test_set_nesting.join("/");
-                        fullname.push('/');
+                        let mut fullname = String::new();
+                        
+                        // Add directory prefix if present
+                        if let Some(ref prefix) = dir_prefix {
+                            fullname.push_str(prefix);
+                            fullname.push('/');
+                        }
+                        
+                        // Add test-set nesting
+                        if !test_set_nesting.is_empty() {
+                            fullname.push_str(&test_set_nesting.join("/"));
+                            fullname.push('/');
+                        }
+                        
                         fullname.push_str(&name);
                         builder.name = Some(fullname);
                         builder.grammar.push(TestGrammar::Unparsed(current_grammar.clone()));
@@ -182,9 +210,20 @@ pub fn read_test_catalog(path: String) -> Vec<TestCase> {
                     b"test-set-ref" => {
                         let href = attr_by_name(&e.attributes(), "href");
                         let mut fullpath = basepath.to_path_buf();
-                        fullpath.push(href);
-                        // Recursively load the referenced catalog
-                        let mut referenced_tests = read_test_catalog(fullpath.to_string_lossy().to_string());
+                        fullpath.push(&href);
+                        
+                        // Extract directory name as prefix for test names
+                        let href_path = PathBuf::from(&href);
+                        let dir_name = href_path.parent()
+                            .and_then(|p| p.file_name())
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown");
+                        
+                        // Recursively load the referenced catalog with directory prefix
+                        let mut referenced_tests = read_test_catalog_with_prefix(
+                            fullpath.to_string_lossy().to_string(), 
+                            Some(dir_name.to_string())
+                        );
                         test_cases.append(&mut referenced_tests);
                     },
                     b"test-string" => {

@@ -345,6 +345,7 @@ pub struct Parser {
     traces: TraceArena,
     completed_trace: Vec<TraceId>,
     farthest_pos: usize,  // hint for later reading the trace
+    input_length: usize,  // total length of input to ensure complete consumption
 }
 
 /// Earley parser
@@ -356,12 +357,14 @@ impl Parser {
             traces: TraceArena::new(),
             completed_trace: Vec::new(),
             farthest_pos: 0,
+            input_length: 0,
         }
     }
 
     /// Successful return value is an indextree over Content. Consider this temporary
     pub fn parse(&mut self, input: &str) -> Result<Arena<Content>, ParseError> {
         let mut input = InputIter::new(input);
+        self.input_length = input.tokens.len();
 
         // help avoid borrow-contention on *self
         let g = self.grammar.clone();
@@ -518,14 +521,28 @@ impl Parser {
 
     fn unpack_parse_tree(&mut self) -> Result<Arena<Content>, ParseError> {
         debug!("TRACE...");
+        debug!("COMPLETED TASKS ({} total):", self.completed_trace.len());
         for tid in &self.completed_trace {
-            debug!("{}", self.traces.format_task(*tid));
+            let task = self.traces.get(*tid);
+            debug!("  {} (origin={}, pos={})", self.traces.format_task(*tid), task.origin, task.pos);
         }
+        
+        // Check if we have a completed parse of our grammar's root rule that spans the entire input
+        let name = self.grammar.get_root_definition_name().unwrap();
+        let root_completion = self.filter_completed_trace(&name, 0, self.input_length);
+        
+        if root_completion.is_none() {
+            return Err(ParseError::static_err(&format!(
+                "Parse failed: no completed parse of rule '{}' spanning entire input (0 to {})", 
+                name, 
+                self.input_length
+            )));
+        }
+        
         let mut arena = Arena::new();
         let root = arena.new_node(Content::Root);
-        debug!("assuming ending pos of {}", self.farthest_pos);
-        let name = self.grammar.get_root_definition_name().unwrap();
-        self.unpack_parse_tree_internal(&mut arena, &name, Mark::Default, 0, self.farthest_pos, root);
+        debug!("Found completed parse of '{}' from 0 to {}", name, self.input_length);
+        self.unpack_parse_tree_internal(&mut arena, &name, Mark::Default, 0, self.input_length, root);
 
         // the standard algorithm above leaves attribute nodes in an inconvenient state.
         // with a bare Content::Attribute node, for which one needs to plumb all descendants to find text nodes

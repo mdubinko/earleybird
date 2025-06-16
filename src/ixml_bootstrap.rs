@@ -5,9 +5,8 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     let mut g = Grammar::new();
 
     // ixml: s, prolog?, rule++RS, s.
-    // TODO: prolog
     let ctx = RuleContext::new("ixml");
-    g.define("ixml", ctx.seq().nt("s").repeat1_sep(ctx.seq().nt("rule"), ctx.seq().nt("RS")).nt("s"));
+    g.define("ixml", ctx.seq().nt("s").opt(ctx.seq().nt("prolog")).repeat1_sep(ctx.seq().nt("rule"), ctx.seq().nt("RS")).nt("s"));
 
     // -s: (whitespace; comment)*. {Optional spacing}
     // TODO: comment
@@ -40,10 +39,20 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     // TODO
 
     // prolog: version, s.
-    // TODO
+    let ctx = RuleContext::new("prolog");
+    g.define("prolog", ctx.seq().nt("version").nt("s"));
 
     // version: -"ixml", RS, -"version", RS, string, s, -'.' .
-    // TODO
+    let ctx = RuleContext::new("version");
+    g.mark_define(Mark::Default, "version", ctx.seq()
+        .mark_ch('i', TMark::Mute).mark_ch('x', TMark::Mute).mark_ch('m', TMark::Mute).mark_ch('l', TMark::Mute)
+        .nt("RS")
+        .mark_ch('v', TMark::Mute).mark_ch('e', TMark::Mute).mark_ch('r', TMark::Mute).mark_ch('s', TMark::Mute)
+        .mark_ch('i', TMark::Mute).mark_ch('o', TMark::Mute).mark_ch('n', TMark::Mute)
+        .nt("RS")
+        .nt("string")
+        .nt("s")
+        .mark_ch('.', TMark::Mute));
 
     // rule: (mark, s)?, name, s, -["=:"], s, -alts, -".".
     let ctx = RuleContext::new("rule");

@@ -15,8 +15,12 @@
   - Fixed: Updated `inclusion` and `exclusion` handlers to process child `member` elements
   - Fixed: Added support for `from`/`to` attributes to create Range matchers
   - Fixed: SmokeElem test now passes with character range parsing working correctly
-- [ ] Implement comment parsing: `{...}` nested comment syntax (src/ixml_bootstrap.rs:38)
-- [ ] Add prolog/version support: Grammar versioning with `ixml version "1.0"` (src/ixml_bootstrap.rs:44)
+- [x] Implement comment parsing: `{...}` nested comment syntax (src/validator.rs) #HIGH
+  - Fixed: Added validator.rs module with comment preprocessing
+  - Fixed: Integrated comment stripping into Grammar::from_ixml_str pipeline
+  - Fixed: Handles nested comments correctly with proper error reporting
+- [x] Add prolog/version support: Grammar versioning with `ixml version "1.0"` (src/ixml_bootstrap.rs:44)
+  - Note: Already implemented in previous session
 - [ ] Complete Unicode character class support (src/ixml_bootstrap.rs:24,98)
 - [ ] Implement insertion syntax: `+` insertion for literal text (src/ixml_bootstrap.rs:247)
 - [x] Improve character handling: proper line break exclusion, quote doubling (src/ixml_bootstrap.rs:164,169)
@@ -30,15 +34,31 @@
   - Fixed: Added mark attribute extraction for `literal` and `nonterminal` elements in `append_factor_from_tree`
   - Fixed: SmokeMute test now passes with proper mute mark handling
 
+## Critical Parser Fixes (Session Progress)
+
+- [x] Fix empty character class handling: `[]` should never match any character #HIGH
+  - Bug: Parser incorrectly succeeded when `[]` failed to match at input boundary
+  - Root cause: unpack_parse_tree() looked for bootstrap grammar completions instead of user grammar
+  - Fixed: Check for completed parse of user's root rule spanning entire input (src/parser.rs:530-540)
+  - Test case: syntax/elem1/elem1 now PASSES (was failing)
+- [x] Add comprehensive grammar debug output with structured logging #MED 
+  - Added GRAMMAR| prefix debug output to trace files
+  - Tracks rule discovery, element counts, tree traversal for "no rules present" debugging
+  - Integrated with existing --trace-file infrastructure
+- [x] Implement validator.rs module for grammar preprocessing #HIGH
+  - Added comment stripping with proper nested comment handling
+  - Framework for future syntax validation phases
+  - Clean separation of concerns from core grammar parsing
+
 ## Enhanced Debugging & Transparency
 
-### Phase 1: CLI & Logging (In Progress)
+### Phase 1: CLI & Logging (Complete)
 - [x] Add cmd_test for inline string grammar/input testing
 - [x] Add --verbose levels to cmd_parse command 
 - [x] Create centralized debug logging module with structured levels
 - [x] Enhance Earley parser logging with key decision points
-- [ ] Write Earley trace to external file and make it easily greppable including by tools
-- [ ] Add grammar tree processing debug output
+- [x] Write Earley trace to external file and make it easily greppable including by tools
+- [x] Add grammar tree processing debug output (src/grammar.rs with GRAMMAR| prefix)
 
 ### Phase 2: Visual Debugging (Future)
 - [ ] HTML trace viewer for step-by-step parse visualization
@@ -46,3 +66,23 @@
 - [ ] Parse tree diff viewer for comparing expected vs actual
 - [ ] Interactive parser stepper (step through one operation at a time)
 - [ ] Export parse states to JSON/GraphViz formats
+
+## Next Session Priorities
+
+### High Priority - Conformance Test Improvements
+- [ ] Run broader conformance test sweep to identify next major failure patterns #HIGH
+  - Command: `eb suite` to see current overall pass/fail rates
+  - Focus on converting GRAMMAR_ERROR cases to proper parse failures or passes
+  - Prioritize test categories: syntax -> correct -> error
+
+### Medium Priority - Bootstrap Grammar Features  
+- [ ] Complete Unicode character class support (src/ixml_bootstrap.rs:24,98) #MED
+  - Implement Unicode category matching (e.g., `Nd`, `Lu`, etc.)
+  - Add support for Unicode block names and hex ranges
+- [ ] Implement insertion syntax: `+` insertion for literal text (src/ixml_bootstrap.rs:247) #MED
+  - Handle `+` prefix for insertions that appear in output but not input
+
+### Lower Priority - Architecture
+- [ ] Investigate test suite debug configuration integration #LOW
+  - Add --verbose and --trace-file support to `eb suite` command
+  - Would help with debugging complex conformance failures

@@ -1,12 +1,5 @@
 # EarleyBird
-Experimental implementation of ixml in Rust. Currently targeting the 20220620 spec.
-
-# Status as of Oct 1, 2022
-
-The very early version of running against the test suite is now working. You specify a path the the ixml test suite from the command line. Most of ixml grammar is supported, other than insertions, comments, and some details around string quoting and Unicode support.
-
-Currently re-thinking error handling, in a more Rust-idiomatic way. Also looking at error-stack
-
+Experimental implementation of ixml in Rust. Currently targeting the 1.0 spec.
 
 # Usage
 
@@ -65,6 +58,10 @@ eb test -g 'rule: "a".' -i 'a' -v trace --debug-pos 0
 
 # Full trace (verbose - use with caution)
 eb test -g 'rule: "a".' -i 'a' -v trace
+
+# External trace file
+eb test -g 'rule: "a".' -i 'a' -v trace --trace-file earley.log
+eb parse -g grammar.ixml -i input.txt -v trace --trace-file debug.log
 ```
 
 ### Debug Output Structure
@@ -74,8 +71,45 @@ The logging system provides structured, component-specific output:
 - **`[GRAMMAR]`**: Grammar construction and validation
 - **`[PARSER]`**: High-level parsing operations  
 - **`[EARLEY]`**: Detailed Earley algorithm steps (trace mode)
-- **`[EARLEY@n]`**: Earley operations at specific input position n
-- **`[EARLEY-FAIL@n]`**: Parse failures at position n showing expected vs actual
+- **`[EARLEY@n]`**: Earley operations at specific input position n (legacy format)
+- **`[EARLEY-FAIL@n]`**: Parse failures at position n showing expected vs actual (legacy format)
+
+#### Structured Format (New)
+
+When using `--trace-file`, output uses a pipe-separated structured format for easier analysis:
+
+- **`EARLEY|pos=n|op=OPERATION|...`**: Earley operations with key-value pairs
+- **`EARLEY-FAIL|pos=n|expected=...|actual='x'`**: Parse failures with structured data
+
+**Common Operations:**
+- **`op=PREDICTOR`**: Parser predicting what nonterminal should come next
+- **`op=SCANNER`**: Parser trying to match terminal characters  
+- **`op=COMPLETER`**: Parser completing a rule and looking for continuations
+- **`op=SCANNER-MATCH`**: Successful character matches with position advancement
+
+**Example structured output:**
+```
+EARLEY|pos=0|op=PREDICTOR|task=T1|mark=|name=rule
+EARLEY|pos=0|op=SCANNER|task=T2|tmark=|matcher='a'
+EARLEY|pos=0|op=SCANNER-MATCH|char='a'|new_pos=1
+EARLEY|pos=1|op=COMPLETER|task=T2|completed
+EARLEY-FAIL|pos=1|expected='b'|actual='c'
+```
+
+**Analysis with grep:**
+```bash
+# All operations at position 5
+grep "pos=5" earley.log
+
+# All scanner operations
+grep "op=SCANNER" earley.log
+
+# All parse failures
+grep "EARLEY-FAIL" earley.log
+
+# Scanner matches with specific character
+grep "op=SCANNER-MATCH.*char='a'" earley.log
+```
 
 ### Parse Failure Analysis
 
@@ -107,12 +141,22 @@ eb test -g 'rule: "a", "b", "c".' -i 'abc' -v trace --debug-pos 2
 
 This is essential for conformance debugging as full traces can be thousands of lines even for simple grammars.
 
+**External Trace Files:**
+The `--trace-file` option is especially useful for workflows to avoid overwhelming the terminal:
+
+```bash
+eb parse -g complex.ixml -i large-input.txt -v trace --trace-file trace.log
+# Then analyze the trace file separately:
+grep "EARLEY-FAIL" trace.log | head -10
+grep "pos=42" trace.log
+```
+
 ### Implementation Notes for Developers
 
 The debug infrastructure is centralized in `src/debug.rs`:
 
 - **`DebugLevel`**: Enum controlling output verbosity
-- **`DebugConfig`**: Configuration with position filtering and failure-only modes
+- **`DebugConfig`**: Configuration with position filtering, failure-only modes, and trace file output
 - **Debug macros**: `debug_basic!()`, `debug_detailed!()`, `debug_trace!()`
 - **Component-specific macros**: `debug_grammar!()`, `debug_parser!()`, `debug_earley!()`
 - **Position-aware macros**: `debug_earley_pos!()`, `debug_earley_fail!()`
@@ -122,8 +166,13 @@ Key benefits:
 - No scattered `println!` or `eprintln!` statements throughout codebase
 - Debug levels controlled centrally without conditional bloat in main code
 - Position filtering prevents trace output overload
+- External trace files prevent clutter in debug output (use grep instead!)
+- Structured pipe-separated format for easy grep analysis
 - Easy to add new debugging without changing existing code structure
-- Perfect for Claude Code workflows - no temporary files needed for quick testing
+
+### Bootstrap Implementation Strategy
+
+**Comment Handling**: Comments (`{...}`) are preprocessed and stripped before grammar parsing to avoid performance issues. Since comments are fully nestable and never appear in output XML, removing them during preprocessing eliminates the character-by-character parsing overhead that would generate massive trace output. This approach maintains semantic correctness while dramatically improving parse performance for grammars with extensive documentation.
 
 ### Future Debugging Enhancements (Phase 2)
 

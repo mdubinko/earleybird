@@ -1,4 +1,6 @@
 use std::sync::OnceLock;
+use std::fs::OpenOptions;
+use std::io::Write;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugLevel {
@@ -13,6 +15,7 @@ pub struct DebugConfig {
     pub level: DebugLevel,
     pub position_filter: Option<usize>,
     pub failure_only: bool,
+    pub trace_file: Option<String>,
 }
 
 impl DebugLevel {
@@ -43,6 +46,7 @@ pub fn set_debug_level(level: DebugLevel) {
         level,
         position_filter: None,
         failure_only: false,
+        trace_file: None,
     });
 }
 
@@ -52,11 +56,21 @@ pub fn set_debug_config(config: DebugConfig) {
     });
 }
 
+pub fn set_debug_with_trace_file(level: DebugLevel, trace_file: Option<String>) {
+    set_debug_config(DebugConfig {
+        level,
+        position_filter: None,
+        failure_only: false,
+        trace_file,
+    });
+}
+
 pub fn get_debug_level() -> DebugLevel {
     DEBUG_CONFIG.get().unwrap_or(&DebugConfig {
         level: DebugLevel::Off,
         position_filter: None,
         failure_only: false,
+        trace_file: None,
     }).level
 }
 
@@ -65,7 +79,29 @@ pub fn get_debug_config() -> &'static DebugConfig {
         level: DebugLevel::Off,
         position_filter: None,
         failure_only: false,
+        trace_file: None,
     })
+}
+
+// Helper function to write debug output to file or stdout
+fn write_debug_output(msg: &str) {
+    let config = get_debug_config();
+    if let Some(ref trace_file) = config.trace_file {
+        // Write to file
+        if let Ok(mut file) = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(trace_file) 
+        {
+            writeln!(file, "{}", msg).ok();
+        } else {
+            eprintln!("Warning: Could not write to trace file {}", trace_file);
+            println!("{}", msg);
+        }
+    } else {
+        // Write to stdout
+        println!("{}", msg);
+    }
 }
 
 // Simple function-based debug calls that are easier to export
@@ -89,7 +125,12 @@ pub fn debug_trace_print(msg: &str) {
 
 pub fn debug_grammar_print(level: DebugLevel, msg: &str) {
     if get_debug_level().includes(level) {
-        println!("[GRAMMAR] {}", msg);
+        // Use structured format and write to trace file if configured
+        if msg.starts_with("GRAMMAR|") {
+            write_debug_output(msg);
+        } else {
+            write_debug_output(&format!("GRAMMAR|{}", msg));
+        }
     }
 }
 
@@ -101,7 +142,7 @@ pub fn debug_parser_print(level: DebugLevel, msg: &str) {
 
 pub fn debug_earley_print(level: DebugLevel, msg: &str) {
     if get_debug_level().includes(level) {
-        println!("[EARLEY] {}", msg);
+        write_debug_output(&format!("EARLEY|{}", msg));
     }
 }
 
@@ -119,7 +160,8 @@ pub fn debug_earley_at_pos(level: DebugLevel, pos: usize, msg: &str) {
         }
     }
     
-    println!("[EARLEY@{}] {}", pos, msg);
+    // Use structured format for easier grepping
+    write_debug_output(&format!("EARLEY|pos={}|{}", pos, msg));
 }
 
 pub fn debug_earley_failure(pos: usize, expected: &str, actual: char) {
@@ -128,7 +170,24 @@ pub fn debug_earley_failure(pos: usize, expected: &str, actual: char) {
         return;
     }
     
-    println!("[EARLEY-FAIL@{}] Expected {}, found '{}'", pos, expected, actual);
+    write_debug_output(&format!("EARLEY-FAIL|pos={}|expected={}|actual='{}'", pos, expected, actual));
+}
+
+// Specialized Earley operation functions for structured logging
+pub fn debug_earley_completer(pos: usize, task_info: &str) {
+    debug_earley_at_pos(DebugLevel::Trace, pos, &format!("op=COMPLETER|task={}", task_info));
+}
+
+pub fn debug_earley_predictor(pos: usize, task_info: &str, mark: &str, name: &str) {
+    debug_earley_at_pos(DebugLevel::Trace, pos, &format!("op=PREDICTOR|task={}|mark={}|name={}", task_info, mark, name));
+}
+
+pub fn debug_earley_scanner(pos: usize, task_info: &str, tmark: &str, matcher: &str) {
+    debug_earley_at_pos(DebugLevel::Trace, pos, &format!("op=SCANNER|task={}|tmark={}|matcher={}", task_info, tmark, matcher));
+}
+
+pub fn debug_earley_scanner_match(pos: usize, matched_char: char, new_pos: usize) {
+    debug_earley_at_pos(DebugLevel::Trace, pos, &format!("op=SCANNER-MATCH|char='{}'|new_pos={}", matched_char, new_pos));
 }
 
 // Convenience macros for formatted printing

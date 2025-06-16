@@ -30,7 +30,7 @@ use std::{fmt, collections::HashMap, cell::Cell, rc::Rc};
 use smol_str::SmolStr;
 use indextree::{Arena, NodeId};
 use crate::{parser::{Parser, DotNotation}, unicode_ranges::UnicodeRange};
-use crate::{ixml_bootstrap::bootstrap_ixml_grammar};
+use crate::{ixml_bootstrap::bootstrap_ixml_grammar, debug_grammar};
 // TODO: Optimization: add CharMatchers at the Grammar level
 
 /// the primary owner of all grammar data structures
@@ -117,8 +117,19 @@ impl Grammar {
 
     /// Parse an iXML grammar string and construct a Grammar
     pub fn from_ixml_str(ixml: &str) -> Result<Grammar, crate::parser::ParseError> {        
+        // Phase 1: Validate and preprocess the iXML text
+        let validation_result = crate::validator::validate_ixml(ixml.trim());
+        
+        if !validation_result.is_valid() {
+            let error_msgs: Vec<String> = validation_result.errors.iter()
+                .map(|e| e.to_string())
+                .collect();
+            return Err(crate::parser::ParseError::static_err(&error_msgs.join("; ")));
+        }
+        
+        // Phase 2: Parse the validated and preprocessed text
         let mut ixml_parser = Parser::new(bootstrap_ixml_grammar());
-        let ixml_arena = ixml_parser.parse(ixml.trim())?;
+        let ixml_arena = ixml_parser.parse(&validation_result.processed_text)?;
         
         let grammar = Grammar::from_parse_tree(&ixml_arena)?;
         Ok(grammar)
@@ -133,19 +144,49 @@ impl Grammar {
         let root_node = arena.iter().next().unwrap(); // first item == root
         let root_id = arena.get_node_id(root_node).unwrap();
 
+        // Debug: Show root element info
+        let root_content = arena.get(root_id).unwrap().get();
+        match root_content {
+            Content::Element(root_name) => {
+                debug_grammar!(DebugLevel::Basic, "GRAMMAR|phase=tree_start|root_element={}|node_count={}", root_name, arena.count());
+            },
+            other => {
+                debug_grammar!(DebugLevel::Basic, "GRAMMAR|phase=tree_start|root_content={:?}|node_count={}", other, arena.count());
+            }
+        }
+
         // first a pass over everything, making some indexes as we go
         let mut all_rules: Vec<NodeId> = Vec::new();
+        let mut element_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 
-        // more validation checks go here...
-
+        // Debug: Track all elements we encounter
         for nid in root_id.descendants(arena) {
             let content = arena.get(nid).unwrap().get();
             match content {
-                Content::Element(name) if name=="rule" => all_rules.push(nid),
-                _ => {}
+                Content::Element(name) => {
+                    *element_counts.entry(name.clone()).or_insert(0) += 1;
+                    if name=="rule" {
+                        all_rules.push(nid);
+                        let attrs = Parser::get_attributes(arena, nid);
+                        let rule_name = attrs.get("name").map(|s| s.as_str()).unwrap_or("UNNAMED");
+                        debug_grammar!(DebugLevel::Detailed, "GRAMMAR|phase=rule_found|name={}|node_id={:?}", rule_name, nid);
+                    }
+                },
+                _ => {} // Skip text/other content for now
             }
         }
+        
+        // Debug: Show summary of all elements found
+        for (element_name, count) in &element_counts {
+            debug_grammar!(DebugLevel::Basic, "GRAMMAR|phase=tree_summary|element={}|count={}", element_name, count);
+        }
+        
+        use crate::debug::DebugLevel;
+        debug_grammar!(DebugLevel::Basic, "Converting ixml tree to grammar: found {} rules", all_rules.len());
+        
         if all_rules.is_empty() {
+            debug_grammar!(DebugLevel::Basic, "GRAMMAR|phase=error|error=no_rules_found|total_elements={}", element_counts.values().sum::<usize>());
+            debug_grammar!(DebugLevel::Basic, "ERROR: No rules found in ixml tree");
             return Err(crate::parser::ParseError::static_err("can't convert ixml tree to grammar: no rules present"));
         }
         for rule in all_rules {
@@ -166,31 +207,46 @@ impl Grammar {
     /// Helper function: Fully construct one rule from parse tree
     fn construct_rule_from_tree(rule: NodeId, mark: Mark, arena: &Arena<crate::parser::Content>, rule_name: &str, g: &mut Grammar) {
         use crate::parser::Parser;
+        use crate::debug::DebugLevel;
+        
+        debug_grammar!(DebugLevel::Detailed, "Constructing rule '{}' with mark {:?}", rule_name, mark);
         
         let ctx = RuleContext::new(rule_name);
+        let mut alt_count = 0;
         for (name, eid) in Parser::get_child_elements(arena, rule) {
             if name=="alt" {
+                alt_count += 1;
+                debug_grammar!(DebugLevel::Trace, "  Processing alt {} for rule '{}'", alt_count, rule_name);
                 let rb = Grammar::build_sequence_from_tree(eid, arena, &ctx);
                 g.mark_define(mark, rule_name, rb);
             }
         }
+        debug_grammar!(DebugLevel::Detailed, "Completed rule '{}' with {} alternatives", rule_name, alt_count);
     }
 
     /// Helper function: Construct a sequence from parse tree node
     fn build_sequence_from_tree(node: NodeId, arena: &Arena<crate::parser::Content>, ctx: &Rc<RuleContext>) -> SeqBuilder {
         use crate::parser::Parser;
+        use crate::debug::DebugLevel;
         
+        debug_grammar!(DebugLevel::Trace, "Building sequence for rule '{}'", ctx.rulename);
         let mut seq = ctx.seq();
+        let mut factor_count = 0;
         for (name, nid) in Parser::get_child_elements(arena, node) {
+            factor_count += 1;
+            debug_grammar!(DebugLevel::Trace, "  Processing factor {} '{}' in rule '{}'", factor_count, name, ctx.rulename);
             seq = Grammar::append_factor_from_tree(seq, &name, nid, arena, ctx);
         }
+        debug_grammar!(DebugLevel::Trace, "Completed sequence for rule '{}' with {} factors", ctx.rulename, factor_count);
         seq
     }
 
     /// Helper function: Add factors to sequence from parse tree
     fn append_factor_from_tree(mut seq: SeqBuilder, name: &str, nid: NodeId, arena: &Arena<crate::parser::Content>, ctx: &Rc<RuleContext>) -> SeqBuilder {
         use crate::parser::Parser;
+        use crate::debug::DebugLevel;
         
+        debug_grammar!(DebugLevel::Trace, "    Appending factor '{}' to rule '{}'", name, ctx.rulename);
         let attrs = Parser::get_attributes(arena, nid);
         match name {
             "alts" => {
@@ -217,7 +273,24 @@ impl Grammar {
                     Some("-") => TMark::Mute,
                     _ => TMark::Default,
                 };
-                seq = seq.mark_ch(attrs["string"].chars().next().expect("no empty string literals"), tmark);
+                debug_grammar!(DebugLevel::Trace, "      Processing literal with attrs: {:?}", attrs);
+                if let Some(string_value) = attrs.get("string") {
+                    seq = seq.mark_ch(string_value.chars().next().expect("no empty string literals"), tmark);
+                } else if let Some(hex_value) = attrs.get("hex") {
+                    // Handle hex literals like #a (which is newline \n)
+                    if let Ok(code_point) = u32::from_str_radix(hex_value, 16) {
+                        if let Some(ch) = char::from_u32(code_point) {
+                            seq = seq.mark_ch(ch, tmark);
+                            debug_grammar!(DebugLevel::Trace, "      Converted hex #{} to character '{}'", hex_value, ch);
+                        } else {
+                            debug_grammar!(DebugLevel::Basic, "ERROR: invalid Unicode code point from hex #{}", hex_value);
+                        }
+                    } else {
+                        debug_grammar!(DebugLevel::Basic, "ERROR: invalid hex value '{}'", hex_value);
+                    }
+                } else {
+                    debug_grammar!(DebugLevel::Basic, "ERROR: literal element missing both 'string' and 'hex' attributes, attrs: {:?}", attrs);
+                }
             }
             "inclusion" => {
                 let tmark = match attrs.get("tmark").map(|s| s.as_str()) {
