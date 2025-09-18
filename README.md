@@ -5,26 +5,35 @@ Experimental implementation of ixml in Rust. Currently targeting the 1.0 spec.
 
 ## Running
 
-The `eb` CLI has several subcommands:
+For development, use `cargo run --` (recommended):
 
 ### Parse files
 
 ```bash
-eb parse -g grammar.ixml -i input.txt
+cargo run -- parse -g grammar.ixml -i input.txt
 ```
 
 ### Quick inline testing (useful for development)
 
 ```bash
-eb test -g 'rule: "a" | "b".' -i 'a'
+cargo run -- test -g 'rule: "a" | "b".' -i 'a'
 ```
 
 ### Run test suite
 
 ```bash
-eb suite
-# Or with legacy path syntax:
-RUST_LOG=info RUST_BACKTRACE=1 cargo run -- suite ../../ixml/tests/correct/test-catalog.xml
+cargo run -- suite
+# Or with environment variables for debugging:
+RUST_LOG=info RUST_BACKTRACE=1 cargo run -- suite
+```
+
+Alternatively, build the `eb` binary first:
+
+```bash
+cargo build --release
+./target/release/eb parse -g grammar.ixml -i input.txt
+./target/release/eb test -g 'rule: "a" | "b".' -i 'a'
+./target/release/eb suite
 ```
 
 The test suite is a git submodule in `ixml/` that contains the reference implementation.
@@ -45,23 +54,23 @@ Both `parse` and `test` commands support verbosity levels via `-v` or `--verbose
 Examples:
 ```bash
 # Quick debugging with inline strings
-eb test -g 'expr: term, ("+", term)*. term: "a".' -i 'a+a' -v detailed
+cargo run -- test -g 'expr: term, ("+", term)*. term: "a".' -i 'a+a' -v detailed
 
 # Detailed file-based parsing
-eb parse -g examples/simple.ixml -i examples/simple.txt -v detailed
+cargo run -- parse -g examples/simple.ixml -i examples/simple.txt -v detailed
 
 # Basic debugging for parse failures
-eb test -g 'test: "exact".' -i 'wrong' -v basic
+cargo run -- test -g 'test: "exact".' -i 'wrong' -v basic
 
 # Trace Earley parser operations at specific position
-eb test -g 'rule: "a".' -i 'a' -v trace --debug-pos 0
+cargo run -- test -g 'rule: "a".' -i 'a' -v trace --debug-pos 0
 
 # Full trace (verbose - use with caution)
-eb test -g 'rule: "a".' -i 'a' -v trace
+cargo run -- test -g 'rule: "a".' -i 'a' -v trace
 
 # External trace file
-eb test -g 'rule: "a".' -i 'a' -v trace --trace-file earley.log
-eb parse -g grammar.ixml -i input.txt -v trace --trace-file debug.log
+cargo run -- test -g 'rule: "a".' -i 'a' -v trace --trace-file earley.log
+cargo run -- parse -g grammar.ixml -i input.txt -v trace --trace-file debug.log
 ```
 
 ### Debug Output Structure
@@ -133,10 +142,10 @@ The `trace` verbosity level provides detailed step-by-step Earley algorithm debu
 **Position Filtering:**
 ```bash
 # Only show trace at input position 0
-eb test -g 'rule: "a".' -i 'abc' -v trace --debug-pos 0
+cargo run -- test -g 'rule: "a".' -i 'abc' -v trace --debug-pos 0
 
-# Only show trace at input position 2  
-eb test -g 'rule: "a", "b", "c".' -i 'abc' -v trace --debug-pos 2
+# Only show trace at input position 2
+cargo run -- test -g 'rule: "a", "b", "c".' -i 'abc' -v trace --debug-pos 2
 ```
 
 This is essential for conformance debugging as full traces can be thousands of lines even for simple grammars.
@@ -145,7 +154,7 @@ This is essential for conformance debugging as full traces can be thousands of l
 The `--trace-file` option is especially useful for workflows to avoid overwhelming the terminal:
 
 ```bash
-eb parse -g complex.ixml -i large-input.txt -v trace --trace-file trace.log
+cargo run -- parse -g complex.ixml -i large-input.txt -v trace --trace-file trace.log
 # Then analyze the trace file separately:
 grep "EARLEY-FAIL" trace.log | head -10
 grep "pos=42" trace.log
