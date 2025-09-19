@@ -9,6 +9,7 @@ use indextree::{Arena, NodeId};
 use log::{info, debug, trace};
 
 const DOTSEP: &str = "•";
+const EOF_CHAR: char = '\x1f';
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 /// A sort of iterator for a Rule.
@@ -262,7 +263,7 @@ impl InputIter {
     pub fn get_at(&mut self, pos: usize) -> char {
         if self.at_eof(pos) {
             debug!("📄🚫");
-            '\x1f' // EOF char
+            EOF_CHAR
         } else {
             self.tokens[pos]
         }
@@ -463,11 +464,20 @@ impl Parser {
                     // record terminal
                     debug!("SCANNER: Terminal {tmark}{matcher} at pos={current_pos}");
                     debug_earley_pos!(DebugLevel::Trace, current_pos, "SCANNER: {} scanning {}{}", self.traces.format_task(tid), tmark, matcher);
+
+                    // Bounds check: don't advance beyond input length
+                    if current_pos >= self.input_length {
+                        debug!("Position {} >= input length {}; 🛑", current_pos, self.input_length);
+                        debug_earley_fail!(current_pos, &format!("{}", matcher), EOF_CHAR);
+                        continue;
+                    }
+
                     if matcher.accept(input.get_at(current_pos)) {
-                        // Match!
-                        let rec = MatchRec::Term(input.get_at(current_pos), current_pos + 1, tmark);
+                        // Match! Advance position but ensure we don't exceed input bounds
+                        let new_pos = (current_pos + 1).min(self.input_length);
+                        let rec = MatchRec::Term(input.get_at(current_pos), new_pos, tmark);
                         debug!("advance cursor SCAN");
-                        debug_earley_pos!(DebugLevel::Trace, current_pos, "SCANNER: MATCH '{}' -> advance to {}", input.get_at(current_pos), current_pos + 1);
+                        debug_earley_pos!(DebugLevel::Trace, current_pos, "SCANNER: MATCH '{}' -> advance to {}", input.get_at(current_pos), new_pos);
                         let maybe_id = self.traces.task_advance_cursor(tid, rec);
                         self.queue_back(maybe_id);
                     } else {
@@ -737,5 +747,105 @@ impl Parser {
                 }
             })
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::grammar::Grammar;
+
+    #[test]
+    fn test_offset_bounds_violation_protection() {
+        // Test that parser doesn't advance beyond input length
+        let grammar_str = r#"test: "a"."#;
+        let grammar = Grammar::from_ixml_str(grammar_str).expect("Failed to parse grammar");
+        let mut parser = Parser::new(grammar);
+
+        // This should not hang or panic - should complete gracefully
+        let result = parser.parse("a");
+        assert!(result.is_ok(), "Simple parse should succeed");
+    }
+
+    #[test]
+    fn test_empty_line_pattern_bounds() {
+        // Test the specific pattern that caused infinite loop: line++lf with nullable lines
+        let grammar_str = r#"
+            input: line++lf.
+            line: ~[#a | #d]*.
+            lf: -#a | -#d, -#a.
+        "#;
+        let grammar = Grammar::from_ixml_str(grammar_str).expect("Failed to parse grammar");
+        let mut parser = Parser::new(grammar);
+
+        // This previously caused infinite loop - should now complete (may fail parsing but shouldn't hang)
+        let input = "Now is the time\nFor all good people\nTo have fun.";
+        let result = parser.parse(input);
+        // We don't care if it succeeds or fails, just that it doesn't hang
+        let _ = result;
+    }
+
+    #[test]
+    fn test_offset_never_exceeds_input_length() {
+        // Create a simple grammar that will exercise position advancement
+        let grammar_str = r#"letters: letter+. letter: ["a"-"z"]."#;
+        let grammar = Grammar::from_ixml_str(grammar_str).expect("Failed to parse grammar");
+        let mut parser = Parser::new(grammar);
+
+        let input = "abc";
+        let _ = parser.parse(input);
+
+        // Check that no task in the trace has a position > input.len()
+        let trace = parser.test_inspect_trace(None);
+        let input_len = input.len();
+
+        for task in trace {
+            assert!(
+                task.pos <= input_len,
+                "Task position {} exceeds input length {}",
+                task.pos,
+                input_len
+            );
+            assert!(
+                task.origin <= input_len,
+                "Task origin {} exceeds input length {}",
+                task.origin,
+                input_len
+            );
+        }
+    }
+
+    #[test]
+    fn test_bounds_check_with_zero_length_input() {
+        let grammar_str = r#"test: "a"?"#;
+        let grammar = Grammar::from_ixml_str(grammar_str).expect("Failed to parse grammar");
+        let mut parser = Parser::new(grammar);
+
+        // Empty input should not cause bounds violations
+        let result = parser.parse("");
+        let _ = result; // May succeed or fail, but shouldn't hang
+
+        // Verify no positions exceed 0 (the length of empty input)
+        let trace = parser.test_inspect_trace(None);
+        for task in trace {
+            assert!(task.pos <= 0, "Task position {} exceeds empty input length", task.pos);
+        }
+    }
+
+    #[test]
+    fn test_bounds_check_with_single_char() {
+        let grammar_str = r#"test: "a", "b"?"#;
+        let grammar = Grammar::from_ixml_str(grammar_str).expect("Failed to parse grammar");
+        let mut parser = Parser::new(grammar);
+
+        // Single character input
+        let result = parser.parse("a");
+        let _ = result; // May succeed or fail
+
+        // Verify no positions exceed 1
+        let trace = parser.test_inspect_trace(None);
+        for task in trace {
+            assert!(task.pos <= 1, "Task position {} exceeds input length 1", task.pos);
+        }
     }
 }

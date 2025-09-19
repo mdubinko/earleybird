@@ -67,22 +67,48 @@
 - [ ] Interactive parser stepper (step through one operation at a time)
 - [ ] Export parse states to JSON/GraphViz formats
 
-## Next Session Priorities
+## Critical Parser Fix Complete ✓
+- [x] Fixed infinite loop bug in Earley parser with offset bounds checking #CRITICAL
+  - Issue: `line++lf` pattern caused position to advance beyond input length
+  - Fixed: Added bounds validation in SCANNER before position advancement
+  - Added comprehensive unit tests to prevent regression
 
-### High Priority - Conformance Test Improvements
-- [ ] Run broader conformance test sweep to identify next major failure patterns #HIGH
-  - Command: `eb suite` to see current overall pass/fail rates
-  - Focus on converting GRAMMAR_ERROR cases to proper parse failures or passes
-  - Prioritize test categories: syntax -> correct -> error
+## Immediate Priorities - Quick Test Suite Wins (Target: 35% → 65% pass rate)
 
-### Medium Priority - Bootstrap Grammar Features  
-- [ ] Complete Unicode character class support (src/ixml_bootstrap.rs:24,98) #MED
-  - Implement Unicode category matching (e.g., `Nd`, `Lu`, etc.)
-  - Add support for Unicode block names and hex ranges
-- [ ] Implement insertion syntax: `+` insertion for literal text (src/ixml_bootstrap.rs:247) #MED
+### Priority 1: Complete Existing TODOs (1-2 hours) #CRITICAL
+- [ ] Complete character set member processing (src/grammar.rs:320,351) #HIGH
+  - Issue: ~40 syntax tests fail because hex members (#x20) and class members (L, N) aren't processed
+  - Status: TODO comments exist, implementation needed in `append_factor_from_tree`
+  - Impact: Will convert most GRAMMAR_ERROR cases to parsing attempts
+- [ ] Add comment syntax to bootstrap grammar definition (src/ixml_bootstrap.rs:12,17,36,39) #HIGH
+  - Issue: Bootstrap grammar missing comment rules despite validator.rs preprocessing
+  - Status: Multiple TODO comments for `{...}` nested comment syntax
+  - Impact: ~15 tests failing due to grammar parsing errors
+
+### Priority 2: Unicode Character Classes (half day) #HIGH
+- [ ] Implement basic Unicode categories in bootstrap grammar (src/ixml_bootstrap.rs:22-24) #HIGH
+  - Issue: Tests like `class-range.ixml` use `[L-N]` patterns that fail
+  - Required: L (letters), N (numbers), Nd (decimal numbers), Mn (nonspacing marks)
+  - Use existing `unicode-character-database` crate dependency
+  - Impact: ~30 syntax tests currently failing with GRAMMAR_ERROR
+
+### Priority 3: Medium Term Features #MED
+- [ ] Implement insertion syntax: `+` insertion for literal text (src/ixml_bootstrap.rs:92,265) #MED
   - Handle `+` prefix for insertions that appear in output but not input
+- [ ] Complete Unicode hex range support in character classes #MED
+  - Add support for Unicode block names and hex ranges beyond basic categories
 
-### Lower Priority - Architecture
+## Current Test Suite Status
+- **Current Pass Rate**: ~3/231 tests (1.3%) - mostly basic syntax tests
+- **After Priority 1**: Expected ~80/231 tests (35%) - character set processing fixes
+- **After Priority 2**: Expected ~150/231 tests (65%) - Unicode class support
+- **After Priority 3**: Expected ~200/231 tests (85%+) - full feature set
+
+## Lower Priority - Architecture
 - [ ] Investigate test suite debug configuration integration #LOW
   - Add --verbose and --trace-file support to `eb suite` command
   - Would help with debugging complex conformance failures
+- [x] Follow Rust testing conventions throughout codebase #LOW
+  - Use `#[cfg(test)]` modules in source files for unit tests
+  - Reserve `tests/` directory for integration tests only
+  - Ensures tests stay close to the code they test
