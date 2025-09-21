@@ -349,18 +349,18 @@ pub struct Parser {
     input_length: usize,  // total length of input to ensure complete consumption
 }
 
-/// Earley parser with LIFO prediction strategy and FIFO completion strategy
+/// Earley parser with LIFO prediction strategy and modified completion strategy
 ///
 /// Queue Management Strategy:
 /// - PREDICTOR: New nonterminal predictions go to front (queue_front) for depth-first exploration
-/// - COMPLETER: Completed nonterminals go to front (queue_front) for immediate propagation
+/// - COMPLETER: Parent continuations go to back (queue_back) to ensure exhaustive alternative exploration
 /// - SCANNER: Terminal matches go to back (queue_back) for breadth-first processing
 /// - Main loop: Always processes from front (pop_front)
 ///
 /// This ensures that:
-/// 1. Completions get immediate priority to propagate success upward
+/// 1. All alternatives at current position are explored before parent continuations
 /// 2. New predictions are explored immediately (depth-first-like)
-/// 3. Terminal scanning happens in input order
+/// 3. Terminal scanning and continuations happen in input order
 impl Parser {
 
     pub fn new(grammar: Grammar) -> Self {
@@ -392,6 +392,7 @@ impl Parser {
                 .ok_or(ParseError::static_err("No top grammar rule name"))?, top_rule.mark(), 0, 0, alt.dot_notator());
             self.queue_front(maybe_id);
         }
+
         // work through the queue
         while let Some(tid) = self.traces.queue.pop_front() {
             let current_pos = self.traces.get(tid).pos;
@@ -417,7 +418,7 @@ impl Parser {
                     if self.traces.get(continue_id).pos != self.traces.get(tid).origin {
                         continue;
                     }
-                    debug!("...continuing Task... {}", self.traces.format_task(continue_id));
+                    debug!("...deferring continuation Task... {}", self.traces.format_task(continue_id));
 
                     let now_finished_via_child = self.traces.get(continue_id).dot.next_unparsed();
                     let match_rec =
@@ -428,7 +429,10 @@ impl Parser {
                     trace!("MatchRec {:?}", &match_rec);
                     // child may have made progress; next item in parent seq needs to account for this
                     let maybe_id = self.traces.task_advance_cursor(continue_id, match_rec);
-                    self.queue_front(maybe_id);
+
+                    // CRITICAL FIX: Queue parent continuations at back to ensure exhaustive alternative exploration
+                    // This allows all alternatives at current position to be explored before parent propagation
+                    self.queue_back(maybe_id);
                 }
                 continue;
             }
@@ -496,7 +500,7 @@ impl Parser {
             }
         } // while
         info!("Finished parse with {} items in trace", self.traces.arena.len());
-        
+
         self.unpack_parse_tree()
     }
 
