@@ -164,13 +164,14 @@ pub fn debug_earley_at_pos(level: DebugLevel, pos: usize, msg: &str) {
     write_debug_output(&format!("EARLEY|pos={}|{}", pos, msg));
 }
 
-pub fn debug_earley_failure(pos: usize, expected: &str, actual: char) {
+pub fn debug_earley_failure(pos: usize, expected: &str, actual: char, queue_snapshot: &str) {
     let config = get_debug_config();
     if !config.level.includes(DebugLevel::Trace) {
         return;
     }
-    
-    write_debug_output(&format!("EARLEY-FAIL|pos={}|expected={}|actual='{}'", pos, expected, actual));
+
+    write_debug_output(&format!("EARLEY-FAIL|pos={}|expected={}|actual='{}'|queue=[{}]",
+        pos, expected, actual, queue_snapshot));
 }
 
 // Specialized Earley operation functions for structured logging
@@ -242,8 +243,8 @@ macro_rules! debug_earley_pos {
 
 #[macro_export]
 macro_rules! debug_earley_fail {
-    ($pos:expr, $expected:expr, $actual:expr) => {
-        $crate::debug::debug_earley_failure($pos, $expected, $actual)
+    ($pos:expr, $expected:expr, $actual:expr, $queue_snapshot:expr) => {
+        $crate::debug::debug_earley_failure($pos, $expected, $actual, $queue_snapshot)
     };
 }
 

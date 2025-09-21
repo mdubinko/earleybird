@@ -309,15 +309,16 @@ impl Grammar {
                         if child_name == "member" {
                             let member_attrs = Parser::get_attributes(arena, child_nid);
                             if let (Some(from), Some(to)) = (member_attrs.get("from"), member_attrs.get("to")) {
-                                // Character range like ["a"-"z"]
-                                let from_char = from.chars().next().expect("from attribute should have at least one character");
-                                let to_char = to.chars().next().expect("to attribute should have at least one character");
+                                // Character range like ["a"-"z"] or hex range like [#41-#46]
+                                let (from_char, to_char) = Self::parse_range_values(from, to);
                                 lit_builder = lit_builder.ch_range(from_char, to_char);
                             } else if let Some(string_attr) = member_attrs.get("string") {
                                 // Simple string member like ["abc"]
                                 lit_builder = lit_builder.ch_in(string_attr);
+                            } else {
+                                // Handle hex members and class members
+                                lit_builder = Self::process_member_element(arena, child_nid, lit_builder);
                             }
-                            // TODO: handle hex members and class members
                         }
                     }
                     seq = seq.mark_lit(lit_builder, tmark);
@@ -340,15 +341,16 @@ impl Grammar {
                         if child_name == "member" {
                             let member_attrs = Parser::get_attributes(arena, child_nid);
                             if let (Some(from), Some(to)) = (member_attrs.get("from"), member_attrs.get("to")) {
-                                // Character range like ~["a"-"z"]
-                                let from_char = from.chars().next().expect("from attribute should have at least one character");
-                                let to_char = to.chars().next().expect("to attribute should have at least one character");
+                                // Character range like ~["a"-"z"] or hex range like ~[#41-#46]
+                                let (from_char, to_char) = Self::parse_range_values(from, to);
                                 lit_builder = lit_builder.ch_range(from_char, to_char);
                             } else if let Some(string_attr) = member_attrs.get("string") {
                                 // Simple string member like ~["abc"]
                                 lit_builder = lit_builder.ch_in(string_attr);
+                            } else {
+                                // Handle hex members and class members
+                                lit_builder = Self::process_member_element(arena, child_nid, lit_builder);
                             }
-                            // TODO: handle hex members and class members
                         }
                     }
                     seq = seq.mark_lit(lit_builder, tmark);
@@ -404,6 +406,112 @@ impl Grammar {
             _ => unimplemented!("unknown element {name} child of <alt>"),
         }
         seq
+    }
+
+    /// Process hex members, class members, and child elements for character sets
+    fn process_member_element(arena: &Arena<crate::parser::Content>, child_nid: NodeId, mut lit_builder: LitBuilder) -> LitBuilder {
+        use crate::parser::Parser;
+        let member_attrs = Parser::get_attributes(arena, child_nid);
+
+        // Check for hex attribute
+        if let Some(hex_attr) = member_attrs.get("hex") {
+            return Self::process_hex_member(hex_attr, lit_builder);
+        }
+
+        // Check for class attribute
+        if let Some(class_attr) = member_attrs.get("class") {
+            return Self::process_class_member(class_attr, lit_builder);
+        }
+
+        // Check for child elements (hex, class, or range elements)
+        for (child_elem_name, child_elem_nid) in Parser::get_child_elements(arena, child_nid) {
+            match child_elem_name.as_str() {
+                "hex" => {
+                    if let Some(hex_text) = Self::extract_text_content(arena, child_elem_nid) {
+                        lit_builder = Self::process_hex_member(&hex_text, lit_builder);
+                    }
+                }
+                "class" => {
+                    if let Some(class_text) = Self::extract_text_content(arena, child_elem_nid) {
+                        lit_builder = Self::process_class_member(&class_text, lit_builder);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        lit_builder
+    }
+
+    /// Process hex member like #41
+    fn process_hex_member(hex_attr: &str, lit_builder: LitBuilder) -> LitBuilder {
+        if let Ok(hex_value) = u32::from_str_radix(hex_attr, 16) {
+            if let Some(hex_char) = char::from_u32(hex_value) {
+                return lit_builder.ch(hex_char);
+            }
+        }
+        lit_builder
+    }
+
+    /// Process Unicode class member like L, N, Nd
+    fn process_class_member(class_attr: &str, lit_builder: LitBuilder) -> LitBuilder {
+        // TODO: This is a basic ASCII approximation - full Unicode class support needed
+        match class_attr {
+            "L" => {
+                // TODO: Should include all Unicode letter categories (Lu, Ll, Lt, Lm, Lo)
+                // Currently approximating with ASCII letters only
+                lit_builder.ch_range('A', 'Z').ch_range('a', 'z')
+            }
+            "N" => {
+                // TODO: Should include all Unicode number categories (Nd, Nl, No)
+                // Currently approximating with ASCII digits only
+                lit_builder.ch_range('0', '9')
+            }
+            "Nd" => {
+                // TODO: Should include all Unicode decimal numbers, not just ASCII
+                lit_builder.ch_range('0', '9')
+            }
+            _ => {
+                // TODO: Add support for other Unicode classes (Mn, Mc, Me, etc.)
+                lit_builder
+            }
+        }
+    }
+
+    /// Parse range values that could be characters or hex values
+    fn parse_range_values(from: &str, to: &str) -> (char, char) {
+        let from_char = Self::parse_char_or_hex(from);
+        let to_char = Self::parse_char_or_hex(to);
+        (from_char, to_char)
+    }
+
+    /// Parse a value that could be a character literal or hex value
+    fn parse_char_or_hex(value: &str) -> char {
+        // Check if it's a hex value (starts with #)
+        if let Some(hex_part) = value.strip_prefix('#') {
+            if let Ok(hex_value) = u32::from_str_radix(hex_part, 16) {
+                if let Some(hex_char) = char::from_u32(hex_value) {
+                    return hex_char;
+                }
+            }
+        }
+
+        // Fall back to treating as character literal
+        value.chars().next().expect("Value should have at least one character")
+    }
+
+    /// Extract text content from an element node
+    fn extract_text_content(arena: &Arena<crate::parser::Content>, nid: NodeId) -> Option<String> {
+        use crate::parser::Content;
+        let mut text = String::new();
+        for descendant in nid.descendants(arena) {
+            if let Some(node) = arena.get(descendant) {
+                if let Content::Text(txt) = node.get() {
+                    text.push_str(txt);
+                }
+            }
+        }
+        if text.is_empty() { None } else { Some(text) }
     }
 }
 
