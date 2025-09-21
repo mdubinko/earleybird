@@ -36,13 +36,21 @@ pub struct RunSuite {
     /// optional specific suite to run (default: all suites)
     #[argh(positional)]
     suite: Option<String>,
-    
+
     /// output file for conformance results (default: conformance-results.txt)
     #[argh(option, short = 'o', default = "String::from(\"conformance-results.txt\")")]
     output: String,
+
+    /// stdout display mode: full, summary, quiet, progress-only
+    #[argh(option, long = "stdout", default = "String::from(\"full\")")]
+    stdout_mode: String,
+
+    /// what to write to file: all, failures-only, none
+    #[argh(option, long = "file-mode", default = "String::from(\"all\")")]
+    file_mode: String,
 }
 
-fn run(suite_spec: Option<String>, output_file: &str) {
+fn run(suite_spec: Option<String>, output_file: &str, stdout_mode: &str, file_mode: &str) {
     let (catalog_path, filter) = resolve_suite_spec(suite_spec);
     println!("Running tests from: {}", catalog_path);
 
@@ -68,21 +76,34 @@ fn run(suite_spec: Option<String>, output_file: &str) {
         .filter(|test| !test.name.contains("ambiguous"))
         .collect();
     println!("Loaded {} test cases", filtered_tests.len());
-    println!("Writing results to: {}", output_file);
 
-    // Open output file
-    let mut file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(output_file)
-        .expect("Could not create output file");
+    // Handle file output based on file_mode
+    let mut file_writer: Option<std::fs::File> = if file_mode == "none" {
+        if stdout_mode != "quiet" {
+            println!("File output disabled");
+        }
+        None
+    } else {
+        if stdout_mode != "quiet" {
+            println!("Writing results to: {}", output_file);
+        }
+        Some(OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(output_file)
+            .expect("Could not create output file"))
+    };
 
-    writeln!(file, "=== iXML Conformance Test Results ===").unwrap();
-    writeln!(file, "Test catalog: {}", catalog_path).unwrap();
-    writeln!(file, "Filter: {:?}", filter).unwrap();
-    writeln!(file, "Total tests: {}", filtered_tests.len()).unwrap();
-    writeln!(file, "").unwrap();
+    // Write file header if file output enabled
+    if let Some(ref mut file) = file_writer {
+        writeln!(file, "=== iXML Conformance Test Results ===").unwrap();
+        writeln!(file, "Test catalog: {}", catalog_path).unwrap();
+        writeln!(file, "Filter: {:?}", filter).unwrap();
+        writeln!(file, "Total tests: {}", filtered_tests.len()).unwrap();
+        writeln!(file, "").unwrap();
+    }
+
 
     // Statistics
     let mut stats = std::collections::HashMap::new();
@@ -91,87 +112,176 @@ fn run(suite_spec: Option<String>, output_file: &str) {
     for test in filtered_tests {
         count += 1;
         let test_name = test.name.clone();
-        
-        
-        print!("🧪 Test {test_name} ... ");
-        // in case of stuck test, at least say where we're at
-        std::io::stdout().flush().unwrap();
+
+        // Print test start based on stdout mode
+        match stdout_mode {
+            "full" => {
+                print!("🧪 Test {test_name} ... ");
+                std::io::stdout().flush().unwrap();
+            }
+            "summary" | "quiet" => {
+                // Don't print individual test progress
+            }
+            "progress-only" => {
+                print!("🧪 Test {test_name} ... ");
+                std::io::stdout().flush().unwrap();
+            }
+            _ => {
+                print!("🧪 Test {test_name} ... ");
+                std::io::stdout().flush().unwrap();
+            }
+        }
 
         let outcome = run_single_test(test);
-        
+
         // Update statistics
         let category = match &outcome {
             TestOutcome::Pass => "pass",
             TestOutcome::Fail { .. } => "fail",
             TestOutcome::GrammarParseError(_) => "grammar_error",
-            TestOutcome::InputParseError(_) => "parse_error", 
+            TestOutcome::InputParseError(_) => "parse_error",
             TestOutcome::Panic(_) => "panic",
             TestOutcome::Skip(_) => "skip",
             TestOutcome::Todo(_) => "todo",
         };
         *stats.entry(category).or_insert(0) += 1;
 
-        // Write result to file and print status
+        // Determine what to write to file
+        let should_write_to_file = match file_mode {
+            "none" => false,
+            "all" => true,
+            "failures-only" => !matches!(outcome, TestOutcome::Pass),
+            _ => true,
+        };
+
+        // Print stdout result based on stdout mode
+        let should_print_result = match stdout_mode {
+            "full" => true,
+            "summary" => false,
+            "quiet" => false,
+            "progress-only" => matches!(outcome, TestOutcome::Pass),
+            _ => true,
+        };
+
+        // Write result to file and/or print status
         match &outcome {
             TestOutcome::Pass => {
-                println!("✅ PASS");
-                writeln!(file, "PASS {}", test_name).unwrap();
+                if should_print_result {
+                    println!("✅ PASS");
+                }
+                if should_write_to_file && file_writer.is_some() {
+                    writeln!(file_writer.as_mut().unwrap(), "PASS {}", test_name).unwrap();
+                }
             }
             TestOutcome::Fail { expected, actual } => {
-                println!("❌ FAIL");
-                writeln!(file, "FAIL {}", test_name).unwrap();
-                writeln!(file, "  Expected: {}", expected).unwrap();
-                writeln!(file, "  Actual:   {}", actual).unwrap();
-                writeln!(file, "").unwrap();
+                if should_print_result {
+                    println!("❌ FAIL");
+                }
+                if should_write_to_file && file_writer.is_some() {
+                    let file = file_writer.as_mut().unwrap();
+                    writeln!(file, "FAIL {}", test_name).unwrap();
+                    writeln!(file, "  Expected: {}", expected).unwrap();
+                    writeln!(file, "  Actual:   {}", actual).unwrap();
+                    writeln!(file, "").unwrap();
+                }
             }
             TestOutcome::GrammarParseError(err) => {
-                println!("🔥 GRAMMAR ERROR");
-                writeln!(file, "GRAMMAR_ERROR {}", test_name).unwrap();
-                writeln!(file, "  Error: {}", err).unwrap();
-                writeln!(file, "").unwrap();
+                if should_print_result {
+                    println!("🔥 GRAMMAR ERROR");
+                }
+                if should_write_to_file && file_writer.is_some() {
+                    let file = file_writer.as_mut().unwrap();
+                    writeln!(file, "GRAMMAR_ERROR {}", test_name).unwrap();
+                    writeln!(file, "  Error: {}", err).unwrap();
+                    writeln!(file, "").unwrap();
+                }
             }
             TestOutcome::InputParseError(err) => {
-                println!("⚠️ PARSE ERROR");
-                writeln!(file, "PARSE_ERROR {}", test_name).unwrap();
-                writeln!(file, "  Error: {}", err).unwrap();
-                writeln!(file, "").unwrap();
+                if should_print_result {
+                    println!("⚠️ PARSE ERROR");
+                }
+                if should_write_to_file && file_writer.is_some() {
+                    let file = file_writer.as_mut().unwrap();
+                    writeln!(file, "PARSE_ERROR {}", test_name).unwrap();
+                    writeln!(file, "  Error: {}", err).unwrap();
+                    writeln!(file, "").unwrap();
+                }
             }
             TestOutcome::Panic(err) => {
-                println!("💥 PANIC");
-                writeln!(file, "PANIC {}", test_name).unwrap();
-                writeln!(file, "  Error: {}", err).unwrap();
-                writeln!(file, "").unwrap();
+                if should_print_result {
+                    println!("💥 PANIC");
+                }
+                if should_write_to_file && file_writer.is_some() {
+                    let file = file_writer.as_mut().unwrap();
+                    writeln!(file, "PANIC {}", test_name).unwrap();
+                    writeln!(file, "  Error: {}", err).unwrap();
+                    writeln!(file, "").unwrap();
+                }
             }
             TestOutcome::Skip(reason) => {
-                println!("⏭️ SKIP");
-                writeln!(file, "SKIP {}", test_name).unwrap();
-                writeln!(file, "  Reason: {}", reason).unwrap();
-                writeln!(file, "").unwrap();
+                if should_print_result {
+                    println!("⏭️ SKIP");
+                }
+                if should_write_to_file && file_writer.is_some() {
+                    let file = file_writer.as_mut().unwrap();
+                    writeln!(file, "SKIP {}", test_name).unwrap();
+                    writeln!(file, "  Reason: {}", reason).unwrap();
+                    writeln!(file, "").unwrap();
+                }
             }
             TestOutcome::Todo(reason) => {
-                println!("🚧 TODO");
-                writeln!(file, "TODO {}", test_name).unwrap();
-                writeln!(file, "  Reason: {}", reason).unwrap();
-                writeln!(file, "").unwrap();
+                if should_print_result {
+                    println!("🚧 TODO");
+                }
+                if should_write_to_file && file_writer.is_some() {
+                    let file = file_writer.as_mut().unwrap();
+                    writeln!(file, "TODO {}", test_name).unwrap();
+                    writeln!(file, "  Reason: {}", reason).unwrap();
+                    writeln!(file, "").unwrap();
+                }
             }
         }
     }
 
-    // Write summary
-    writeln!(file, "").unwrap();
-    writeln!(file, "=== SUMMARY ===").unwrap();
-    writeln!(file, "Total tests: {}", count).unwrap();
-    for (category, count) in &stats {
-        writeln!(file, "{}: {}", category, count).unwrap();
+    // Write summary to file if enabled
+    if let Some(ref mut file) = file_writer {
+        writeln!(file, "").unwrap();
+        writeln!(file, "=== SUMMARY ===").unwrap();
+        writeln!(file, "Total tests: {}", count).unwrap();
+        for (category, count) in &stats {
+            writeln!(file, "{}: {}", category, count).unwrap();
+        }
     }
 
-    println!("");
-    println!("=== SUMMARY ===");
-    println!("Total tests: {}", count);
-    for (category, count) in &stats {
-        println!("{}: {}", category, count);
+    // Print summary to stdout based on mode
+    match stdout_mode {
+        "quiet" => {
+            // Print nothing to stdout
+        }
+        "summary" => {
+            println!("=== SUMMARY ===");
+            println!("Total: {} | Pass: {} | Fail: {} | Grammar Errors: {}",
+                count,
+                stats.get("pass").unwrap_or(&0),
+                stats.get("fail").unwrap_or(&0),
+                stats.get("grammar_error").unwrap_or(&0)
+            );
+            if file_mode != "none" {
+                println!("Results written to: {}", output_file);
+            }
+        }
+        _ => {
+            println!("");
+            println!("=== SUMMARY ===");
+            println!("Total tests: {}", count);
+            for (category, count) in &stats {
+                println!("{}: {}", category, count);
+            }
+            if file_mode != "none" {
+                println!("Results written to: {}", output_file);
+            }
+        }
     }
-    println!("Results written to: {}", output_file);
 }
 
 fn run_single_test(test: testsuite_utils::TestCase) -> TestOutcome {
@@ -248,6 +358,6 @@ impl RunSuite {
             process::exit(1);
         }
 
-        let _result = run(self.suite, &self.output);
+        let _result = run(self.suite, &self.output, &self.stdout_mode, &self.file_mode);
     }
 }

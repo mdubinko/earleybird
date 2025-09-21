@@ -227,10 +227,25 @@ impl TraceArena {
 
     /// returns true if this trace had been previously seen
     /// also performs necessary bookkeeping
+    ///
+    /// Earley Algorithm - Rules for De-duplicated Items:
+    /// According to well-established Earley theory, item identity is based solely on:
+    /// Rule + dot position + origin position
+    ///
+    /// When an item is encountered again (de-duped), the correct behavior is:
+    /// - If the rule is nullable -> automatic success, even if no tokens consumed
+    /// - If the rule has already been predicted at this position -> no re-prediction needed
+    /// - If the rule has been scanned or completed before -> check whether the same
+    ///   completed item already exists -- if it does, no new item should be added
+    ///
+    /// The current implementation correctly prevents duplicate items, but the parser
+    /// must handle the case where a nullable rule is re-predicted by immediately
+    /// creating an empty completion (Rule -> •, [i]) at position i and triggering
+    /// completion for any item waiting for this rule.
     fn have_we_seen(&mut self, task: &Task) -> bool {
         let hash = task.to_string();
         if self.hashes.contains(&hash) {
-            debug!("...Skipping this task -- previously seen {} @ {}:{} {}", task.name, task.origin, task.pos, hash);
+            debug!("🚫 DUPLICATE TASK DETECTED: Skipping {} @ {}:{} {}", task.name, task.origin, task.pos, hash);
             true
         } else {
             debug!("...caching task {}", hash);
@@ -400,7 +415,7 @@ impl Parser {
                 debug!("⏭ Advanced input to position {} (='{}')", current_pos, input.get_at(current_pos));
                 self.farthest_pos = current_pos;
             }
-            debug!("Pulled from queue {} at {}", self.traces.format_task(tid), current_pos);
+            debug!("🔄 PROCESSING: Pulled from queue {} at {}", self.traces.format_task(tid), current_pos);
 
             let is_completed = self.traces.get(tid).dot.is_completed();
 
@@ -462,6 +477,8 @@ impl Parser {
                         (Mark::Unmute, _) | (_, Mark::Unmute) => Mark::Unmute,
                     };
 
+                    // TODO: Add nullable rule handling here
+                    // For now, use normal prediction logic
                     for rule in g.get_definition(&name)?.iter() {
                         // TODO: propertly account for rule-level Mark
                         let dot = rule.dot_notator();

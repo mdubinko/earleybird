@@ -22,7 +22,17 @@ cargo run -- test -g 'rule: "a" | "b".' -i 'a'
 ### Run test suite
 
 ```bash
+# Full output (default)
 cargo run -- suite
+
+# Token-efficient modes for development
+cargo run -- suite --stdout summary --file-mode none           # Just summary
+cargo run -- suite syntax --stdout summary --file-mode failures-only  # Focus on syntax with failures logged
+
+# Advanced output control
+cargo run -- suite --stdout quiet --file-mode all -o results.txt      # Silent with full logging
+cargo run -- suite --stdout progress-only --file-mode none            # Only show passing tests
+
 # Or with environment variables for debugging:
 RUST_LOG=info RUST_BACKTRACE=1 cargo run -- suite
 ```
@@ -33,10 +43,10 @@ Alternatively, build the `eb` binary first:
 cargo build --release
 ./target/release/eb parse -g grammar.ixml -i input.txt
 ./target/release/eb test -g 'rule: "a" | "b".' -i 'a'
-./target/release/eb suite
+./target/release/eb suite --stdout summary --file-mode none
 ```
 
-The test suite is a git submodule in `ixml/` that contains the reference implementation.
+The test suite expects the official ixml repo to be available as a symlink at `ixml/`.
 
 ## Debugging and Transparency
 
@@ -206,14 +216,23 @@ The core concepts and architecture were all built 'by hand'.
 
 Since this is a learning project, I intend to experiment with different code generation products in the future, especially for testing and fleshing out the details of the implementation.
 
-Test suite:
-The test harness expects to locate resources from the official ixml repo
-https://github.com/invisibleXML/ixml
-in a symlinked directory called /ixml.
+# Test Suite Setup
 
-Assuming you have this repo checked out in a sibling directory to earleybird,
-the command for this is
-    ln -s ../ixml .
+The test harness expects to locate resources from the official ixml repo in a symlinked directory called `ixml/`.
+
+1. Clone the official ixml repository:
+   ```bash
+   git clone https://github.com/invisibleXML/ixml.git
+   ```
+
+2. Create a symlink in your earleybird directory:
+   ```bash
+   # If ixml repo is in a sibling directory:
+   ln -s ../ixml .
+
+   # Or if ixml repo is elsewhere:
+   ln -s /path/to/ixml .
+   ```
 
 
 # References

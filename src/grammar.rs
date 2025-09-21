@@ -26,7 +26,7 @@
 //! This module includes an ergonomic interface for building grammars by hand,
 //! or from the output of upstream processes (including ixml parsing!)
 
-use std::{fmt, collections::HashMap, cell::Cell, rc::Rc};
+use std::{fmt, collections::{HashMap, HashSet}, cell::Cell, rc::Rc};
 use smol_str::SmolStr;
 use indextree::{Arena, NodeId};
 use crate::{parser::{Parser, DotNotation}, unicode_ranges::UnicodeRange};
@@ -39,6 +39,8 @@ pub struct Grammar {
     definitions: HashMap<SmolStr, BranchingRule>,
     /// remember insertion order of rules (used for tests & comparing grammars)
     pub defn_order: Vec<SmolStr>,
+    /// cached nullability information - computed on demand
+    nullable_rules: Option<HashSet<SmolStr>>,
 }
 
 impl Grammar {
@@ -46,6 +48,7 @@ impl Grammar {
         Self {
             definitions: HashMap::new(),
             defn_order: Vec::new(),
+            nullable_rules: None,
         }
     }
 
@@ -65,7 +68,10 @@ impl Grammar {
     /// merge contents of `RuleBuilder` (which might include entire synthesized named rules) into Grammar
     /// Consumes the `RuleBuilder`
     pub fn mark_define(&mut self, mark: Mark, name: &str, sb: SeqBuilder) {
-        // 1) the main rule 
+        // Invalidate nullable cache when adding new rules
+        self.nullable_rules = None;
+
+        // 1) the main rule
         let name_smol = SmolStr::new(name);
         let main_rule = Rule::new(sb.factors);
         let branching_rule = self.definitions.entry(name_smol.clone())
@@ -74,7 +80,7 @@ impl Grammar {
                 BranchingRule::new(mark)
             });
         branching_rule.add_alt_branch(main_rule);
-        
+
         // 2) synthesized rules
         //for (syn_name, builders) in sb.syn_rules {
         for syn_name in sb.defn_order {
@@ -113,6 +119,77 @@ impl Grammar {
             return Err(crate::parser::ParseError::static_err(&format!("missing rule definition for {name}")));
         }
         Ok(&self.definitions[name])
+    }
+
+    pub fn is_nullable(&mut self, name: &str) -> Result<bool, crate::parser::ParseError> {
+        // Compute nullability on first use if not cached
+        if self.nullable_rules.is_none() {
+            self.compute_nullability()?;
+        }
+
+        let nullable_set = self.nullable_rules.as_ref().unwrap();
+        Ok(nullable_set.contains(name))
+    }
+
+    /// Compute nullability using fixed point algorithm
+    /// A rule is nullable if:
+    /// 1. It directly produces empty (no factors)
+    /// 2. All symbols on the right-hand side are nullable
+    pub fn compute_nullability(&mut self) -> Result<(), crate::parser::ParseError> {
+        let mut nullable_rules = HashSet::new();
+        let mut changed = true;
+
+        // Fixed point iteration
+        while changed {
+            changed = false;
+
+            for rule_name in &self.defn_order {
+                // Skip if already marked nullable
+                if nullable_rules.contains(rule_name) {
+                    continue;
+                }
+
+                let branching_rule = &self.definitions[rule_name];
+
+                // Check if ANY alternative of this rule is nullable
+                for rule in branching_rule.iter() {
+                    if self.is_rule_nullable(&rule, &nullable_rules)? {
+                        nullable_rules.insert(rule_name.clone());
+                        changed = true;
+                        break; // Found one nullable alternative, rule is nullable
+                    }
+                }
+            }
+        }
+
+        self.nullable_rules = Some(nullable_rules);
+        Ok(())
+    }
+
+    /// Check if a specific rule (sequence of factors) is nullable
+    fn is_rule_nullable(&self, rule: &Rule, nullable_rules: &HashSet<SmolStr>) -> Result<bool, crate::parser::ParseError> {
+        // Empty rule is nullable
+        if rule.factors.is_empty() {
+            return Ok(true);
+        }
+
+        // All factors must be nullable for the rule to be nullable
+        for factor in &rule.factors {
+            match factor {
+                Factor::Terminal(_, _) => {
+                    // Terminals are never nullable
+                    return Ok(false);
+                }
+                Factor::Nonterm(_, name) => {
+                    // Check if this nonterminal is in our current nullable set
+                    if !nullable_rules.contains(name) {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+
+        Ok(true)
     }
 
     /// Parse an iXML grammar string and construct a Grammar
@@ -656,6 +733,7 @@ impl Rule {
         DotNotation::new(self)
     }
 
+
     pub fn add_term(&mut self, term: Factor) {
         self.factors.push(term);
     }
@@ -1115,5 +1193,79 @@ fn test_ixml_str_to_grammar() -> Result<(), crate::parser::ParseError> {
     assert!(grammar.is_ok());
     assert_eq!(grammar.as_ref().unwrap().get_rule_count(), 1);
     assert_eq!(grammar.as_ref().unwrap().get_root_definition_name(), Some(String::from("doc")));
+    Ok(())
+}
+
+#[test]
+fn test_nullability_algorithm() -> Result<(), crate::parser::ParseError> {
+    // Build a grammar with various nullability patterns
+    let ctx = RuleContext::new("test");
+
+    let mut g = Grammar::new();
+
+    // empty: .  (directly nullable)
+    g.define("empty", ctx.seq());
+
+    // terminal: "a".  (not nullable)
+    g.define("terminal", ctx.seq().ch('a'));
+
+    // nullable_chain: empty, empty.  (nullable through transitivity)
+    g.define("nullable_chain", ctx.seq().nt("empty").nt("empty"));
+
+    // mixed: empty, "a".  (not nullable - contains terminal)
+    g.define("mixed", ctx.seq().nt("empty").ch('a'));
+
+    // alternatives: "a" | empty.  (nullable through alternative)
+    g.define("alternatives", ctx.seq().alts(vec![
+        ctx.seq().ch('a'),
+        ctx.seq().nt("empty")
+    ]));
+
+    // complex: nullable_chain, alternatives?.  (nullable if alternatives is nullable)
+    // This involves synthesized rules from the ? operator
+    g.define("complex", ctx.seq().nt("nullable_chain").opt(ctx.seq().nt("alternatives")));
+
+    // Test the nullability
+    assert!(g.is_nullable("empty")?);
+    assert!(!g.is_nullable("terminal")?);
+    assert!(g.is_nullable("nullable_chain")?);
+    assert!(!g.is_nullable("mixed")?);
+    assert!(g.is_nullable("alternatives")?);
+    assert!(g.is_nullable("complex")?);
+
+    // Test that nullability computation is cached
+    assert!(g.nullable_rules.is_some());
+
+    Ok(())
+}
+
+#[test]
+fn test_nullability_recursive_patterns() -> Result<(), crate::parser::ParseError> {
+    // Test patterns involving *, +, ++, ** operators which generate synthesized rules
+    let ctx = RuleContext::new("test");
+    let mut g = Grammar::new();
+
+    // base: "a".
+    g.define("base", ctx.seq().ch('a'));
+
+    // star: base*.  (always nullable due to * operator)
+    g.define("star", ctx.seq().repeat0(ctx.seq().nt("base")));
+
+    // plus: base+.  (not nullable - requires at least one base)
+    g.define("plus", ctx.seq().repeat1(ctx.seq().nt("base")));
+
+    // empty: .
+    g.define("empty", ctx.seq());
+
+    // empty_star: empty*.  (nullable)
+    g.define("empty_star", ctx.seq().repeat0(ctx.seq().nt("empty")));
+
+    // Test results
+    assert!(!g.is_nullable("base")?);
+    assert!(g.is_nullable("star")?);   // * is always nullable
+    assert!(!g.is_nullable("plus")?);  // + requires at least one non-nullable item
+    assert!(g.is_nullable("empty")?);
+    assert!(g.is_nullable("empty_star")?);
+
     Ok(())
 }

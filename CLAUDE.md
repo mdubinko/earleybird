@@ -93,13 +93,19 @@ Whenever generating log files or capturing trace output, put the files in the lo
 
 ## Token-Efficient Test Suite Analysis
 ```bash
-# Use existing filters strategically
-cargo run -- suite syntax              # Focus on syntax issues
-cargo run -- suite character-sets      # Target specific features
-cargo run -- suite hex                 # Test specific patterns
+# Built-in token-efficient modes (recommended)
+cargo run -- suite syntax --stdout summary --file-mode none           # Just summary (most efficient)
+cargo run -- suite syntax --stdout summary --file-mode failures-only  # Summary + failures to file
+cargo run -- suite syntax --stdout progress-only --file-mode none     # Only show passes
 
-# Focus on high-impact tests
-cargo run -- suite --limit=10          # Don't overwhelm output
+# Legacy shell-based approaches (still useful)
+cargo run -- suite syntax | head -30          # Limit output to first 30 lines
+cargo run -- suite 2>/dev/null | grep -c "✅ PASS"     # Count passes
+cargo run -- suite 2>/dev/null | grep -c "🔥 GRAMMAR ERROR"  # Count grammar errors
+
+# Advanced: Separate file vs stdout control
+cargo run -- suite --stdout summary --file-mode all -o log/full.txt   # Full details to file, summary to chat
+cargo run -- suite --stdout quiet --file-mode failures-only -o log/failures.txt  # Silent with failures logged
 ```
 
 ## Trace-Based Debugging (Highly Efficient)
