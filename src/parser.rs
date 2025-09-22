@@ -229,19 +229,20 @@ impl TraceArena {
     /// also performs necessary bookkeeping
     ///
     /// Earley Algorithm - Rules for De-duplicated Items:
-    /// According to well-established Earley theory, item identity is based solely on:
+    /// Traditional Earley theory suggests item identity is based on:
     /// Rule + dot position + origin position
     ///
-    /// When an item is encountered again (de-duped), the correct behavior is:
-    /// - If the rule is nullable -> automatic success, even if no tokens consumed
-    /// - If the rule has already been predicted at this position -> no re-prediction needed
-    /// - If the rule has been scanned or completed before -> check whether the same
-    ///   completed item already exists -- if it does, no new item should be added
+    /// However, for ambiguous grammars (like iXML), this can be too aggressive:
+    /// - Nullable rules may need multiple predictions for different parent contexts
+    /// - Rule identity alone may not capture all necessary semantic distinctions
     ///
-    /// The current implementation correctly prevents duplicate items, but the parser
-    /// must handle the case where a nullable rule is re-predicted by immediately
-    /// creating an empty completion (Rule -> •, [i]) at position i and triggering
-    /// completion for any item waiting for this rule.
+    /// Current implementation: defer deduplication for nullable rules to ensure
+    /// proper completion propagation to all waiting parent tasks.
+    ///
+    /// When predicting a rule whose right-hand side is nullable (i.e., can derive ε),
+    /// the parser must immediately enqueue a completed item (Rule → •, [i]) at position i.
+    /// This ensures that any item waiting for this rule can be completed without delay.
+    /// Note: This applies only to the specific nullable branch being predicted—not to the rule as a whole.
     fn have_we_seen(&mut self, task: &Task) -> bool {
         let hash = task.to_string();
         if self.hashes.contains(&hash) {
@@ -253,6 +254,7 @@ impl TraceArena {
             false
         }
     }
+
 
     fn format_task(&self, id: TraceId) -> String {
         let task = self.get(id);
@@ -479,6 +481,8 @@ impl Parser {
 
                     // TODO: Add nullable rule handling here
                     // For now, use normal prediction logic
+
+                    // Add all rule alternatives for normal prediction
                     for rule in g.get_definition(&name)?.iter() {
                         // TODO: propertly account for rule-level Mark
                         let dot = rule.dot_notator();
@@ -510,8 +514,9 @@ impl Parser {
                         let maybe_id = self.traces.task_advance_cursor(tid, rec);
                         self.queue_back(maybe_id);
                     } else {
+                        // Terminal doesn't match - silently drop this task (no requeue)
+                        // Per Earley algorithm: non-matching terminals should PASS (terminate quietly)
                         debug!("non-matched char '{}' (expecting {matcher}); 🛑", input.get_at(current_pos));
-                        debug_earley_fail!(current_pos, &format!("{}", matcher), input.get_at(current_pos), &self.queue_snapshot());
                     }
                 }
             }

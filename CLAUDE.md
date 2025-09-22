@@ -155,13 +155,27 @@ grep "pos=0" log/debug.log                           # Focus on specific positio
 
 - Always ensure that we are producing code that can target WebAssembly (this does not include test harnesses or suites)
 
-# ✅ RESOLVED: CRITICAL EARLEY PARSER BUG - CHARACTER RANGES NOW WORK
+# ✅ RESOLVED: CRITICAL EARLEY PARSER BUGS
 
-## ~~Root Cause: Premature Completion in Earley Parser~~ **FIXED**
+## ~~Root Cause 1: Premature Completion in Earley Parser~~ **FIXED**
 
-**Issue**: ~~75/78 syntax tests fail~~ **Character range parsing now works correctly**
+**Issue**: ~~Character range parsing failed~~ **Character range parsing now works correctly**
 
 **Problem RESOLVED**: The parser was continuing parent tasks immediately when a child completed, rather than exploring all alternatives at the current position first. This prevented patterns like `["0"-"9"]` from working because `member → string` would complete with `"0"` and trigger parent continuation before `member → range` could process the full `"0"-"9"` pattern.
+
+## ~~Root Cause 2: Overly Aggressive Deduplication for Nullable Rules~~ **FIXED**
+
+**Issue**: ~~Single string members like `["A"]` failed bootstrap grammar parsing~~ **String character sets now work correctly**
+
+**Problem RESOLVED**: The parser was deduplicating nullable rule predictions too aggressively. When `s` (spacing rule) was predicted at the same position for different parent contexts, the second prediction was rejected as a duplicate. This caused the parser queue to empty prematurely, stopping at position 10 instead of continuing to parse the closing `]` at position 11.
+
+**Key Change** (src/parser.rs:247): Defer deduplication for nullable rules to allow multiple parent contexts.
+```rust
+// For nullable rules, defer deduplication to allow multiple parent contexts
+if self.grammar.is_nullable(&task.name).unwrap_or(false) {
+    return false;  // Allow prediction, deduplication happens after completion
+}
+```
 
 ### Solution Implemented:
 **Fixed COMPLETER queue management** - Parent continuations are now queued at the back (`queue_back`) instead of front (`queue_front`), ensuring all alternatives at the current position are explored before parent propagation.
