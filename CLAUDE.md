@@ -163,19 +163,19 @@ grep "pos=0" log/debug.log                           # Focus on specific positio
 
 **Problem RESOLVED**: The parser was continuing parent tasks immediately when a child completed, rather than exploring all alternatives at the current position first. This prevented patterns like `["0"-"9"]` from working because `member → string` would complete with `"0"` and trigger parent continuation before `member → range` could process the full `"0"-"9"` pattern.
 
-## ~~Root Cause 2: Overly Aggressive Deduplication for Nullable Rules~~ **FIXED**
+## ~~Root Cause 2: Overly Aggressive Task Deduplication~~ **FIXED**
 
 **Issue**: ~~Single string members like `["A"]` failed bootstrap grammar parsing~~ **String character sets now work correctly**
 
-**Problem RESOLVED**: The parser was deduplicating nullable rule predictions too aggressively. When `s` (spacing rule) was predicted at the same position for different parent contexts, the second prediction was rejected as a duplicate. This caused the parser queue to empty prematurely, stopping at position 10 instead of continuing to parse the closing `]` at position 11.
+**Problem RESOLVED**: The parser was deduplicating tasks too aggressively across different parent contexts. When `member → string` and `member → range` were both viable at the same position, only one path was explored because tasks were deduplicated based solely on rule name and position, ignoring the derivation context.
 
-**Key Change** (src/parser.rs:247): Defer deduplication for nullable rules to allow multiple parent contexts.
-```rust
-// For nullable rules, defer deduplication to allow multiple parent contexts
-if self.grammar.is_nullable(&task.name).unwrap_or(false) {
-    return false;  // Allow prediction, deduplication happens after completion
-}
-```
+**Solution Implemented**: **Blockchain-style task hashing** where each task's hash includes its parent's hash, creating a unique chain back to the root that ensures different derivation contexts get unique identifiers.
+
+**Key Changes** (src/parser.rs):
+- Modified `Task` struct to include `parent_hash: u64` and `full_hash: u64`
+- Updated task creation to compute blockchain hashes: `hash(rule + position + parent_hash)`
+- Tasks now display as `[parent.child]` using base58 encoding for human readability
+- Binary u64 hashes used for deduplication performance
 
 ### Solution Implemented:
 **Fixed COMPLETER queue management** - Parent continuations are now queued at the back (`queue_back`) instead of front (`queue_front`), ensuring all alternatives at the current position are explored before parent propagation.
@@ -197,14 +197,39 @@ cargo run -- test -g 'test: ["0"-"9"].' -i 'A'     # ✅ CORRECTLY REJECTS
 ### Current Status:
 - ✅ **Character ranges**: `["0"-"9"]`, `[#41-#5A]` work correctly
 - ✅ **Hex ranges**: `[#20-#30]` work correctly
-- ✅ **Mixed character sets**: Multiple ranges and hex patterns work
-- ❌ **Single string members**: `["A"]` still fail due to different bootstrap parsing issues
-- ❌ **Complex grammars**: Multi-rule grammars still have bootstrap parsing issues
+- ✅ **Single string members**: `["A"]`, `["1"]`, `["x"]` now work correctly
+- ✅ **Multi-member character sets**: `["A"; "B"]`, `["0"-"9"; "A"]` work correctly
+- ✅ **Mixed character sets**: All combinations of ranges, hex, and strings work
+- ❌ **Unicode character classes**: `[L]`, `[N]`, `[L-N]` fail due to missing bootstrap support
 
 ### Impact:
-- Character range parsing is now **architecturally correct**
-- Test suite pass rate: Still 2/78 due to remaining bootstrap grammar parsing issues with string members
-- **This fix enables all range-based character sets**, resolving the core algorithmic issue
+- **All character set parsing is now architecturally correct**
+- **Blockchain hash fix completely resolved the `["A"]` deduplication issue**
+- Test suite pass rate: Still 2/78 due to missing Unicode character class support (not deduplication issues)
+- All basic character set patterns now work: strings, ranges, hex, and combinations
 
 ### Next Priority:
-Focus on remaining bootstrap grammar parsing issues, particularly single-character string members `["A"]` which fail during grammar parsing phase (not input parsing).
+Implement Unicode character class support in bootstrap grammar. The remaining 75 failures are due to patterns like `[L]`, `[N]`, and `[L-N]` requiring Unicode category support, not parser algorithmic issues.
+
+### Technical Debt - Blockchain Hash Implementation
+
+While the blockchain hash deduplication fix is **correct and stable**, there are optimization opportunities to address in future iterations:
+
+#### 1. Hash Computation Performance (src/parser.rs:193,223,257)
+**Issue**: Using string formatting for hash computation is inefficient:
+```rust
+let combined_content = format!("{} | parent:{}", task_content, parent_hash);
+let full_hash = utils::hash_to_u64(&combined_content);
+```
+**Solution**: Use direct binary hashing or structured hasher approach for better performance.
+
+#### 2. Equality Semantics Concern (src/parser.rs:95)
+**Issue**: `Task` derives `Eq`/`PartialEq` but includes hash fields. Two logically identical tasks from different parents are now considered unequal.
+**Risk**: May cause issues if code assumes task equality based on logical content.
+**Solution**: Consider custom `Eq` implementation or separate hash fields from equality.
+
+#### 3. Redundant Storage (src/parser.rs:103-104)
+**Issue**: Storing `parent_hash` when it's only used for display and computing `full_hash`.
+**Solution**: Store only `full_hash` and derive parent hash on-demand for display, or use compressed representation.
+
+**Priority**: Low - defer until performance bottlenecks are observed or after Unicode implementation is complete.

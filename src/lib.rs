@@ -6,3 +6,4 @@ pub mod unicode_ranges;
 pub mod testsuite_utils;
 pub mod debug;
 pub mod validator;
+pub mod utils;
