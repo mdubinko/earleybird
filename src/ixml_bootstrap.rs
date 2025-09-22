@@ -9,19 +9,21 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     g.define("ixml", ctx.seq().nt("s").opt(ctx.seq().nt("prolog")).repeat1_sep(ctx.seq().nt("rule"), ctx.seq().nt("RS")).nt("s"));
 
     // -s: (whitespace; comment)*. {Optional spacing}
-    // TODO: comment
     let ctx = RuleContext::new("s");
     g.mark_define(Mark::Mute, "s", ctx.seq().repeat0(ctx.seq().nt("whitespace")));
+    g.mark_define(Mark::Mute, "s", ctx.seq().repeat0(ctx.seq().nt("comment")));
 
     // -RS: (whitespace; comment)+. {Required spacing}
-    // TODO: comment
     let ctx = RuleContext::new("RS");
     g.mark_define(Mark::Mute, "RS", ctx.seq().repeat1( ctx.seq().nt("whitespace")));
+    g.mark_define(Mark::Mute, "RS", ctx.seq().repeat1( ctx.seq().nt("comment")));
 
     // -whitespace: -[Zs]; tab; lf; cr.
-    // TODO: Unicode
     let ctx = RuleContext::new("whitespace");
-    g.mark_define(Mark::Mute, "whitespace", ctx.seq().mark_ch_in(" \u{0009}\u{000a}\u{000d}", TMark::Mute));
+    g.mark_define(Mark::Mute, "whitespace", ctx.seq().mark_ch_unicode("Zs", TMark::Mute));
+    g.mark_define(Mark::Mute, "whitespace", ctx.seq().mark_ch('\u{0009}', TMark::Mute)); // tab
+    g.mark_define(Mark::Mute, "whitespace", ctx.seq().mark_ch('\u{000a}', TMark::Mute)); // lf
+    g.mark_define(Mark::Mute, "whitespace", ctx.seq().mark_ch('\u{000d}', TMark::Mute)); // cr
 
     // -tab: -#9.
     // DNO = Deliberately Not Implemented
@@ -33,10 +35,20 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     // DNO = Deliberately Not Implemented
 
     // comment: -"{", (cchar; comment)*, -"}".
-    // TODO
+    let ctx = RuleContext::new("comment");
+    g.define("comment", ctx.seq()
+        .mark_ch('{', TMark::Mute)
+        .repeat0(ctx.seq().nt("comment_content"))
+        .mark_ch('}', TMark::Mute));
+
+    // comment_content: cchar; comment. (the alternation inside comment)
+    let ctx = RuleContext::new("comment_content");
+    g.mark_define(Mark::Mute, "comment_content", ctx.seq().nt("cchar"));
+    g.mark_define(Mark::Mute, "comment_content", ctx.seq().nt("comment"));  // Nested comments
 
     // -cchar: ~["{}"].
-    // TODO
+    let ctx = RuleContext::new("cchar");
+    g.mark_define(Mark::Mute, "cchar", ctx.seq().lit(Lit::union().exclude().ch('{').ch('}')));
 
     // prolog: version, s.
     let ctx = RuleContext::new("prolog");
@@ -89,10 +101,10 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     g.mark_define(Mark::Mute, "term", ctx.seq().nt("repeat1"));
 
     // -factor: terminal; nonterminal; insertion; -"(", s, alts, -")", s.
-    // TODO: insertion
     let ctx = RuleContext::new("factor");
     g.mark_define(Mark::Mute, "factor", ctx.seq().nt("terminal"));
     g.mark_define(Mark::Mute, "factor", ctx.seq().nt("nonterminal"));
+    g.mark_define(Mark::Mute, "factor", ctx.seq().nt("insertion"));
     g.mark_define(Mark::Mute, "factor", ctx.seq()
         .mark_ch('(', TMark::Mute).nt("s").nt("alts").mark_ch(')', TMark::Mute).nt("s"));
 
@@ -127,15 +139,16 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     g.mark_define(Mark::Attr, "name", ctx.seq().nt("namestart").repeat0(ctx.seq().nt("namefollower")));
     
     // -namestart: ["_"; L].
-    // Basic implementation: underscore and letters
     let ctx = RuleContext::new("namestart");
-    g.mark_define(Mark::Mute, "namestart", ctx.seq().ch_in("_abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"));
+    g.mark_define(Mark::Mute, "namestart", ctx.seq().ch('_'));
+    g.mark_define(Mark::Mute, "namestart", ctx.seq().ch_unicode("L"));
 
     // -namefollower: namestart; ["-.·‿⁀"; Nd; Mn].
-    // Basic implementation: namestart chars plus digits and hyphens
     let ctx = RuleContext::new("namefollower");
     g.mark_define(Mark::Mute, "namefollower", ctx.seq().nt("namestart"));
-    g.mark_define(Mark::Mute, "namefollower", ctx.seq().ch_in("-0123456789"));
+    g.mark_define(Mark::Mute, "namefollower", ctx.seq().ch_in("-.·‿⁀"));
+    g.mark_define(Mark::Mute, "namefollower", ctx.seq().ch_unicode("Nd"));
+    g.mark_define(Mark::Mute, "namefollower", ctx.seq().ch_unicode("Mn"));
 
     // -terminal: literal; charset.
     let ctx = RuleContext::new("terminal");
@@ -262,7 +275,11 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     g.mark_define(Mark::Mute, "letter", ctx.seq().ch_range('a', 'z'));
 
     // insertion: -"+", s, (string; -"#", hex), s.
-    // TODO
+    let ctx = RuleContext::new("insertion");
+    g.define("insertion", ctx.seq()
+        .mark_ch('+', TMark::Mute).nt("s").nt("string").nt("s"));
+    g.define("insertion", ctx.seq()
+        .mark_ch('+', TMark::Mute).nt("s").mark_ch('#', TMark::Mute).nt("hex").nt("s"));
 
     g
 }

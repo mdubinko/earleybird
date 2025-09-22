@@ -480,6 +480,14 @@ impl Grammar {
                     seq = seq.repeat1(repeat_this);
                 }
             }
+            "insertion" => {
+                // insertion: -"+", s, (string; -"#", hex), s.
+                // Insertion consumes no input but adds content to the output
+                // TODO: Implement proper insertion semantics - this is a placeholder
+                // For now, treat as empty match (consumes no input)
+                // The actual insertion semantics need to be handled in the output generation phase
+                debug_grammar!(DebugLevel::Basic, "TODO: Insertion syntax not fully implemented - treating as empty match");
+            }
             _ => unimplemented!("unknown element {name} child of <alt>"),
         }
         seq
