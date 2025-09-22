@@ -327,7 +327,10 @@ pub fn xml_canonicalize(input_xml: &str) -> String {
     
     loop {
         match reader.read_event_into(&mut buf) {
-            Err(e) => panic!("Error at position {}: {:?}", reader.buffer_position(), e),
+            Err(e) => {
+                eprintln!("Warning: XML parsing error at position {}: {:?} - returning input as-is", reader.buffer_position(), e);
+                return input_xml.to_string();
+            },
             // exits the loop when reaching end of file
             Ok(Event::Eof) => break,
 
@@ -339,15 +342,24 @@ pub fn xml_canonicalize(input_xml: &str) -> String {
                     for (k,v) in attrs.into_iter().sorted() {
                         builder.append(" ");
                         builder.append(k);
-                        builder.append("=\"");
-                        builder.append(v.replace('\"', "&quot;"));
-                        builder.append("\"")
+                        builder.append("='");
+                        builder.append(v.replace('\'', "&apos;").replace('&', "&amp;").replace('<', "&lt;"));
+                        builder.append("'")
                     }
                 }
                 builder.append("\n>");
             }
             Ok(Event::Text(t)) => {
-                builder.append(t.unescape().expect("UTF-8 parse error on text").to_string().replace('<', "&lt;"));
+                match t.unescape() {
+                    Ok(unescaped) => {
+                        builder.append(unescaped.to_string().replace('<', "&lt;"));
+                    }
+                    Err(e) => {
+                        eprintln!("Warning: Failed to unescape text content, using raw text: `{}` error: {}", String::from_utf8_lossy(&t).to_string(), e);
+                        // Fall back to raw text without unescaping
+                        builder.append(String::from_utf8_lossy(&t).to_string().replace('<', "&lt;"));
+                    }
+                }
             },
             Ok(Event::End(e)) => {
                 builder.append("</");
@@ -383,7 +395,16 @@ fn all_attrs(attrs: Attributes) -> HashMap<String, String> {
             Ok(a) => {
                 let name: String = from_utf8(a.key.into_inner()).expect("UTF-8 error parsing attribute name").to_string();
                 if name != "xmlns" {
-                    hashmap.insert(name, a.unescape_value().expect("UTF-8 error parsing attribute value").to_string());
+                    match a.unescape_value() {
+                        Ok(value) => {
+                            hashmap.insert(name, value.to_string());
+                        }
+                        Err(e) => {
+                            eprintln!("Warning: Failed to unescape attribute '{}' value, using raw value: `{}` error: {}", name, String::from_utf8_lossy(&a.value).to_string(), e);
+                            // Fall back to raw value without unescaping
+                            hashmap.insert(name, String::from_utf8_lossy(&a.value).to_string());
+                        }
+                    }
                 };
             }
             Err(e) => {

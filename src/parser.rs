@@ -418,6 +418,7 @@ pub struct Parser {
     completed_trace: Vec<TraceId>,
     farthest_pos: usize,  // hint for later reading the trace
     input_length: usize,  // total length of input to ensure complete consumption
+    max_trace_size: usize,  // maximum number of operations before timeout
 }
 
 /// Earley parser with LIFO prediction strategy and modified completion strategy
@@ -435,12 +436,17 @@ pub struct Parser {
 impl Parser {
 
     pub fn new(grammar: Grammar) -> Self {
+        Self::new_with_trace_limit(grammar, 100_000)
+    }
+
+    pub fn new_with_trace_limit(grammar: Grammar, max_trace_size: usize) -> Self {
         Self {
             grammar,
             traces: TraceArena::new(),
             completed_trace: Vec::new(),
             farthest_pos: 0,
             input_length: 0,
+            max_trace_size,
         }
     }
 
@@ -466,6 +472,14 @@ impl Parser {
 
         // work through the queue
         while let Some(tid) = self.traces.queue.pop_front() {
+            // Check trace size limit to prevent infinite loops
+            if self.traces.arena.len() > self.max_trace_size {
+                return Err(ParseError::static_err(&format!(
+                    "Parse exceeded maximum trace size of {} operations (infinite loop detected)",
+                    self.max_trace_size
+                )));
+            }
+
             let current_pos = self.traces.get(tid).pos;
             if current_pos > self.farthest_pos {
                 debug!("⏭ Advanced input to position {} (='{}')", current_pos, input.get_at(current_pos));
@@ -787,7 +801,11 @@ impl Parser {
             if let Content::Text(txt) = arena.get(descendant).unwrap().get() {
                 attr_builder.append(txt.as_str());
             }
-            attr_value.append(attr_builder.string().unwrap().replace('\"', "&quot;"));
+            attr_value.append(attr_builder.string().unwrap()
+                .replace('\'', "&apos;")
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+            );
         }
         attr_value.string().unwrap()
     }
@@ -908,7 +926,7 @@ impl Parser {
                 builder.append(">");
             },
             Content::Attribute(..) => {}, // handled above
-            Content::Text(utf8) => builder.append(utf8.clone()),
+            Content::Text(utf8) => builder.append(utf8.replace('&', "&amp;").replace('<', "&lt;")),
         }
     }
 

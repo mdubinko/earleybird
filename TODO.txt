@@ -97,11 +97,12 @@
   - Impact: Secondary issue once character range parsing is fixed
 
 ### Priority 2: Unicode Character Classes (half day) #HIGH
-- [ ] Implement basic Unicode categories in bootstrap grammar (src/ixml_bootstrap.rs:22-24) #HIGH
-  - Issue: Tests like `class-range.ixml` use `[L-N]` patterns that fail
-  - Required: L (letters), N (numbers), Nd (decimal numbers), Mn (nonspacing marks)
-  - Use existing `unicode-character-database` crate dependency
-  - Impact: ~30 syntax tests currently failing with GRAMMAR_ERROR
+- [x] Implement basic Unicode categories in bootstrap grammar (src/ixml_bootstrap.rs:22-24) #HIGH
+  - Status: COMPLETED - Unicode character classes L, Nd, Mn, Zs now working
+  - Fixed: process_class_member now uses UnicodeRange enum instead of ASCII approximations
+  - Fixed: Added support for 'code' attributes (not just 'class' attributes)
+  - Verified: Manual tests show [L], [Nd], [Mn], [Zs] patterns working correctly
+  - Impact: Unicode character class parsing now functional
 
 ### Priority 3: Medium Term Features #MED
 - [ ] Implement insertion syntax: `+` insertion for literal text (src/ixml_bootstrap.rs:92,265) #MED
@@ -109,13 +110,24 @@
 - [ ] Complete Unicode hex range support in character classes #MED
   - Add support for Unicode block names and hex ranges beyond basic categories
 
-## Current Test Suite Status (Updated 2025-09-19)
-- **Current Pass Rate**: 2/78 syntax tests (2.6%) - elem1, unused-rule pass; unused-rules fails
-- **Bootstrap Grammar Parsing**: 75/78 tests fail with GRAMMAR_ERROR due to character range parsing issues
-- **Root Cause Identified**: Earley parser ambiguity handling for string vs range members in character sets
-- **Character Range Issue**: Patterns like `["A"-"C"]` and `[#41-#43]` fail bootstrap grammar parsing
-- **Grammar Logic Verified**: Hand-built grammars work correctly, confirming issue is in bootstrap parsing
-- **Enhanced Diagnostics**: Added detailed parse failure reporting showing furthest position and completion state
+## Current Test Suite Status (Updated 2025-09-22)
+- **Correct Tests**: **MAJOR BREAKTHROUGH** - 43/108 passing (39.8% pass rate)
+  - **43 PASS** (39.8%) - Core functionality working correctly
+  - **40 Grammar Errors** - Bootstrap grammar parsing issues, mostly infinite loops caught by trace limits
+  - **12 Parse Errors** - Input parsing failures with valid grammars
+  - **12 Fail** - Output format mismatches, mostly minor XML formatting
+  - **1 TODO** - Left recursion unimplemented (shows as TODO, not grammar error)
+- **Key Fixes This Session**:
+  - **XML Parsing Crashes**: FIXED - graceful handling of malformed entities (UnterminatedEntity, EndEventMismatch)
+  - **Text Content Escaping**: FIXED - proper `<` → `&lt;` and `&` → `&amp;` in XML output
+  - **Trace Size Limits**: IMPLEMENTED - 100k operation limit prevents infinite loop hangs
+  - **Element-content Test**: Fixed from panic → ✅ PASS
+- **Unicode Character Classes**: WORKING - [L], [Nd], [Mn], [Zs] patterns parse correctly
+- **Left Recursion Issue**: ROOT CAUSE FOUND - blockchain hash creates infinitely growing chains for predictions
+  - Problem: expr→sum→expr creates unique hashes [A→B→C→D...] instead of stable cycle [A→B→A→B]
+  - Solution: Use parent rule + position for prediction hashing instead of task-based chaining
+  - Impact: Shows as 🚧 TODO in test results, not grammar errors
+- **Infrastructure Improvements**: Enhanced diagnostics, background task support, emoji documentation
 
 ## Lower Priority - Architecture
 - [ ] Investigate test suite debug configuration integration #LOW

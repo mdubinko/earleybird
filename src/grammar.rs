@@ -29,7 +29,7 @@
 use std::{fmt, collections::{HashMap, HashSet}, cell::Cell, rc::Rc};
 use smol_str::SmolStr;
 use indextree::{Arena, NodeId};
-use crate::{parser::{Parser, DotNotation}, unicode_ranges::UnicodeRange};
+use crate::{parser::{Parser, DotNotation}, unicode_ranges::UnicodeRange, debug::DebugLevel};
 use crate::{ixml_bootstrap::bootstrap_ixml_grammar, debug_grammar};
 // TODO: Optimization: add CharMatchers at the Grammar level
 
@@ -495,9 +495,12 @@ impl Grammar {
             return Self::process_hex_member(hex_attr, lit_builder);
         }
 
-        // Check for class attribute
+        // Check for class/code attribute (Unicode character class)
         if let Some(class_attr) = member_attrs.get("class") {
             return Self::process_class_member(class_attr, lit_builder);
+        }
+        if let Some(code_attr) = member_attrs.get("code") {
+            return Self::process_class_member(code_attr, lit_builder);
         }
 
         // Check for child elements (hex, class, or range elements)
@@ -532,24 +535,26 @@ impl Grammar {
 
     /// Process Unicode class member like L, N, Nd
     fn process_class_member(class_attr: &str, lit_builder: LitBuilder) -> LitBuilder {
-        // TODO: This is a basic ASCII approximation - full Unicode class support needed
         match class_attr {
             "L" => {
-                // TODO: Should include all Unicode letter categories (Lu, Ll, Lt, Lm, Lo)
-                // Currently approximating with ASCII letters only
-                lit_builder.ch_range('A', 'Z').ch_range('a', 'z')
+                lit_builder.ch_unicode("L")
             }
             "N" => {
-                // TODO: Should include all Unicode number categories (Nd, Nl, No)
-                // Currently approximating with ASCII digits only
-                lit_builder.ch_range('0', '9')
+                // N covers all number categories - using Nd as primary approximation
+                // Full Unicode N would include Nd, Nl, No but we only have Nd implemented
+                lit_builder.ch_unicode("Nd")
             }
             "Nd" => {
-                // TODO: Should include all Unicode decimal numbers, not just ASCII
-                lit_builder.ch_range('0', '9')
+                lit_builder.ch_unicode("Nd")
+            }
+            "Mn" => {
+                lit_builder.ch_unicode("Mn")
+            }
+            "Zs" => {
+                lit_builder.ch_unicode("Zs")
             }
             _ => {
-                // TODO: Add support for other Unicode classes (Mn, Mc, Me, etc.)
+                debug_grammar!(DebugLevel::Basic, "WARNING: Unsupported Unicode class '{}'", class_attr);
                 lit_builder
             }
         }

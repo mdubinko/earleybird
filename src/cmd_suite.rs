@@ -7,6 +7,12 @@ use std::process;
 use std::fs::OpenOptions;
 use std::io::Write;
 
+/// Parse with built-in trace size limit to prevent infinite loops
+fn parse_with_trace_limit(parser: &mut Parser, input: &str) -> Result<indextree::Arena<earleybird::parser::Content>, earleybird::parser::ParseError> {
+    // The parser now has built-in trace size limit protection
+    parser.parse(input)
+}
+
 /// Resolve a suite specification to a catalog path and filter string
 /// Examples:
 /// - None -> use master catalog, no filter (loads all suites)
@@ -307,7 +313,7 @@ fn run_single_test(test: testsuite_utils::TestCase) -> TestOutcome {
             AssertNotASentence => {
                 // Try to parse - this should fail
                 let mut parser = Parser::new(target_grammar.clone());
-                match parser.parse(&test.input) {
+                match parse_with_trace_limit(&mut parser, &test.input) {
                     Ok(_) => TestOutcome::Fail {
                         expected: "parse failure".to_string(),
                         actual: "parse succeeded".to_string(),
@@ -320,7 +326,7 @@ fn run_single_test(test: testsuite_utils::TestCase) -> TestOutcome {
             }
             AssertXml(expected_xml) => {
                 let mut parser = Parser::new(target_grammar.clone());
-                match parser.parse(&test.input) {
+                match parse_with_trace_limit(&mut parser, &test.input) {
                     Ok(tree) => {
                         let actual_xml = Parser::tree_to_test_format(&tree);
                         if xml_canonicalize(&actual_xml) == xml_canonicalize(&expected_xml) {

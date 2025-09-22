@@ -91,6 +91,26 @@ This is a project to implement Invisible XML (ixml) parser and CLI tool with 100
 
 Whenever generating log files or capturing trace output, put the files in the log/ directory, to avoid cluttering up the project root dir.
 
+## Test Suite Emoji Indicators
+
+When running test suites or grepping log files, these emoji indicators help identify test outcomes:
+
+- 🧪 **Test start**: "Test {name} ..."
+- ✅ **PASS**: Test succeeded
+- ❌ **FAIL**: Test failed (expected vs actual mismatch)
+- 🔥 **GRAMMAR ERROR**: Bootstrap grammar parsing failed
+- ⚠️ **PARSE ERROR**: Input parsing failed with grammar
+- 💥 **PANIC**: Test crashed with panic
+- ⏭️ **SKIP**: Test skipped (missing components)
+- 🚧 **TODO**: Test marked as not yet implemented
+
+Example grep commands:
+```bash
+grep "✅ PASS" log/results.txt        # Find passing tests
+grep "🔥 GRAMMAR ERROR" log/results.txt  # Find bootstrap grammar issues
+grep "🚧 TODO" log/results.txt       # Find unimplemented test cases
+```
+
 ## Token-Efficient Test Suite Analysis
 ```bash
 # Built-in token-efficient modes (recommended)
