@@ -9,14 +9,14 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     g.define("ixml", ctx.seq().nt("s").opt(ctx.seq().nt("prolog")).repeat1_sep(ctx.seq().nt("rule"), ctx.seq().nt("RS")).nt("s"));
 
     // -s: (whitespace; comment)*. {Optional spacing}
+    g.mark_define(Mark::Mute, "__eb_space", RuleContext::new("__eb_space").seq().nt("whitespace"));
+    g.mark_define(Mark::Mute, "__eb_space", RuleContext::new("__eb_space").seq().nt("comment"));
     let ctx = RuleContext::new("s");
-    g.mark_define(Mark::Mute, "s", ctx.seq().repeat0(ctx.seq().nt("whitespace")));
-    g.mark_define(Mark::Mute, "s", ctx.seq().repeat0(ctx.seq().nt("comment")));
+    g.mark_define(Mark::Mute, "s", ctx.seq().repeat0(ctx.seq().nt("__eb_space")));
 
     // -RS: (whitespace; comment)+. {Required spacing}
     let ctx = RuleContext::new("RS");
-    g.mark_define(Mark::Mute, "RS", ctx.seq().repeat1( ctx.seq().nt("whitespace")));
-    g.mark_define(Mark::Mute, "RS", ctx.seq().repeat1( ctx.seq().nt("comment")));
+    g.mark_define(Mark::Mute, "RS", ctx.seq().repeat1(ctx.seq().nt("__eb_space")));
 
     // -whitespace: -[Zs]; tab; lf; cr.
     let ctx = RuleContext::new("whitespace");

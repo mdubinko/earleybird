@@ -67,17 +67,28 @@ impl fmt::Display for ValidationError {
 
 /// Main validation entry point
 pub fn validate_ixml(input: &str) -> ValidationResult {
-    // Phase 1: Comment preprocessing
-    match strip_comments(input) {
-        Ok(processed) => ValidationResult::new(processed),
-        Err(error) => ValidationResult::new(String::new()).with_error(error),
-    }
-    
+    // TODO: Comment preprocessing disabled due to bootstrap circular dependency
+    // The current strip_comments implementation incorrectly treats braces inside string literals
+    // as comment delimiters (e.g., `test: "{"` fails with "unclosed comment").
+    // Since native comment parsing is now implemented in the bootstrap grammar,
+    // we can safely disable preprocessing and let the Earley parser handle comments.
+    // Future fix: Use ANTLR or similar for proper comment preprocessing that respects string boundaries.
+
+    // Phase 1: Comment preprocessing (DISABLED - see TODO above)
+    // match strip_comments(input) {
+    //     Ok(processed) => ValidationResult::new(processed),
+    //     Err(error) => ValidationResult::new(String::new()).with_error(error),
+    // }
+
+    // For now, return input unchanged
+    ValidationResult::new(input.to_string())
+
     // TODO: Phase 2: Basic syntax validation
     // TODO: Phase 3: Character validation
 }
 
 /// Strip nested comments {...} from iXML text
+#[allow(dead_code)]
 fn strip_comments(input: &str) -> Result<String, ValidationError> {
     let mut result = String::new();
     let mut chars = input.char_indices().peekable();

@@ -31,6 +31,27 @@ use smol_str::SmolStr;
 use indextree::{Arena, NodeId};
 use crate::{parser::{Parser, DotNotation}, unicode_ranges::UnicodeRange, debug::DebugLevel};
 use crate::{ixml_bootstrap::bootstrap_ixml_grammar, debug_grammar};
+
+/// Detailed error types for the three-phase grammar parsing process
+#[derive(Debug)]
+pub enum GrammarConstructionError {
+    /// Phase 1: Validation and preprocessing failed
+    ValidationError(String),
+    /// Phase 2: Bootstrap grammar couldn't parse the iXML
+    BootstrapParseError(crate::parser::ParseError),
+    /// Phase 3: Parse tree to Grammar conversion failed
+    ConversionError(String),
+}
+
+impl fmt::Display for GrammarConstructionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ValidationError(msg) => write!(f, "Validation error: {}", msg),
+            Self::BootstrapParseError(err) => write!(f, "Bootstrap parse error: {}", err),
+            Self::ConversionError(msg) => write!(f, "Conversion error: {}", msg),
+        }
+    }
+}
 // TODO: Optimization: add CharMatchers at the Grammar level
 
 /// the primary owner of all grammar data structures
@@ -192,23 +213,42 @@ impl Grammar {
         Ok(true)
     }
 
-    /// Parse an iXML grammar string and construct a Grammar
-    pub fn from_ixml_str(ixml: &str) -> Result<Grammar, crate::parser::ParseError> {        
+    /// Parse an iXML grammar string and construct a Grammar (legacy method)
+    pub fn from_ixml_str(ixml: &str) -> Result<Grammar, crate::parser::ParseError> {
+        // Convert detailed error to legacy error for backward compatibility
+        match Self::from_ixml_str_detailed(ixml) {
+            Ok(grammar) => Ok(grammar),
+            Err(err) => Err(crate::parser::ParseError::static_err(&err.to_string())),
+        }
+    }
+
+    /// Parse an iXML grammar string with detailed error categorization
+    pub fn from_ixml_str_detailed(ixml: &str) -> Result<Grammar, GrammarConstructionError> {
         // Phase 1: Validate and preprocess the iXML text
         let validation_result = crate::validator::validate_ixml(ixml.trim());
-        
+
         if !validation_result.is_valid() {
             let error_msgs: Vec<String> = validation_result.errors.iter()
                 .map(|e| e.to_string())
                 .collect();
-            return Err(crate::parser::ParseError::static_err(&error_msgs.join("; ")));
+            return Err(GrammarConstructionError::ValidationError(error_msgs.join("; ")));
         }
-        
+
         // Phase 2: Parse the validated and preprocessed text
         let mut ixml_parser = Parser::new(bootstrap_ixml_grammar());
-        let ixml_arena = ixml_parser.parse(&validation_result.processed_text)?;
-        
-        let grammar = Grammar::from_parse_tree(&ixml_arena)?;
+        let ixml_arena = match ixml_parser.parse(&validation_result.processed_text) {
+            Ok(arena) => arena,
+            Err(parse_error) => return Err(GrammarConstructionError::BootstrapParseError(parse_error)),
+        };
+
+        // Phase 3: Convert parse tree to Grammar
+        let grammar = match Grammar::from_parse_tree(&ixml_arena) {
+            Ok(g) => g,
+            Err(conversion_error) => {
+                return Err(GrammarConstructionError::ConversionError(conversion_error.to_string()));
+            }
+        };
+
         Ok(grammar)
     }
 

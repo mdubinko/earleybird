@@ -144,11 +144,15 @@ fn run(suite_spec: Option<String>, output_file: &str, stdout_mode: &str, file_mo
         let category = match &outcome {
             TestOutcome::Pass => "pass",
             TestOutcome::Fail { .. } => "fail",
-            TestOutcome::GrammarParseError(_) => "grammar_error",
+            TestOutcome::ValidationError(_) => "validation_error",
+            TestOutcome::BootstrapParseError(_) => "bootstrap_error",
+            TestOutcome::ConversionError(_) => "conversion_error",
             TestOutcome::InputParseError(_) => "parse_error",
             TestOutcome::Panic(_) => "panic",
             TestOutcome::Skip(_) => "skip",
             TestOutcome::Todo(_) => "todo",
+            #[allow(deprecated)]
+            TestOutcome::GrammarParseError(_) => "grammar_error", // Legacy
         };
         *stats.entry(category).or_insert(0) += 1;
 
@@ -191,9 +195,43 @@ fn run(suite_spec: Option<String>, output_file: &str, stdout_mode: &str, file_mo
                     writeln!(file, "").unwrap();
                 }
             }
+            TestOutcome::ValidationError(err) => {
+                if should_print_result {
+                    println!("🧹 VALIDATION ERROR");
+                }
+                if should_write_to_file && file_writer.is_some() {
+                    let file = file_writer.as_mut().unwrap();
+                    writeln!(file, "VALIDATION_ERROR {}", test_name).unwrap();
+                    writeln!(file, "  Error: {}", err).unwrap();
+                    writeln!(file, "").unwrap();
+                }
+            }
+            TestOutcome::BootstrapParseError(err) => {
+                if should_print_result {
+                    println!("🔥 BOOTSTRAP ERROR");
+                }
+                if should_write_to_file && file_writer.is_some() {
+                    let file = file_writer.as_mut().unwrap();
+                    writeln!(file, "BOOTSTRAP_ERROR {}", test_name).unwrap();
+                    writeln!(file, "  Error: {}", err).unwrap();
+                    writeln!(file, "").unwrap();
+                }
+            }
+            TestOutcome::ConversionError(err) => {
+                if should_print_result {
+                    println!("🔧 CONVERSION ERROR");
+                }
+                if should_write_to_file && file_writer.is_some() {
+                    let file = file_writer.as_mut().unwrap();
+                    writeln!(file, "CONVERSION_ERROR {}", test_name).unwrap();
+                    writeln!(file, "  Error: {}", err).unwrap();
+                    writeln!(file, "").unwrap();
+                }
+            }
+            #[allow(deprecated)]
             TestOutcome::GrammarParseError(err) => {
                 if should_print_result {
-                    println!("🔥 GRAMMAR ERROR");
+                    println!("🔥 GRAMMAR ERROR (LEGACY)");
                 }
                 if should_write_to_file && file_writer.is_some() {
                     let file = file_writer.as_mut().unwrap();
@@ -266,12 +304,20 @@ fn run(suite_spec: Option<String>, output_file: &str, stdout_mode: &str, file_mo
         }
         "summary" => {
             println!("=== SUMMARY ===");
-            println!("Total: {} | Pass: {} | Fail: {} | Grammar Errors: {}",
+            println!("Total: {} | Pass: {} | Fail: {} | Bootstrap: {} | Conversion: {} | Parse: {}",
                 count,
                 stats.get("pass").unwrap_or(&0),
                 stats.get("fail").unwrap_or(&0),
-                stats.get("grammar_error").unwrap_or(&0)
+                stats.get("bootstrap_error").unwrap_or(&0),
+                stats.get("conversion_error").unwrap_or(&0),
+                stats.get("parse_error").unwrap_or(&0)
             );
+            // Show detailed breakdown if any validation errors
+            let validation = stats.get("validation_error").unwrap_or(&0);
+            let legacy_grammar = stats.get("grammar_error").unwrap_or(&0);
+            if *validation > 0 || *legacy_grammar > 0 {
+                println!("Details: Validation: {} | Legacy Grammar: {}", validation, legacy_grammar);
+            }
             if file_mode != "none" {
                 println!("Results written to: {}", output_file);
             }
@@ -300,9 +346,16 @@ fn run_single_test(test: testsuite_utils::TestCase) -> TestOutcome {
     let target_grammar = match grammar {
         TestGrammar::Parsed(g) => g,
         TestGrammar::Unparsed(ixml) => {
-            match Grammar::from_ixml_str(&ixml) {
+            match Grammar::from_ixml_str_detailed(&ixml) {
                 Ok(g) => g,
-                Err(e) => return TestOutcome::GrammarParseError(e.to_string()),
+                Err(e) => {
+                    use earleybird::grammar::GrammarConstructionError;
+                    return match e {
+                        GrammarConstructionError::ValidationError(msg) => TestOutcome::ValidationError(msg),
+                        GrammarConstructionError::BootstrapParseError(err) => TestOutcome::BootstrapParseError(err.to_string()),
+                        GrammarConstructionError::ConversionError(msg) => TestOutcome::ConversionError(msg),
+                    };
+                }
             }
         }
     };

@@ -47,15 +47,25 @@ pub enum TestResult {
     AssertXml(XmlString),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub enum TestOutcome {
     Pass,
     Fail { expected: String, actual: String },
-    GrammarParseError(String),
-    InputParseError(String), 
+    // Phase 1: iXML validation errors (comment preprocessing, syntax validation)
+    ValidationError(String),
+    // Phase 2: Bootstrap grammar parsing errors (left recursion, infinite loops)
+    BootstrapParseError(String),
+    // Phase 3: Grammar tree conversion errors (unimplemented features, malformed trees)
+    ConversionError(String),
+    // Phase 4: Target grammar parsing errors (input doesn't match target grammar)
+    InputParseError(String),
+    // Infrastructure
     Panic(String),
     Skip(String),
     Todo(String),
+    // Legacy - remove after migration
+    #[deprecated(note = "Use specific error types instead")]
+    GrammarParseError(String),
 }
 
 struct TestCaseBuilder {
