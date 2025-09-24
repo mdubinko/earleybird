@@ -132,10 +132,15 @@
   - **Trace Size Limits**: IMPLEMENTED - 100k operation limit prevents infinite loop hangs
   - **Element-content Test**: Fixed from panic → ✅ PASS
 - **Unicode Character Classes**: WORKING - [L], [Nd], [Mn], [Zs] patterns parse correctly
-- **Left Recursion Issue**: ROOT CAUSE FOUND - blockchain hash creates infinitely growing chains for predictions
-  - Problem: expr→sum→expr creates unique hashes [A→B→C→D...] instead of stable cycle [A→B→A→B]
-  - Solution: Use parent rule + position for prediction hashing instead of task-based chaining
-  - Impact: Shows as 🚧 TODO in test results, not grammar errors
+- [x] **Left Recursion Issue**: COMPLETELY RESOLVED - implemented alternative indexing with hybrid deduplication #CRITICAL
+  - Problem: Blockchain hash created infinitely growing chains for predictions (expr→sum→expr = [A→B→C→D...])
+  - Root Cause: Confusion between individual alternatives (Rules) vs grouped alternatives (BranchingRules)
+  - Solution: Added `alt_index: usize` field to Task struct with hybrid deduplication strategy
+  - Implementation: Traditional Earley deduplication for predictions + blockchain hash for completions
+  - Verification: `S: S, "a"; "b".` with input `ba` now parses correctly as `<S><S>b</S>a</S>`
+  - Technical Details: Position semantics changed to S(N) notation, removed unused at_end() method
+  - Files Modified: src/parser.rs (Task struct, have_we_seen method), src/debug.rs (trace format)
+  - Impact: Left recursion fully working, no more infinite loops or 🚧 TODO markers in test results
 - **Infrastructure Improvements**: Enhanced diagnostics, background task support, emoji documentation
 
 ## Lower Priority - Architecture

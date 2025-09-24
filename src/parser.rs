@@ -37,6 +37,10 @@ impl DotNotation {
         self.iteratee.len() == self.matched_so_far.len()
     }
 
+    fn is_at_start(&self) -> bool {
+        self.matched_so_far.is_empty()
+    }
+
     /// retrieve the match info for trace processing
     fn matches_iter(&self) -> std::slice::Iter<'_, MatchRec> {
         self.matched_so_far.iter()
@@ -94,7 +98,8 @@ impl MatchRec {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Task {
     id: TraceId,              // unique id, as handled by TraceArena
-    name: SmolStr,            // rule name
+    name: SmolStr,            // BranchingRule name
+    alt_index: usize,         // which alt of this BranchingRule (0-based)
     mark: Mark,               // effective mark for this task
     origin: usize,            // starting position in the input
     pos: usize,               // current position in the input
@@ -114,7 +119,7 @@ impl fmt::Display for Task {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let parent_base58 = utils::to_base58(self.parent_hash);
         let self_base58 = utils::to_base58(self.full_hash);
-        write!(f, "[{}.{}] ( {}{} {}:{} {} )", parent_base58, self_base58, self.mark, self.name, self.origin, self.pos, self.dot)
+        write!(f, "[{}.{}] ( {}{}[{}] {}:{} {} )", parent_base58, self_base58, self.mark, self.name, self.alt_index, self.origin, self.pos, self.dot)
     }
 }
 
@@ -185,16 +190,17 @@ impl TraceArena {
 
     /// originate a completely new task (root level)
     /// Returns Some(TraceId) (unless this is a duplicate Task, in which case None is returned)
-    fn task(&mut self, name: &str, mark: Mark, origin: usize, pos: usize, dot: DotNotation) -> Option<TraceId> {
+    fn task(&mut self, name: &str, alt_index: usize, mark: Mark, origin: usize, pos: usize, dot: DotNotation) -> Option<TraceId> {
         let id = TraceId(self.arena.len());
         let parent_hash = 0u64; // Root task
-        let task_content = format!("( {}{} {}:{} {} )", mark, name, origin, pos, dot);
+        let task_content = format!("( {}{}[{}] {}:{} {} )", mark, name, alt_index, origin, pos, dot);
         let combined_content = format!("{} | parent:{}", task_content, parent_hash);
         let full_hash = utils::hash_to_u64(&combined_content);
 
         let task = Task{
             id,
             name: SmolStr::new(name),
+            alt_index,
             mark,
             origin,
             pos,
@@ -215,16 +221,17 @@ impl TraceArena {
     /// ... = x { <-- processing this rule }
     /// x = ... { <-- so queue up this one next, at same pos, etc. }
     /// Returns Some(TraceId) (unless this is a duplicate Task, in which case None is returned)
-    fn task_downstream(&mut self, name: &str, mark: Mark, origin: usize, pos: usize, dot: DotNotation, parent_id: TraceId) -> Option<TraceId> {
+    fn task_downstream(&mut self, name: &str, alt_index: usize, mark: Mark, origin: usize, pos: usize, dot: DotNotation, parent_id: TraceId) -> Option<TraceId> {
         let id = TraceId(self.arena.len());
         let parent_hash = self.get(parent_id).full_hash;
-        let task_content = format!("( {}{} {}:{} {} )", mark, name, origin, pos, dot);
+        let task_content = format!("( {}{}[{}] {}:{} {} )", mark, name, alt_index, origin, pos, dot);
         let combined_content = format!("{} | parent:{}", task_content, parent_hash);
         let full_hash = utils::hash_to_u64(&combined_content);
 
         let task = Task{
             id,
             name: SmolStr::new(name),
+            alt_index,
             mark,
             origin,
             pos,
@@ -252,13 +259,14 @@ impl TraceArena {
 
         // Keep same parent hash, recalculate full hash with new content
         let parent_hash = from_task.parent_hash;
-        let task_content = format!("( {}{} {}:{} {} )", from_task.mark, from_task.name, from_task.origin, new_pos, new_dot);
+        let task_content = format!("( {}{}[{}] {}:{} {} )", from_task.mark, from_task.name, from_task.alt_index, from_task.origin, new_pos, new_dot);
         let combined_content = format!("{} | parent:{}", task_content, parent_hash);
         let full_hash = utils::hash_to_u64(&combined_content);
 
         let task = Task {
             id,
             name: from_task.name.clone(),
+            alt_index: from_task.alt_index,  // Preserve alt_index from source task
             mark: from_task.mark.clone(),
             origin: from_task.origin,
             pos: new_pos,
@@ -278,31 +286,37 @@ impl TraceArena {
     /// returns true if this trace had been previously seen
     /// also performs necessary bookkeeping
     ///
-    /// Blockchain-style Task Deduplication:
-    /// Traditional Earley deduplication uses: Rule + dot position + origin position
+    /// Hybrid Task Deduplication Strategy:
     ///
-    /// However, this is too aggressive for ambiguous grammars (like iXML):
-    /// - Different derivation contexts need separate exploration
-    /// - Example: `member → string` vs `member → range` at same position
+    /// For PREDICTIONS (dot at start): Use traditional Earley deduplication but include alt_index
+    /// to distinguish different alternatives: hash(rule + alt_index + origin + position)
+    /// This prevents infinite left recursion while properly distinguishing alternatives.
     ///
-    /// Current implementation: blockchain-style hashing where each task's hash
-    /// includes its parent's hash, creating unique identifiers for different
-    /// derivation paths while maintaining deduplication performance.
+    /// For COMPLETIONS/SCANNING: Use blockchain-style hashing that includes parent
+    /// context to allow exploration of different derivation paths needed for ambiguous
+    /// grammars (e.g., `member → string` vs `member → range` at same position).
     ///
-    /// Task identity: hash(rule + position + dot + parent_hash)
-    /// This ensures tasks with different ancestry are treated as distinct,
-    /// allowing all viable parsing alternatives to be explored.
+    /// Task identity for predictions: hash(rule + alt_index + origin + position)
+    /// Task identity for completions: hash(rule + alt_index + position + dot + parent_hash)
     fn have_we_seen(&mut self, task: &Task) -> bool {
-        let hash = task.full_hash;
+        let hash = if task.dot.is_at_start() {
+            // PREDICTION: Use traditional Earley deduplication + alt_index to prevent left recursion
+            let prediction_content = format!("{}[{}] at {}:{}", task.name, task.alt_index, task.origin, task.pos);
+            utils::hash_to_u64(&prediction_content)
+        } else {
+            // COMPLETION/SCANNING: Use blockchain hash to preserve different derivation contexts
+            task.full_hash
+        };
+
         if self.hashes.contains(&hash) {
             let parent_base58 = utils::to_base58(task.parent_hash);
             let self_base58 = utils::to_base58(task.full_hash);
-            debug!("🚫 DUPLICATE TASK DETECTED: Skipping {}.{} {}", parent_base58, self_base58, task.name);
+            debug!("🚫 DUPLICATE TASK DETECTED: Skipping {}.{} {}[{}]", parent_base58, self_base58, task.name, task.alt_index);
             true
         } else {
             let parent_base58 = utils::to_base58(task.parent_hash);
             let self_base58 = utils::to_base58(task.full_hash);
-            debug!("...caching task {}.{} {}", parent_base58, self_base58, task.name);
+            debug!("...caching task {}.{} {}[{}]", parent_base58, self_base58, task.name, task.alt_index);
             self.hashes.insert(hash);
             false
         }
@@ -312,7 +326,7 @@ impl TraceArena {
     fn format_task(&self, id: TraceId) -> String {
         let task = self.get(id);
         let printable_id: String = id.0.to_string();
-        format!(" {}) {}:{}👉 {}=( {} ) ", printable_id, task.origin, task.pos, task.name, task.dot)
+        format!(" {}) {}:{}👉 {}[{}]=( {} ) ", printable_id, task.origin, task.pos, task.name, task.alt_index, task.dot)
     }
 }
 
@@ -324,12 +338,6 @@ struct InputIter {
 impl InputIter {
     fn new(input: &str) -> Self {
         Self { tokens: input.chars().collect::<Vec<_>>() }
-    }
-
-    /// Check if cursor position is beyond valid input bounds
-    /// Cursor 0 is before first character, cursor 1 before second, etc.
-    pub fn at_end(&self, pos: usize) -> bool {
-        pos > self.tokens.len()
     }
 
     /// Get the character immediately after the given cursor position
@@ -469,9 +477,9 @@ impl Parser {
         let top_rule = g.get_root_definition()?
             .ok_or(ParseError::static_err("No top grammar rule"))?;
 
-        for alt in top_rule.iter() {
+        for (alt_index, alt) in top_rule.iter().enumerate() {
             let maybe_id = self.traces.task(&g.get_root_definition_name()
-                .ok_or(ParseError::static_err("No top grammar rule name"))?, top_rule.mark(), 0, 0, alt.dot_notator());
+                .ok_or(ParseError::static_err("No top grammar rule name"))?, alt_index, top_rule.mark(), 0, 0, alt.dot_notator());
             self.queue_front(maybe_id);
         }
 
@@ -560,12 +568,12 @@ impl Parser {
                     // For now, use normal prediction logic
 
                     // Add all rule alternatives for normal prediction
-                    for rule in g.get_definition(&name)?.iter() {
+                    for (alt_index, rule) in g.get_definition(&name)?.iter().enumerate() {
                         // TODO: propertly account for rule-level Mark
                         let dot = rule.dot_notator();
                         let new_pos = self.traces.get(tid).pos;
                         // "origin" for this downstream task now matches current pos
-                        let maybe_id = self.traces.task_downstream(&name, effective_mark.clone(), new_pos, new_pos, dot, tid);
+                        let maybe_id = self.traces.task_downstream(&name, alt_index, effective_mark.clone(), new_pos, new_pos, dot, tid);
                         self.queue_front(maybe_id);
                         //self.queue_back(maybe_id);
                     }
