@@ -10,7 +10,6 @@ use log::{info, debug, trace};
 use crate::utils;
 
 const DOTSEP: &str = "•";
-const EOF_CHAR: char = '\x1f';
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 /// A sort of iterator for a Rule.
@@ -327,16 +326,22 @@ impl InputIter {
         Self { tokens: input.chars().collect::<Vec<_>>() }
     }
 
-    pub fn at_eof(&self, pos: usize) -> bool {
-         pos >= self.tokens.len()
+    /// Check if cursor position is beyond valid input bounds
+    /// Cursor 0 is before first character, cursor 1 before second, etc.
+    pub fn at_end(&self, pos: usize) -> bool {
+        pos > self.tokens.len()
     }
 
-    pub fn get_at(&mut self, pos: usize) -> char {
-        if self.at_eof(pos) {
-            debug!("📄🚫");
-            EOF_CHAR
+    /// Get the character immediately after the given cursor position
+    /// Cursor 0 is before the first character, so get_at(0) returns the first character
+    /// Cursor 1 is before the second character, so get_at(1) returns the second character
+    /// Like graphics coordinates: cursors are between characters, not at characters
+    /// Panics if cursor position is beyond input length
+    pub fn get_at(&mut self, cursor: usize) -> char {
+        if cursor >= self.tokens.len() {
+            panic!("Parser attempted to read beyond input at cursor {}, input length is {}", cursor, self.tokens.len());
         } else {
-            self.tokens[pos]
+            self.tokens[cursor]
         }
     }
     // TODO: row/col machinery for input tokens
@@ -458,7 +463,7 @@ impl Parser {
         // help avoid borrow-contention on *self
         let g = self.grammar.clone();
     
-        debug!("Input now at position {} '{}'", 0, input.get_at(0));
+        debug!("Starting parse at position 0 (before first character)");
 
         // Seed with top expr
         let top_rule = g.get_root_definition()?
@@ -482,7 +487,11 @@ impl Parser {
 
             let current_pos = self.traces.get(tid).pos;
             if current_pos > self.farthest_pos {
-                debug!("⏭ Advanced input to position {} (='{}')", current_pos, input.get_at(current_pos));
+                if current_pos < self.input_length {
+                    debug!("⏭ Advanced input to position {} (next char: '{}')", current_pos, input.get_at(current_pos));
+                } else {
+                    debug!("⏭ Advanced input to position {} (at end)", current_pos);
+                }
                 self.farthest_pos = current_pos;
             }
             debug!("🔄 PROCESSING: Pulled from queue {} at {}", self.traces.format_task(tid), current_pos);
@@ -566,16 +575,16 @@ impl Parser {
                     debug!("SCANNER: Terminal {tmark}{matcher} at pos={current_pos}");
                     debug_earley_pos!(DebugLevel::Trace, current_pos, "SCANNER: {} scanning {}{}", self.traces.format_task(tid), tmark, matcher);
 
-                    // Bounds check: don't advance beyond input length
+                    // Bounds check: don't scan beyond input length
                     if current_pos >= self.input_length {
                         debug!("Position {} >= input length {}; 🛑", current_pos, self.input_length);
-                        debug_earley_fail!(current_pos, &format!("{}", matcher), EOF_CHAR, &self.queue_snapshot());
+                        debug_earley_fail!(current_pos, &format!("{}", matcher), '∅', &self.queue_snapshot());
                         continue;
                     }
 
                     if matcher.accept(input.get_at(current_pos)) {
-                        // Match! Advance position but ensure we don't exceed input bounds
-                        let new_pos = (current_pos + 1).min(self.input_length);
+                        // Match! Advance position by 1
+                        let new_pos = current_pos + 1;
                         let rec = MatchRec::Term(input.get_at(current_pos), new_pos, tmark);
                         debug!("advance cursor SCAN");
                         debug_earley_pos!(DebugLevel::Trace, current_pos, "SCANNER: MATCH '{}' -> advance to {}", input.get_at(current_pos), new_pos);

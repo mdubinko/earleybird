@@ -161,7 +161,7 @@ pub fn debug_earley_at_pos(level: DebugLevel, pos: usize, msg: &str) {
     }
     
     // Use structured format for easier grepping
-    write_debug_output(&format!("EARLEY|pos={}|{}", pos, msg));
+    write_debug_output(&format!("EARLEY|S({})|{}", pos, msg));
 }
 
 pub fn debug_earley_failure(pos: usize, expected: &str, actual: char, queue_snapshot: &str) {
@@ -170,7 +170,7 @@ pub fn debug_earley_failure(pos: usize, expected: &str, actual: char, queue_snap
         return;
     }
 
-    write_debug_output(&format!("EARLEY-FAIL|pos={}|expected={}|actual='{}'|queue=[{}]",
+    write_debug_output(&format!("EARLEY-FAIL|S({})|expected={}|actual='{}'|queue=[{}]",
         pos, expected, actual, queue_snapshot));
 }
 
