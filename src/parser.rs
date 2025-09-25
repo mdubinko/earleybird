@@ -296,12 +296,12 @@ impl TraceArena {
     /// context to allow exploration of different derivation paths needed for ambiguous
     /// grammars (e.g., `member → string` vs `member → range` at same position).
     ///
-    /// Task identity for predictions: hash(rule + alt_index + origin + position)
+    /// Task identity for predictions: hash(rule + alt_index + origin + position + parent_hash)
     /// Task identity for completions: hash(rule + alt_index + position + dot + parent_hash)
     fn have_we_seen(&mut self, task: &Task) -> bool {
         let hash = if task.dot.is_at_start() {
-            // PREDICTION: Use traditional Earley deduplication + alt_index to prevent left recursion
-            let prediction_content = format!("{}[{}] at {}:{}", task.name, task.alt_index, task.origin, task.pos);
+            // PREDICTION: Use traditional Earley deduplication + alt_index + parent_context to prevent left recursion
+            let prediction_content = format!("{}[{}] at {}:{} parent:{}", task.name, task.alt_index, task.origin, task.pos, task.parent_hash);
             utils::hash_to_u64(&prediction_content)
         } else {
             // COMPLETION/SCANNING: Use blockchain hash to preserve different derivation contexts
@@ -918,6 +918,9 @@ impl Parser {
                 builder.append(name.to_string());
 
                 // handle attributes before closing start tag...
+                // TODO: Add dynamic error detection for duplicate attribute names (D02 error code)
+                // This should check for duplicate attr_name values and report appropriate errors
+                // for AssertDynamicError test cases like expr1
                 for attr_child in nid.children(arena).filter(|n| arena.get(*n).unwrap().get().is_attr() ) {
                     builder.append(" ");
                     let attr_desc = arena.get(attr_child).unwrap().get();

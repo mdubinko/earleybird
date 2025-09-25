@@ -392,7 +392,12 @@ impl Grammar {
                 };
                 debug_grammar!(DebugLevel::Trace, "      Processing literal with attrs: {:?}", attrs);
                 if let Some(string_value) = attrs.get("string") {
-                    seq = seq.mark_ch(string_value.chars().next().expect("no empty string literals"), tmark);
+                    if string_value.is_empty() {
+                        debug_grammar!(DebugLevel::Basic, "WARNING: empty string literal encountered - treating as epsilon");
+                        // Empty string - no characters to match, continue with current seq
+                    } else {
+                        seq = seq.mark_str(string_value, tmark);
+                    }
                 } else if let Some(hex_value) = attrs.get("hex") {
                     // Handle hex literals like #a (which is newline \n)
                     if let Ok(code_point) = u32::from_str_radix(hex_value, 16) {
@@ -1061,6 +1066,19 @@ impl SeqBuilder {
     pub fn mark_lit(mut self, lit: LitBuilder, tmark: TMark) -> Self {
         let factor = Factor::new_lit(lit, tmark);
         self.factors.push(factor);
+        self
+    }
+
+    /// Convenience function: accept a string literal (expands to sequence of characters)
+    pub fn str(self, s: &str) -> Self {
+        self.mark_str(s, TMark::Default)
+    }
+
+    /// Convenience function: accept a string literal with specified `TMark`
+    pub fn mark_str(mut self, s: &str, tmark: TMark) -> Self {
+        for ch in s.chars() {
+            self = self.mark_ch(ch, tmark);
+        }
         self
     }
 

@@ -57,10 +57,9 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     // version: -"ixml", RS, -"version", RS, string, s, -'.' .
     let ctx = RuleContext::new("version");
     g.mark_define(Mark::Default, "version", ctx.seq()
-        .mark_ch('i', TMark::Mute).mark_ch('x', TMark::Mute).mark_ch('m', TMark::Mute).mark_ch('l', TMark::Mute)
+        .mark_str("ixml", TMark::Mute)
         .nt("RS")
-        .mark_ch('v', TMark::Mute).mark_ch('e', TMark::Mute).mark_ch('r', TMark::Mute).mark_ch('s', TMark::Mute)
-        .mark_ch('i', TMark::Mute).mark_ch('o', TMark::Mute).mark_ch('n', TMark::Mute)
+        .mark_str("version", TMark::Mute)
         .nt("RS")
         .nt("string")
         .nt("s")
@@ -112,13 +111,13 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     let ctx = RuleContext::new("repeat0");
     g.define("repeat0", ctx.seq().nt("factor").mark_ch('*', TMark::Mute).nt("s"));
     g.define("repeat0", ctx.seq()
-        .nt("factor").mark_ch('*', TMark::Mute).mark_ch('*', TMark::Mute).nt("s").nt("sep"));
+        .nt("factor").mark_str("**", TMark::Mute).nt("s").nt("sep"));
 
     // repeat1: factor, (-"+", s; -"++", s, sep).
     let ctx = RuleContext::new("repeat1");
     g.define("repeat1", ctx.seq().nt("factor").mark_ch('+', TMark::Mute).nt("s"));
     g.define("repeat1", ctx.seq()
-        .nt("factor").mark_ch('+', TMark::Mute).mark_ch('+', TMark::Mute).nt("s").nt("sep"));
+        .nt("factor").mark_str("++", TMark::Mute).nt("s").nt("sep"));
 
     // option: factor, -"?", s.
     let ctx = RuleContext::new("option");

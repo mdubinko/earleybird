@@ -53,7 +53,7 @@ pub enum TestOutcome {
     Fail { expected: String, actual: String },
     // Phase 1: iXML validation errors (comment preprocessing, syntax validation)
     ValidationError(String),
-    // Phase 2: Bootstrap grammar parsing errors (left recursion, infinite loops)
+    // Phase 2: Bootstrap grammar parsing errors (malformed grammar, unsupported features)
     BootstrapParseError(String),
     // Phase 3: Grammar tree conversion errors (unimplemented features, malformed trees)
     ConversionError(String),

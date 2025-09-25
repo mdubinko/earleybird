@@ -111,6 +111,19 @@ grep "🔥 GRAMMAR ERROR" log/results.txt  # Find bootstrap grammar issues
 grep "🚧 TODO" log/results.txt       # Find unimplemented test cases
 ```
 
+## Test Suite Filtering
+
+You can filter tests by name using the suite command's second argument:
+
+```bash
+cargo run -- suite expr1              # Run all tests containing "expr1"
+cargo run -- suite correct           # Run all tests in correct/ directory
+cargo run -- suite attribute         # Run all attribute-related tests
+cargo run -- suite syntax/elem       # Run specific test pattern
+```
+
+This is much more efficient than running the full test suite when debugging specific issues.
+
 ## Token-Efficient Test Suite Analysis
 ```bash
 # Built-in token-efficient modes (recommended)
