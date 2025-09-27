@@ -50,12 +50,30 @@ impl Test {
         earleybird::debug::set_debug_config(debug_config);
 
         debug_basic!("=== {} DEBUG MODE ===", self.verbose.to_uppercase());
-        debug_basic!("Grammar: {}", self.grammar);
+        if std::path::Path::new(&self.grammar).exists() {
+            debug_basic!("Grammar file: {}", self.grammar);
+        } else {
+            debug_basic!("Grammar: {}", self.grammar);
+        }
         debug_basic!("Input: {}", self.input);
         debug_basic!("");
 
-        // Parse ixml grammar file and generate target grammar
-        let target_grammar = match Grammar::from_ixml_str(&self.grammar) {
+        // Parse ixml grammar (detect if it's a file path or inline content)
+        let grammar_content = if std::path::Path::new(&self.grammar).exists() {
+            // It's a file path - read the file content
+            match std::fs::read_to_string(&self.grammar) {
+                Ok(content) => content,
+                Err(e) => {
+                    eprintln!("Error reading grammar file '{}': {}", self.grammar, e);
+                    std::process::exit(1);
+                }
+            }
+        } else {
+            // It's inline content - use directly
+            self.grammar.clone()
+        };
+
+        let target_grammar = match Grammar::from_ixml_str(&grammar_content) {
             Ok(grammar) => {
                 debug_detailed!("✓ Grammar parsed successfully");
                 debug_detailed!("  Rules: {}", grammar.get_rule_count());

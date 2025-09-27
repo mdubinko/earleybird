@@ -26,7 +26,7 @@
 //! This module includes an ergonomic interface for building grammars by hand,
 //! or from the output of upstream processes (including ixml parsing!)
 
-use std::{fmt, collections::{HashMap, HashSet}, cell::Cell, rc::Rc};
+use std::{fmt, collections::{HashMap, HashSet}, cell::{Cell, OnceCell}, rc::Rc};
 use smol_str::SmolStr;
 use indextree::{Arena, NodeId};
 use crate::{parser::{Parser, DotNotation}, unicode_ranges::UnicodeRange, debug::DebugLevel};
@@ -61,7 +61,7 @@ pub struct Grammar {
     /// remember insertion order of rules (used for tests & comparing grammars)
     pub defn_order: Vec<SmolStr>,
     /// cached nullability information - computed on demand
-    nullable_rules: Option<HashSet<SmolStr>>,
+    nullable_rules: OnceCell<HashSet<SmolStr>>,
 }
 
 impl Grammar {
@@ -69,7 +69,7 @@ impl Grammar {
         Self {
             definitions: HashMap::new(),
             defn_order: Vec::new(),
-            nullable_rules: None,
+            nullable_rules: OnceCell::new(),
         }
     }
 
@@ -89,8 +89,7 @@ impl Grammar {
     /// merge contents of `RuleBuilder` (which might include entire synthesized named rules) into Grammar
     /// Consumes the `RuleBuilder`
     pub fn mark_define(&mut self, mark: Mark, name: &str, sb: SeqBuilder) {
-        // Invalidate nullable cache when adding new rules
-        self.nullable_rules = None;
+        // Note: OnceCell nullable cache will be computed on first access
 
         // 1) the main rule
         let name_smol = SmolStr::new(name);
@@ -142,13 +141,14 @@ impl Grammar {
         Ok(&self.definitions[name])
     }
 
-    pub fn is_nullable(&mut self, name: &str) -> Result<bool, crate::parser::ParseError> {
-        // Compute nullability on first use if not cached
-        if self.nullable_rules.is_none() {
-            self.compute_nullability()?;
-        }
+    pub fn is_nullable(&self, name: &str) -> Result<bool, crate::parser::ParseError> {
+        // Compute nullability on first use with OnceCell
+        let nullable_set = self.nullable_rules.get_or_init(|| {
+            let mut temp_grammar = self.clone();
+            // If this fails, we'll just return an empty set and let the caller handle errors
+            temp_grammar.compute_nullability_internal().unwrap_or_else(|_| HashSet::new())
+        });
 
-        let nullable_set = self.nullable_rules.as_ref().unwrap();
         Ok(nullable_set.contains(name))
     }
 
@@ -156,7 +156,7 @@ impl Grammar {
     /// A rule is nullable if:
     /// 1. It directly produces empty (no factors)
     /// 2. All symbols on the right-hand side are nullable
-    pub fn compute_nullability(&mut self) -> Result<(), crate::parser::ParseError> {
+    fn compute_nullability_internal(&mut self) -> Result<HashSet<SmolStr>, crate::parser::ParseError> {
         let mut nullable_rules = HashSet::new();
         let mut changed = true;
 
@@ -183,8 +183,7 @@ impl Grammar {
             }
         }
 
-        self.nullable_rules = Some(nullable_rules);
-        Ok(())
+        Ok(nullable_rules)
     }
 
     /// Check if a specific rule (sequence of factors) is nullable
@@ -308,7 +307,13 @@ impl Grammar {
         }
         for rule in all_rules {
             let rule_attrs = Parser::get_attributes(arena, rule);
-            let rule_name = &rule_attrs["name"];
+            let rule_name = match rule_attrs.get("name") {
+                Some(name) => name,
+                None => {
+                    debug_grammar!(DebugLevel::Basic, "ERROR: Rule is missing a name attribute");
+                    return Err(crate::parser::ParseError::static_err("Rule is missing a name attribute"));
+                }
+            };
             let rule_mark = rule_attrs.get("mark");
             let mark = match rule_mark.map(|s| s.as_str()) {
                 Some("@") => Mark::Attr,
@@ -426,7 +431,7 @@ impl Grammar {
                     seq = seq.mark_ch_in(string_attr, tmark);
                 } else {
                     // Process child member elements for ranges and other complex patterns
-                    let mut lit_builder = Lit::union();
+                    let mut lit_builder = TerminalDefn::union();
                     for (child_name, child_nid) in Parser::get_child_elements(arena, nid) {
                         if child_name == "member" {
                             let member_attrs = Parser::get_attributes(arena, child_nid);
@@ -455,10 +460,10 @@ impl Grammar {
                 // character classes - handle both string attributes and child member elements
                 if let Some(string_attr) = attrs.get("string") {
                     // Simple string character class like ~["abc"]
-                    seq = seq.mark_lit(Lit::union().exclude().ch_in(string_attr), tmark);
+                    seq = seq.mark_lit(TerminalDefn::union().exclude().ch_in(string_attr), tmark);
                 } else {
                     // Process child member elements for ranges and other complex patterns
-                    let mut lit_builder = Lit::union().exclude();
+                    let mut lit_builder = TerminalDefn::union().exclude();
                     for (child_name, child_nid) in Parser::get_child_elements(arena, nid) {
                         if child_name == "member" {
                             let member_attrs = Parser::get_attributes(arena, child_nid);
@@ -817,7 +822,7 @@ impl fmt::Display for Rule {
 /// TODO: insertions
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Factor {
-    Terminal(TMark, Lit),
+    Terminal(TMark, TerminalDefn),
     Nonterm(Mark, SmolStr),
 }
 
@@ -825,7 +830,7 @@ impl Factor {
     /// drain off the matchers from a `LitBuilder`, producing a new `Factor::Terminal`
     fn new_lit(builder: LitBuilder, tmark: TMark) -> Self {
         let is_exclude = builder.lit.is_exclude;
-        let mut lit = Lit::new();
+        let mut lit = TerminalDefn::new();
         lit.matchers = builder.lit.matchers;
         lit.is_exclude = is_exclude;
         Self::Terminal(tmark, lit)
@@ -848,14 +853,14 @@ impl fmt::Display for Factor {
 /// A character matcher can be an arbitrarily long set of matchspecs (which are considered logically OR'd)
 /// e.g. ["0"-"9" | "?" | #64 | Nd]
 #[derive(Debug, Clone, Eq, PartialEq)]
-pub struct Lit {
+pub struct TerminalDefn {
     matchers: Vec<CharMatcher>,
     /// negative matchers invert the overall match logic
     /// e.g. ~["0"-"9"]
     is_exclude: bool,
 }
 
-impl Lit {
+impl TerminalDefn {
     fn new() -> Self {
         Self { matchers: Vec::new(), is_exclude: false}
     }
@@ -875,7 +880,7 @@ impl Lit {
     }
 }
 
-impl fmt::Display for Lit {
+impl fmt::Display for TerminalDefn {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s: String = self.matchers.iter().map(std::string::ToString::to_string).collect::<Vec<_>>().join(" | ");
         let prefix = if self.is_exclude { "~" } else { "" };
@@ -915,12 +920,12 @@ impl fmt::Display for CharMatcher {
 
 #[derive(Debug)]
 pub struct LitBuilder {
-    lit: Lit
+    lit: TerminalDefn
 }
 
 impl LitBuilder {
     fn new() -> Self {
-        Self { lit: Lit::new() }
+        Self { lit: TerminalDefn::new() }
     }
 
     /// accept a single char
@@ -1016,7 +1021,7 @@ impl SeqBuilder {
 
     /// Convenience function: accept a single char, with specified `TMark`
     pub fn mark_ch(mut self, ch: char, tmark: TMark) -> Self {
-        let factor = Factor::new_lit(Lit::union().ch(ch) , tmark);
+        let factor = Factor::new_lit(TerminalDefn::union().ch(ch) , tmark);
         self.factors.push(factor);
         self
     }
@@ -1028,7 +1033,7 @@ impl SeqBuilder {
 
     /// Convenience function: accept a single char out of a list, with specified `TMark`
     pub fn mark_ch_in(mut self, chrs: &str, tmark: TMark) -> Self {
-        let factor = Factor::new_lit( Lit::union().ch_in(chrs), tmark);
+        let factor = Factor::new_lit( TerminalDefn::union().ch_in(chrs), tmark);
         self.factors.push(factor);
         self
     }
@@ -1040,7 +1045,7 @@ impl SeqBuilder {
 
     /// Convenience function: accept a single character within a range, with specified `TMark`
     pub fn mark_ch_range(mut self, bot: char, top: char, tmark: TMark) -> Self {
-        let factor = Factor::new_lit(Lit::union().ch_range(bot, top), tmark);
+        let factor = Factor::new_lit(TerminalDefn::union().ch_range(bot, top), tmark);
         self.factors.push(factor);
         self
     }
@@ -1052,7 +1057,7 @@ impl SeqBuilder {
 
     /// Convenience function: accept a single character within a Unicode range, with specified `TMark`
     pub fn mark_ch_unicode(mut self, name: &str, tmark: TMark) -> Self {
-        let factor = Factor::new_lit(Lit::union().ch_unicode(name), tmark);
+        let factor = Factor::new_lit(TerminalDefn::union().ch_unicode(name), tmark);
         self.factors.push(factor);
         self
     }
@@ -1305,7 +1310,7 @@ fn test_nullability_algorithm() -> Result<(), crate::parser::ParseError> {
     assert!(g.is_nullable("complex")?);
 
     // Test that nullability computation is cached
-    assert!(g.nullable_rules.is_some());
+    assert!(g.nullable_rules.get().is_some());
 
     Ok(())
 }

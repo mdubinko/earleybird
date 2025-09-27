@@ -1,4 +1,4 @@
-use crate::grammar::{Grammar, Mark, TMark, Lit, RuleContext};
+use crate::grammar::{Grammar, Mark, TMark, TerminalDefn, RuleContext};
 
 /// Bootstrap ixml grammar; hand-coded definition
 pub fn bootstrap_ixml_grammar() -> Grammar {
@@ -48,7 +48,7 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
 
     // -cchar: ~["{}"].
     let ctx = RuleContext::new("cchar");
-    g.mark_define(Mark::Mute, "cchar", ctx.seq().lit(Lit::union().exclude().ch('{').ch('}')));
+    g.mark_define(Mark::Mute, "cchar", ctx.seq().lit(TerminalDefn::union().exclude().ch('{').ch('}')));
 
     // prolog: version, s.
     let ctx = RuleContext::new("prolog");
@@ -182,12 +182,12 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
 
     // dchar: ~['"'; #a; #d]; '"', -'"'. {all characters except line breaks; quotes must be doubled}
     let ctx = RuleContext::new("dchar");
-    g.define("dchar", ctx.seq().lit(Lit::union().exclude().ch('"').ch('\n').ch('\r')));
+    g.define("dchar", ctx.seq().lit(TerminalDefn::union().exclude().ch('"').ch('\n').ch('\r')));
     g.define("dchar", ctx.seq().ch('"').mark_ch('"', TMark::Mute));
   
     // schar: ~["'"; #a; #d]; "'", -"'". {all characters except line breaks; quotes must be doubled}
     let ctx = RuleContext::new("schar");
-    g.define("schar", ctx.seq().lit(Lit::union().exclude().ch('\'').ch('\n').ch('\r')));
+    g.define("schar", ctx.seq().lit(TerminalDefn::union().exclude().ch('\'').ch('\n').ch('\r')));
     g.define("schar", ctx.seq().ch('\'').mark_ch('\'', TMark::Mute));
 
     // -encoded: (tmark, s)?, -"#", hex, s.
@@ -199,7 +199,7 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     // @hex: ["0"-"9"; "a"-"f"; "A"-"F"]+.
     let ctx = RuleContext::new("hex");
     g.mark_define(Mark::Attr, "hex", ctx.seq()
-        .repeat1(ctx.seq().lit(Lit::union()
+        .repeat1(ctx.seq().lit(TerminalDefn::union()
             .ch_range('0', '9').ch_range('a', 'f').ch_range('A', 'F'))));
 
     // -charset: inclusion; exclusion.

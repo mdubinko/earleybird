@@ -1,5 +1,5 @@
 
-use crate::{grammar::{Grammar, Lit, Mark, TMark, RuleContext}, testsuite_utils::{TestCase, TestGrammar, TestResult}};
+use crate::{grammar::{Grammar, TerminalDefn, Mark, TMark, RuleContext}, testsuite_utils::{TestCase, TestGrammar, TestResult}};
 use indoc::indoc;
 
 pub trait ParserTestSet {
@@ -105,7 +105,7 @@ impl ParserTestSet for SmokeChars {
         g.define("doc", ctx.seq()
             .ch_range('0', '9')
             .ch_unicode("Zs")
-            .lit( Lit::union().exclude().ch_range('0', '9').ch_range('a', 'f').ch_range('A', 'F') )
+            .lit( TerminalDefn::union().exclude().ch_range('0', '9').ch_range('a', 'f').ch_range('A', 'F') )
             .ch_in("abcdef") );
         g
     }

@@ -1,4 +1,4 @@
-use crate::grammar::{Grammar, Rule, Factor, TMark, Mark};
+use crate::grammar::{Factor, Grammar, TerminalDefn, Mark, Rule, TMark};
 use crate::debug::DebugLevel;
 use crate::{debug_earley_pos, debug_earley_fail};
 use std::{collections::{VecDeque, HashSet, HashMap}, fmt};
@@ -33,11 +33,12 @@ impl DotNotation {
         clo
     }
 
+
     fn is_completed(&self) -> bool {
         self.iteratee.len() == self.matched_so_far.len()
     }
 
-    fn is_at_start(&self) -> bool {
+    fn _is_at_start(&self) -> bool {
         self.matched_so_far.is_empty()
     }
 
@@ -104,8 +105,7 @@ pub struct Task {
     origin: usize,            // starting position in the input
     pos: usize,               // current position in the input
     dot: DotNotation,         // progress
-    parent_hash: u64,         // binary hash of parent task for blockchain-style deduplication
-    full_hash: u64,           // this task's binary hash including parent context
+    hash: u64,                // identity hash based on name, alt_index, origin, pos, dot
 }
 
 impl Task {
@@ -117,9 +117,7 @@ impl Task {
 /// Display task content for debugging
 impl fmt::Display for Task {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let parent_base58 = utils::to_base58(self.parent_hash);
-        let self_base58 = utils::to_base58(self.full_hash);
-        write!(f, "[{}.{}] ( {}{}[{}] {}:{} {} )", parent_base58, self_base58, self.mark, self.name, self.alt_index, self.origin, self.pos, self.dot)
+        write!(f, "{}{}[{}] {}:{} {}", self.mark, self.name, self.alt_index, self.origin, self.pos, self.dot)
     }
 }
 
@@ -162,6 +160,11 @@ impl TraceArena {
         }
     }
 
+    /// Format alternative-specific name for continuations system
+    fn format_alt_specific_name(rule_name: &str, alt_index: usize) -> String {
+        format!("{}[{}]", rule_name, alt_index)
+    }
+
     fn get(&self, id: TraceId) -> &Task {
         let TraceId(n) = id;
         &self.arena[n]
@@ -173,18 +176,31 @@ impl TraceArena {
         self.arena.push(task);
     }
 
-    /// record the continuation of a Task
-    fn save_continuation(&mut self, target_nt: &str, tid: TraceId) {
-        debug!("..⏸️ saving continuation {target_nt}->{:?}", tid);
-        self.continuations.insert(SmolStr::from(target_nt), tid);
+    /// Register a parent task that's waiting for a specific nonterminal alternative to complete
+    fn register_waiting_parent_task(&mut self, target_nt: &str, alt_index: usize, waiting_parent_tid: TraceId) {
+        let alt_specific_name = Self::format_alt_specific_name(target_nt, alt_index);
+        debug!("..⏸️ registering parent {} waiting for {}", self.format_task(waiting_parent_tid), alt_specific_name);
+        self.continuations.insert(SmolStr::from(alt_specific_name), waiting_parent_tid);
     }
 
-    /// retrieve the continuation for a Task
-    /// if nothing found, returns an empty Vec
-    fn get_continuations_for(&self, target_nt: SmolStr) -> Vec<TraceId> {
-        let maybe_val = self.continuations.get_vec(&target_nt);
-        let result = maybe_val.unwrap_or(&Vec::new()).clone();
-        debug!("..🔁 retrieving continuation {target_nt} containing {} entries", result.len());
+    /// Get all parent tasks waiting for ANY alternative of a nonterminal to complete
+    fn get_waiting_parent_tasks_by_name(&self, rule_name: &str) -> Vec<TraceId> {
+        let mut result = Vec::new();
+        let mut alt_index = 0;
+
+        // Try consecutive alternative indices until we get a miss
+        loop {
+            let alt_specific_name = Self::format_alt_specific_name(rule_name, alt_index);
+            if let Some(task_ids) = self.continuations.get_vec(&SmolStr::from(&alt_specific_name)) {
+                result.extend(task_ids);
+                alt_index += 1;
+            } else {
+                // No more alternatives found, we're done
+                break;
+            }
+        }
+
+        debug!("..🔁 found {} parent tasks waiting for any alternative of {}", result.len(), rule_name);
         result
     }
 
@@ -192,10 +208,8 @@ impl TraceArena {
     /// Returns Some(TraceId) (unless this is a duplicate Task, in which case None is returned)
     fn task(&mut self, name: &str, alt_index: usize, mark: Mark, origin: usize, pos: usize, dot: DotNotation) -> Option<TraceId> {
         let id = TraceId(self.arena.len());
-        let parent_hash = 0u64; // Root task
-        let task_content = format!("( {}{}[{}] {}:{} {} )", mark, name, alt_index, origin, pos, dot);
-        let combined_content = format!("{} | parent:{}", task_content, parent_hash);
-        let full_hash = utils::hash_to_u64(&combined_content);
+        let task_content = format!("{}[{}] {}:{} {}", name, alt_index, origin, pos, dot);
+        let hash = utils::hash_to_u64(&task_content);
 
         let task = Task{
             id,
@@ -205,8 +219,7 @@ impl TraceArena {
             origin,
             pos,
             dot,
-            parent_hash,
-            full_hash
+            hash,
         };
 
         if self.have_we_seen(&task) {
@@ -221,12 +234,10 @@ impl TraceArena {
     /// ... = x { <-- processing this rule }
     /// x = ... { <-- so queue up this one next, at same pos, etc. }
     /// Returns Some(TraceId) (unless this is a duplicate Task, in which case None is returned)
-    fn task_downstream(&mut self, name: &str, alt_index: usize, mark: Mark, origin: usize, pos: usize, dot: DotNotation, parent_id: TraceId) -> Option<TraceId> {
+    fn task_downstream(&mut self, name: &str, alt_index: usize, mark: Mark, origin: usize, pos: usize, dot: DotNotation, _parent_id: TraceId) -> Option<TraceId> {
         let id = TraceId(self.arena.len());
-        let parent_hash = self.get(parent_id).full_hash;
-        let task_content = format!("( {}{}[{}] {}:{} {} )", mark, name, alt_index, origin, pos, dot);
-        let combined_content = format!("{} | parent:{}", task_content, parent_hash);
-        let full_hash = utils::hash_to_u64(&combined_content);
+        let task_content = format!("{}[{}] {}:{} {}", name, alt_index, origin, pos, dot);
+        let hash = utils::hash_to_u64(&task_content);
 
         let task = Task{
             id,
@@ -236,8 +247,7 @@ impl TraceArena {
             origin,
             pos,
             dot,
-            parent_hash,
-            full_hash
+            hash,
         };
 
         if self.have_we_seen(&task) {
@@ -257,11 +267,8 @@ impl TraceArena {
         let new_dot = from_task.dot.advance_dot(rec);
         let id = TraceId(self.arena.len());
 
-        // Keep same parent hash, recalculate full hash with new content
-        let parent_hash = from_task.parent_hash;
-        let task_content = format!("( {}{}[{}] {}:{} {} )", from_task.mark, from_task.name, from_task.alt_index, from_task.origin, new_pos, new_dot);
-        let combined_content = format!("{} | parent:{}", task_content, parent_hash);
-        let full_hash = utils::hash_to_u64(&combined_content);
+        let task_content = format!("{}[{}] {}:{} {}", from_task.name, from_task.alt_index, from_task.origin, new_pos, new_dot);
+        let hash = utils::hash_to_u64(&task_content);
 
         let task = Task {
             id,
@@ -271,8 +278,7 @@ impl TraceArena {
             origin: from_task.origin,
             pos: new_pos,
             dot: new_dot,
-            parent_hash,
-            full_hash
+            hash,
         };
 
         if self.have_we_seen(&task) {
@@ -286,38 +292,15 @@ impl TraceArena {
     /// returns true if this trace had been previously seen
     /// also performs necessary bookkeeping
     ///
-    /// Hybrid Task Deduplication Strategy:
-    ///
-    /// For PREDICTIONS (dot at start): Use traditional Earley deduplication but include alt_index
-    /// to distinguish different alternatives: hash(rule + alt_index + origin + position)
-    /// This prevents infinite left recursion while properly distinguishing alternatives.
-    ///
-    /// For COMPLETIONS/SCANNING: Use blockchain-style hashing that includes parent
-    /// context to allow exploration of different derivation paths needed for ambiguous
-    /// grammars (e.g., `member → string` vs `member → range` at same position).
-    ///
-    /// Task identity for predictions: hash(rule + alt_index + origin + position + parent_hash)
-    /// Task identity for completions: hash(rule + alt_index + position + dot + parent_hash)
+    /// Simple Task Deduplication Strategy:
+    /// Use task identity hash based on name, alt_index, origin, pos, and dot
     fn have_we_seen(&mut self, task: &Task) -> bool {
-        let hash = if task.dot.is_at_start() {
-            // PREDICTION: Use traditional Earley deduplication + alt_index + parent_context to prevent left recursion
-            let prediction_content = format!("{}[{}] at {}:{} parent:{}", task.name, task.alt_index, task.origin, task.pos, task.parent_hash);
-            utils::hash_to_u64(&prediction_content)
-        } else {
-            // COMPLETION/SCANNING: Use blockchain hash to preserve different derivation contexts
-            task.full_hash
-        };
-
-        if self.hashes.contains(&hash) {
-            let parent_base58 = utils::to_base58(task.parent_hash);
-            let self_base58 = utils::to_base58(task.full_hash);
-            debug!("🚫 DUPLICATE TASK DETECTED: Skipping {}.{} {}[{}]", parent_base58, self_base58, task.name, task.alt_index);
+        if self.hashes.contains(&task.hash) {
+            debug!("🚫 DUPLICATE TASK DETECTED: Skipping {}[{}]", task.name, task.alt_index);
             true
         } else {
-            let parent_base58 = utils::to_base58(task.parent_hash);
-            let self_base58 = utils::to_base58(task.full_hash);
-            debug!("...caching task {}.{} {}[{}]", parent_base58, self_base58, task.name, task.alt_index);
-            self.hashes.insert(hash);
+            debug!("...caching task {}[{}]", task.name, task.alt_index);
+            self.hashes.insert(task.hash);
             false
         }
     }
@@ -504,125 +487,135 @@ impl Parser {
             }
             debug!("🔄 PROCESSING: Pulled from queue {} at {}", self.traces.format_task(tid), current_pos);
 
-            let is_completed = self.traces.get(tid).dot.is_completed();
-
-            // task in completed state?
-            if is_completed {
-                debug!("COMPLETER pos={}", current_pos);
-                debug_earley_pos!(DebugLevel::Trace, current_pos, "COMPLETER: {} completed", self.traces.format_task(tid));
-                self.completed_trace.push(tid);
-
-                // find "parent" states at same origin that can produce this expr;
-                let continuations_here = self.traces.get_continuations_for(self.traces.get(tid).name.clone());
-
-                for continue_id in continuations_here {
-                    // make sure we only continue from a compatible position
-                    if self.traces.get(continue_id).pos != self.traces.get(tid).origin {
-                        continue;
+            // Dispatch to appropriate Earley operation based on task state
+            if self.traces.get(tid).dot.is_completed() {
+                self.complete(tid, &mut input)?;
+            } else {
+                // Task is not completed - check what factor is next
+                let factor = self.traces.get(tid).dot.next_unparsed();
+                match factor {
+                    Factor::Nonterm(mark, name) => {
+                        self.predict(&g, tid, mark, name)?;
                     }
-                    debug!("...deferring continuation Task... {}", self.traces.format_task(continue_id));
-
-                    let now_finished_via_child = self.traces.get(continue_id).dot.next_unparsed();
-                    let match_rec =
-                    match now_finished_via_child {
-                        Factor::Nonterm(mark, name) => MatchRec::NonTerm(name, self.traces.get(tid).pos, mark),
-                        Factor::Terminal(tmark, _ch ) => MatchRec::Term('?', self.traces.get(tid).pos, tmark),
-                    };
-                    trace!("MatchRec {:?}", &match_rec);
-                    // child may have made progress; next item in parent seq needs to account for this
-                    let maybe_id = self.traces.task_advance_cursor(continue_id, match_rec);
-
-                    // CRITICAL FIX: Queue parent continuations at back to ensure exhaustive alternative exploration
-                    // This allows all alternatives at current position to be explored before parent propagation
-                    self.queue_back(maybe_id);
+                    Factor::Terminal(tmark, matcher) => {
+                        self.scan(tid, tmark, matcher, &mut input)?;
+                    }
                 }
+            }
+        }
+
+        info!("Finished parse with {} items in trace", self.traces.arena.len());
+        self.unpack_parse_tree()
+    }
+
+    /// COMPLETER: Handle completed tasks by continuing their parent tasks
+    fn complete(&mut self, tid: TraceId, _input: &mut InputIter) -> Result<(), ParseError> {
+        let current_pos = self.traces.get(tid).pos;
+        debug!("COMPLETER pos={}", current_pos);
+        debug_earley_pos!(DebugLevel::Trace, current_pos, "COMPLETER: {} completed", self.traces.format_task(tid));
+        self.completed_trace.push(tid);
+
+        // Find "parent" states at same origin that can produce this expression
+        let completed_task = self.traces.get(tid);
+        let waiting_parents = self.traces.get_waiting_parent_tasks_by_name(&completed_task.name);
+
+        for continue_id in waiting_parents {
+            // Make sure we only continue from a compatible position
+            if self.traces.get(continue_id).pos != self.traces.get(tid).origin {
                 continue;
             }
+            debug!("...deferring continuation Task... {}", self.traces.format_task(continue_id));
 
-            // PREDICTOR
-            // task is not in a completed state. Take the next item from the list and process it
-            let factor = self.traces.get(tid).dot.next_unparsed();
+            let now_finished_via_child = self.traces.get(continue_id).dot.next_unparsed();
+            let match_rec = match now_finished_via_child {
+                Factor::Nonterm(mark, name) => MatchRec::NonTerm(name, self.traces.get(tid).pos, mark),
+                Factor::Terminal(tmark, _ch) => MatchRec::Term('?', self.traces.get(tid).pos, tmark),
+            };
+            trace!("MatchRec {:?}", &match_rec);
 
-            match factor {
-                Factor::Nonterm(mark, name) => {
-                    // go one level deeper
-                    debug!("PREDICTOR: Nonterm {mark}{name}");
-                    debug_earley_pos!(DebugLevel::Trace, current_pos, "PREDICTOR: {} predicting {}{}", self.traces.format_task(tid), mark, name);
+            // Child may have made progress; next item in parent seq needs to account for this
+            let maybe_id = self.traces.task_advance_cursor(continue_id, match_rec);
 
-                    self.traces.save_continuation(&name, tid);
+            // CRITICAL FIX: Queue parent continuations at back to ensure exhaustive alternative exploration
+            // This allows all alternatives at current position to be explored before parent propagation
+            self.queue_back(maybe_id);
+        }
+        Ok(())
+    }
 
+    /// PREDICTOR: Handle nonterminal predictions by adding new tasks for all alternatives
+    fn predict(&mut self, g: &Grammar, tid: TraceId, mark: Mark, name: SmolStr) -> Result<(), ParseError> {
+        let current_pos = self.traces.get(tid).pos;
+        debug!("PREDICTOR: Nonterm {mark}{name}");
+        debug_earley_pos!(DebugLevel::Trace, current_pos, "PREDICTOR: {} predicting {}{}", self.traces.format_task(tid), mark, name);
 
-                    // We can have a Mark at the point of definiton,
-                    // as well as at the point of reference...
-                    // Figure out what to do with all possible combinations
-                    let defn_mark = g.get_definition_mark(&name)?;
-                    let effective_mark = match (defn_mark, mark) {
-                        (Mark::Default, Mark::Default) => Mark::Default,
-                        (Mark::Mute, Mark::Unmute) => Mark::Unmute,       // can 'undo' marking Mute
-                        (Mark::Attr, _) | (_, Mark::Attr) => Mark::Attr,  // attributes all the way down
-                        (Mark::Mute, _) | (_, Mark::Mute) => Mark::Mute,
-                        (Mark::Unmute, _) | (_, Mark::Unmute) => Mark::Unmute,
-                    };
+        // Register this parent task as waiting for ALL alternatives of the child rule
+        // We need to register for each possible alternative since we don't know which one will complete
+        let child_rule = g.get_definition(&name)?;
+        for child_alt_index in 0..child_rule.iter().count() {
+            self.traces.register_waiting_parent_task(&name, child_alt_index, tid);
+        }
 
-                    // TODO: Add nullable rule handling here
-                    // For now, use normal prediction logic
+        // We can have a Mark at the point of definition,
+        // as well as at the point of reference...
+        // Figure out what to do with all possible combinations
+        let defn_mark = g.get_definition_mark(&name)?;
+        let effective_mark = match (defn_mark, mark) {
+            (Mark::Default, Mark::Default) => Mark::Default,
+            (Mark::Default, Mark::Mute) => Mark::Mute,
+            (Mark::Mute, Mark::Default) => Mark::Mute,
+            (Mark::Mute, Mark::Mute) => Mark::Mute,
+            (_, _) => Mark::Default,
+        };
 
-                    // Add all rule alternatives for normal prediction
-                    for (alt_index, rule) in g.get_definition(&name)?.iter().enumerate() {
-                        // TODO: propertly account for rule-level Mark
-                        let dot = rule.dot_notator();
-                        let new_pos = self.traces.get(tid).pos;
-                        // "origin" for this downstream task now matches current pos
-                        let maybe_id = self.traces.task_downstream(&name, alt_index, effective_mark.clone(), new_pos, new_pos, dot, tid);
-                        self.queue_front(maybe_id);
-                        //self.queue_back(maybe_id);
-                    }
-                }
-                Factor::Terminal(tmark, matcher) => {
-                    // record terminal
-                    debug!("SCANNER: Terminal {tmark}{matcher} at pos={current_pos}");
-                    debug_earley_pos!(DebugLevel::Trace, current_pos, "SCANNER: {} scanning {}{}", self.traces.format_task(tid), tmark, matcher);
+        for (alt_index, alt) in g.get_definition(&name)?.iter().enumerate() {
+            let maybe_id = self.traces.task(&name, alt_index, effective_mark, current_pos, current_pos, alt.dot_notator());
+            self.queue_front(maybe_id);
+        }
+        Ok(())
+    }
 
-                    // Bounds check: don't scan beyond input length
-                    if current_pos >= self.input_length {
-                        debug!("Position {} >= input length {}; 🛑", current_pos, self.input_length);
-                        debug_earley_fail!(current_pos, &format!("{}", matcher), '∅', &self.queue_snapshot());
-                        continue;
-                    }
+    /// SCANNER: Handle terminal scanning by matching against input characters
+    fn scan(&mut self, tid: TraceId, tmark: TMark, matcher: TerminalDefn, input: &mut InputIter) -> Result<(), ParseError> {
+        let current_pos = self.traces.get(tid).pos;
+        debug!("SCANNER: Terminal {tmark}{matcher} at pos={current_pos}");
+        debug_earley_pos!(DebugLevel::Trace, current_pos, "SCANNER: {} scanning {}{}", self.traces.format_task(tid), tmark, matcher);
 
-                    if matcher.accept(input.get_at(current_pos)) {
-                        // Match! Advance position by 1
-                        let new_pos = current_pos + 1;
-                        let rec = MatchRec::Term(input.get_at(current_pos), new_pos, tmark);
-                        debug!("advance cursor SCAN");
-                        debug_earley_pos!(DebugLevel::Trace, current_pos, "SCANNER: MATCH '{}' -> advance to {}", input.get_at(current_pos), new_pos);
-                        let maybe_id = self.traces.task_advance_cursor(tid, rec);
-                        self.queue_back(maybe_id);
-                    } else {
-                        // Terminal doesn't match - silently drop this task (no requeue)
-                        // Per Earley algorithm: non-matching terminals should PASS (terminate quietly)
-                        debug!("non-matched char '{}' (expecting {matcher}); 🛑", input.get_at(current_pos));
-                    }
-                }
-            }
-        } // while
-        info!("Finished parse with {} items in trace", self.traces.arena.len());
+        // Bounds check: don't scan beyond input length
+        if current_pos >= self.input_length {
+            debug!("Position {} >= input length {}; 🛑", current_pos, self.input_length);
+            debug_earley_fail!(current_pos, &format!("{}", matcher), '∅', &self.queue_snapshot());
+            return Ok(());
+        }
 
-        self.unpack_parse_tree()
+        if matcher.accept(input.get_at(current_pos)) {
+            // Match! Advance position by 1
+            let new_pos = current_pos + 1;
+            let rec = MatchRec::Term(input.get_at(current_pos), new_pos, tmark);
+            debug!("advance cursor SCAN");
+            debug_earley_pos!(DebugLevel::Trace, current_pos, "SCANNER: MATCH '{}' -> advance to {}", input.get_at(current_pos), new_pos);
+            let maybe_id = self.traces.task_advance_cursor(tid, rec);
+            self.queue_back(maybe_id);
+        } else {
+            // Terminal doesn't match - silently drop this task (no requeue)
+            // Per Earley algorithm: non-matching terminals should PASS (terminate quietly)
+            debug!("non-matched char '{}' (expecting {matcher}); 🛑", input.get_at(current_pos));
+        }
+        Ok(())
+    }
+
+    fn queue_back(&mut self, maybe_id: Option<TraceId>) {
+        if let Some(id) = maybe_id {
+            debug!("QUEUE: Adding to back (normal priority): {}", self.traces.format_task(id));
+            self.traces.queue.push_back(id);
+            self.validate_queue_invariants();
+        }
     }
 
     fn queue_front(&mut self, maybe_id: Option<TraceId>) {
         if let Some(id) = maybe_id {
             debug!("QUEUE: Adding to front (high priority): {}", self.traces.format_task(id));
             self.traces.queue.push_front(id);
-            self.validate_queue_invariants();
-        }
-    }
-
-    fn  queue_back(&mut self, maybe_id: Option<TraceId>) {
-        if let Some(id) = maybe_id {
-            debug!("QUEUE: Adding to back (normal priority): {}", self.traces.format_task(id));
-            self.traces.queue.push_back(id);
             self.validate_queue_invariants();
         }
     }
@@ -1291,46 +1284,69 @@ mod tests {
 
         println!("Hand-built grammar:\n{}", hand_built);
 
-        // Try to parse the same grammar from iXML
-        let grammar_str = r#"data: range1, range2, -".".
-range1: ["0"-"9"].
-range2: [#0-#9]."#;
+        // Test with input "5\t."
+        let mut parser = Parser::new(hand_built);
+        let result = parser.parse("5\t.");
+        assert!(result.is_ok(), "Hand-built range grammar should parse '5\\t.'");
+    }
 
-        let parsed_result = Grammar::from_ixml_str(grammar_str);
+    #[cfg(test)]
+    #[test]
+    fn test_premature_queue_empty_debug() {
+        // Debug test case for premature queue empty issue
+        // Grammar: doc: item++space. item: "x". space: " ".
+        // Input: "x x"
+        // Should parse as: <doc><item>x</item> <item>x</item></doc>
 
-        if let Ok(parsed_grammar) = parsed_result {
-            println!("Parsed grammar:\n{}", parsed_grammar);
+        use crate::grammar::{Grammar, RuleContext};
+        use crate::debug::{DebugConfig, DebugLevel};
 
-            // Test both grammars with the test input
-            let test_input = "5\t.";  // '5' + tab + '.'
+        // Set up trace debugging
+        let debug_config = DebugConfig {
+            level: DebugLevel::Trace,
+            position_filter: None,
+            failure_only: false,
+            trace_file: Some("log/premature_queue_debug.log".to_string()),
+        };
+        crate::debug::set_debug_config(debug_config);
 
-            // Test hand-built grammar
-            let mut hand_parser = Parser::new(hand_built);
-            let hand_result = hand_parser.parse(test_input);
-            println!("Hand-built result: {:?}", hand_result);
+        // Hand-code the grammar: doc: item++space. item: "x". space: " ".
+        let mut g = Grammar::new();
+        let ctx = RuleContext::new("doc");
 
-            // Test parsed grammar
-            let mut parsed_parser = Parser::new(parsed_grammar);
-            let parsed_result = parsed_parser.parse(test_input);
-            println!("Parsed result: {:?}", parsed_result);
+        // doc: item++space (equivalent to repeat1_sep)
+        g.define("doc", ctx.seq().repeat1_sep(
+            ctx.seq().nt("item"),     // repeated element
+            ctx.seq().nt("space")     // separator
+        ));
 
-            // Both should succeed
-            assert!(hand_result.is_ok(), "Hand-built grammar should parse test input");
-            if parsed_result.is_ok() {
-                assert!(parsed_result.is_ok(), "Parsed grammar should also parse test input");
-            } else {
-                println!("Parsed grammar failed - this demonstrates the parsing issue");
+        // item: "x"
+        g.define("item", ctx.seq().ch('x'));
+
+        // space: " "
+        g.define("space", ctx.seq().ch(' '));
+
+        println!("=== PREMATURE QUEUE EMPTY DEBUG ===");
+        println!("Grammar: doc: item++space. item: \"x\". space: \" \".");
+        println!("Input: x x");
+        println!("");
+
+        // Parse input "x x"
+        let mut parser = Parser::new(g);
+        let input = "x x";
+
+        match parser.parse(input) {
+            Ok(tree) => {
+                println!("✓ Parse successful!");
+                let xml_output = Parser::tree_to_test_format(&tree);
+                println!("Result: {}", xml_output);
             }
-        } else {
-            println!("Grammar parsing failed: {:?}", parsed_result);
-            println!("This demonstrates the bootstrap grammar parsing issue");
-
-            // At least test that the hand-built version works
-            let test_input = "5\t.";
-            let mut hand_parser = Parser::new(hand_built);
-            let hand_result = hand_parser.parse(test_input);
-            println!("Hand-built result: {:?}", hand_result);
-            assert!(hand_result.is_ok(), "Hand-built grammar should work even if parsing fails");
+            Err(e) => {
+                println!("❌ Parse failed: {}", e);
+                println!("See log/premature_queue_debug.log for trace details");
+                panic!("Expected parse to succeed, got error: {}", e);
+            }
         }
     }
+
 }

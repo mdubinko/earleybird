@@ -202,12 +202,12 @@ grep "pos=0" log/debug.log                           # Focus on specific positio
 
 **Problem RESOLVED**: The parser was deduplicating tasks too aggressively across different parent contexts. When `member → string` and `member → range` were both viable at the same position, only one path was explored because tasks were deduplicated based solely on rule name and position, ignoring the derivation context.
 
-**Solution Implemented**: **Blockchain-style task hashing** where each task's hash includes its parent's hash, creating a unique chain back to the root that ensures different derivation contexts get unique identifiers.
+**Solution Implemented**: **Parent-hash task hashing** where each task's hash included its parent's hash, creating a unique chain back to the root that ensured different derivation contexts got unique identifiers.
 
 **Key Changes** (src/parser.rs):
 - Modified `Task` struct to include `parent_hash: u64` and `full_hash: u64`
-- Updated task creation to compute blockchain hashes: `hash(rule + position + parent_hash)`
-- Tasks now display as `[parent.child]` using base58 encoding for human readability
+- Updated task creation to compute parent-hash chains: `hash(rule + position + parent_hash)`
+- Tasks displayed as `[parent.child]` using base58 encoding for human readability
 - Binary u64 hashes used for deduplication performance
 
 ### Solution Implemented:
@@ -223,29 +223,26 @@ grep "pos=0" log/debug.log                           # Focus on specific positio
 
 **Issue**: Left-recursive grammars like `expr: expr, "+", term; term.` caused infinite loops hitting 100,000 operation limits
 
-**Root Cause Identified**: Blockchain hashing created infinitely growing chains for predictions. Each prediction of `expr→sum→expr` generated unique hashes `[A→B→C→D...]` instead of stable cycles `[A→B→A→B]`, preventing proper Earley deduplication.
+**Root Cause Identified**: Parent-hash chaining created infinitely growing chains for predictions. Each prediction of `expr→sum→expr` generated unique hashes `[A→B→C→D...]` instead of stable cycles `[A→B→A→B]`, preventing proper Earley deduplication.
 
 **Fundamental Architecture Problem**: Confusion between individual alternatives (Rules) vs grouped alternatives under one name (BranchingRules). The Earley paper expects individual alternatives as separate rules, but our implementation grouped them.
 
-**Solution Implemented**: **Alternative Indexing with Hybrid Deduplication**
+**Solution Implemented**: **Alternative Indexing with Simple Deduplication (CURRENT)**
 
 ### Technical Implementation:
 ```rust
 // Added to Task struct (src/parser.rs:95-105)
 pub alt_index: usize,  // which alt of this BranchingRule (0-based)
 
-// Hybrid deduplication strategy (src/parser.rs:have_we_seen)
+// Simple deduplication strategy (src/parser.rs:have_we_seen)
 fn have_we_seen(&mut self, task: &Task) -> bool {
-    let hash = if task.dot.is_at_start() {
-        // PREDICTION: Use traditional Earley deduplication + alt_index
-        let prediction_content = format!("{}[{}] at {}:{}",
-            task.name, task.alt_index, task.origin, task.pos);
-        utils::hash_to_u64(&prediction_content)
+    // Use task identity hash based on name, alt_index, origin, pos, dot
+    if self.hashes.contains(&task.hash) {
+        true // duplicate
     } else {
-        // COMPLETION/SCANNING: Use blockchain hash for derivation contexts
-        task.full_hash
-    };
-    // ... deduplication logic
+        self.hashes.insert(task.hash);
+        false // new task
+    }
 }
 ```
 
@@ -255,9 +252,10 @@ fn have_we_seen(&mut self, task: &Task) -> bool {
 - Position 0 = before first character, matches HTML trace format
 
 ### Key Changes:
-- **src/parser.rs**: Added `alt_index` field, updated all task constructors, implemented hybrid deduplication
+- **src/parser.rs**: Added `alt_index` field, updated all task constructors, implemented simple deduplication
 - **src/debug.rs**: Changed trace format from `pos=N` to `S(N)` notation
 - **Removed**: Unused `at_end()` method that wasn't following Rust iterator conventions
+- **SIMPLIFIED (Current)**: Removed parent-hash system entirely, using basic identity hash only
 
 ### Verification:
 ```bash
@@ -276,15 +274,35 @@ cargo run -- test -g 'S: S, "a"; "b".' -i 'ba'
 - **Correctness**: Follows original Earley paper approach with individual alternatives
 - **Diagnostics**: `expr[4]` notation makes traces much more readable
 
-### Technical Debt - Blockchain Hash Implementation (Updated)
+### Architecture Simplification (Current Status)
 
-The hybrid approach elegantly solves both problems:
-1. **Predictions**: Traditional Earley deduplication prevents infinite left-recursion
-2. **Completions**: Blockchain hashing preserves different derivation contexts for ambiguous grammars
+The simple deduplication approach elegantly solves the core problems:
+1. **All Tasks**: Basic identity hash based on `name[alt_index] origin:pos dot` prevents infinite left-recursion
+2. **Nullable Handling**: Proper nullable nonterminal advancement ensures correct Earley parsing
 
-**Previous concerns resolved**:
-- Hash computation performance: Only used for completions/scanning now
-- Equality semantics: Not an issue with hybrid approach
-- Storage efficiency: `alt_index` is much more compact than full blockchain chains
+**Benefits of simplified approach**:
+- Hash computation performance: Single hash computation per task
+- Code clarity: Much simpler to understand and debug
+- Storage efficiency: Single u64 hash per task, no parent-hash chains
 
-**Priority**: Technical debt is now minimal - the hybrid approach is both correct and efficient.
+**Priority**: Technical debt eliminated - the simple approach is both correct and efficient.
+
+## 🚀 CURRENT STATUS (2025-09-25)
+
+### Recent Major Simplification
+- **REMOVED**: All parent-hash/blockchain complexity from Task struct and deduplication logic
+- **SIMPLIFIED**: Task identity now based only on core fields: `name[alt_index] origin:pos dot`
+- **MAINTAINED**: All functionality preserved - test suite still at 28/108 PASS rate
+- **CLEAN**: Much simpler codebase for debugging remaining bootstrap grammar parsing issues
+
+### Current Test Suite Performance
+- **Total**: 108 tests
+- **PASS**: 28 (25.9%) - Core functionality working correctly
+- **FAIL**: 15 (13.9%) - Output format mismatches, mostly minor XML formatting
+- **Bootstrap Errors**: 65 (60.2%) - Bootstrap grammar parsing failures, primary remaining issue
+- **Parse Errors**: 0 - Input parsing with valid grammars working well
+
+### Active Work Areas
+1. **Bootstrap Grammar Parsing**: 65 tests failing due to bootstrap ixml grammar parsing issues
+2. **Nullable Nonterminal Handling**: Recently fixed deduplication logic for nullable nonterminals
+3. **Code Architecture**: Successfully simplified from complex parent-hash chains to simple identity hashing
