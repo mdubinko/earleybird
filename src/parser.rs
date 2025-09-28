@@ -453,10 +453,11 @@ impl Parser {
 
         // help avoid borrow-contention on *self
         let g = self.grammar.clone();
-    
+
         debug!("Starting parse at position 0 (before first character)");
 
-        // Seed with top expr
+        // INITIALISE
+        // START grammar FOR start.symbol grammar AT start.pos
         let top_rule = g.get_root_definition()?
             .ok_or(ParseError::static_err("No top grammar rule"))?;
 
@@ -466,7 +467,8 @@ impl Parser {
             self.queue_front(maybe_id);
         }
 
-        // work through the queue
+        // WHILE more.tasks:
+        //    TAKE task
         while let Some(tid) = self.traces.queue.pop_front() {
             // Check trace size limit to prevent infinite loops
             if self.traces.arena.len() > self.max_trace_size {
@@ -487,16 +489,27 @@ impl Parser {
             }
             debug!("🔄 PROCESSING: Pulled from queue {} at {}", self.traces.format_task(tid), current_pos);
 
-            // Dispatch to appropriate Earley operation based on task state
+            // SELECT:
+            //    finished task:
+            //       CONTINUE PARENTS task
             if self.traces.get(tid).dot.is_completed() {
                 self.complete(tid, &mut input)?;
             } else {
-                // Task is not completed - check what factor is next
+                // ELSE:
+                //    PUT next.symbol task, position task IN sym, pos
+                //    SELECT:
                 let factor = self.traces.get(tid).dot.next_unparsed();
                 match factor {
+                    // grammar nonterminal sym:
+                    //    START grammar FOR sym AT pos
                     Factor::Nonterm(mark, name) => {
                         self.predict(&g, tid, mark, name)?;
                     }
+                    // sym starts (input, pos): \Terminal, matches
+                    //    RECORD TERMINAL input FOR task
+                    //    CONTINUE task AT (pos incremented (input, sym))
+                    // ELSE:
+                    //    PASS \Terminal, doesn't match
                     Factor::Terminal(tmark, matcher) => {
                         self.scan(tid, tmark, matcher, &mut input)?;
                     }
@@ -509,6 +522,7 @@ impl Parser {
     }
 
     /// COMPLETER: Handle completed tasks by continuing their parent tasks
+    /// Implements: finished task: CONTINUE PARENTS task
     fn complete(&mut self, tid: TraceId, _input: &mut InputIter) -> Result<(), ParseError> {
         let current_pos = self.traces.get(tid).pos;
         debug!("COMPLETER pos={}", current_pos);
@@ -529,7 +543,10 @@ impl Parser {
             let now_finished_via_child = self.traces.get(continue_id).dot.next_unparsed();
             let match_rec = match now_finished_via_child {
                 Factor::Nonterm(mark, name) => MatchRec::NonTerm(name, self.traces.get(tid).pos, mark),
-                Factor::Terminal(tmark, _ch) => MatchRec::Term('?', self.traces.get(tid).pos, tmark),
+                Factor::Terminal(tmark, _ch) => {
+                    // This should never happen - terminals are handled by Scanner
+                    panic!("INTERNAL ERROR: Complete() called on task waiting for terminal {:?}. This indicates a logic bug in the parser.", tmark);
+                }
             };
             trace!("MatchRec {:?}", &match_rec);
 
@@ -544,6 +561,7 @@ impl Parser {
     }
 
     /// PREDICTOR: Handle nonterminal predictions by adding new tasks for all alternatives
+    /// Implements: grammar nonterminal sym: START grammar FOR sym AT pos
     fn predict(&mut self, g: &Grammar, tid: TraceId, mark: Mark, name: SmolStr) -> Result<(), ParseError> {
         let current_pos = self.traces.get(tid).pos;
         debug!("PREDICTOR: Nonterm {mark}{name}");
@@ -563,9 +581,20 @@ impl Parser {
         let effective_mark = match (defn_mark, mark) {
             (Mark::Default, Mark::Default) => Mark::Default,
             (Mark::Default, Mark::Mute) => Mark::Mute,
+            (Mark::Default, Mark::Attr) => Mark::Attr,
+            (Mark::Default, Mark::Unmute) => Mark::Unmute,
             (Mark::Mute, Mark::Default) => Mark::Mute,
             (Mark::Mute, Mark::Mute) => Mark::Mute,
-            (_, _) => Mark::Default,
+            (Mark::Mute, Mark::Attr) => Mark::Attr,
+            (Mark::Mute, Mark::Unmute) => Mark::Unmute,
+            (Mark::Attr, Mark::Default) => Mark::Attr,
+            (Mark::Attr, Mark::Mute) => Mark::Mute,
+            (Mark::Attr, Mark::Attr) => Mark::Attr,
+            (Mark::Attr, Mark::Unmute) => Mark::Unmute,
+            (Mark::Unmute, Mark::Default) => Mark::Unmute,
+            (Mark::Unmute, Mark::Mute) => Mark::Mute,
+            (Mark::Unmute, Mark::Attr) => Mark::Attr,
+            (Mark::Unmute, Mark::Unmute) => Mark::Unmute,
         };
 
         for (alt_index, alt) in g.get_definition(&name)?.iter().enumerate() {
@@ -576,6 +605,9 @@ impl Parser {
     }
 
     /// SCANNER: Handle terminal scanning by matching against input characters
+    /// Implements: sym starts (input, pos): RECORD TERMINAL input FOR task
+    ///                                      CONTINUE task AT (pos incremented (input, sym))
+    ///             ELSE: PASS \Terminal, doesn't match
     fn scan(&mut self, tid: TraceId, tmark: TMark, matcher: TerminalDefn, input: &mut InputIter) -> Result<(), ParseError> {
         let current_pos = self.traces.get(tid).pos;
         debug!("SCANNER: Terminal {tmark}{matcher} at pos={current_pos}");
