@@ -1142,8 +1142,8 @@ impl SeqBuilder {
         // 1 create new rule 'f-option'
         let f_option: &str = &self.mint_internal_id("f-option");
         let empty = self.context.seq();
-        self = self.syn_rule(f_option, empty); // empty
         self = self.syn_rule(f_option, sub);
+        self = self.syn_rule(f_option, empty); // empty
         // 2 insert newly created nt into sequence under construction
         self.mark_nt(f_option, Mark::Mute)
     }

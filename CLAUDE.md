@@ -306,3 +306,70 @@ The simple deduplication approach elegantly solves the core problems:
 1. **Bootstrap Grammar Parsing**: 65 tests failing due to bootstrap ixml grammar parsing issues
 2. **Nullable Nonterminal Handling**: Recently fixed deduplication logic for nullable nonterminals
 3. **Code Architecture**: Successfully simplified from complex parent-hash chains to simple identity hashing
+
+## Debug Infrastructure Improvements Needed
+
+### Current Problems with Debugging
+- **Temporary code pollution**: Adding `eprintln!` statements directly in source code that must be manually removed
+- **Mixed output streams**: Trace output and debug messages interleaved in stderr, making analysis difficult
+- **No granular control**: Can't filter debug output without code changes
+- **Manual correlation**: Must manually grep and correlate related events across parsing phases
+
+### Proposed Debug Infrastructure
+
+#### 1. Command-Line Debug Control
+
+Audit what `cargo test` does
+
+Is it helpful as currently put together? What would be better?
+In particular, focus on unit testing complex & tricky sections of code
+
+```bash
+# Control debug levels and categories from CLI
+cargo run -- test -g 'grammar' -i 'input' --debug-level trace --debug-filter "dedup,predict"
+
+(discuss potential confusion between `cargo test` and `cargo -- test` i.e a CLI option called 'test')
+
+# Clean separation of outputs
+cargo run -- --trace-file trace.log --debug-file debug.log --quiet-stdout
+```
+
+#### 2. Structured Debug Macros
+Replace manual `eprintln!` with structured macros:
+```rust
+debug_dedup!("Skipping duplicate", task);
+debug_predict!("Creating prediction", parent_task, child_name);
+debug_queue!("Adding to queue", task, queue_size);
+```
+
+Auto-include context: arena size, queue size, parsing phase, parent relationships, timestamps
+
+#### 3. Debug Categories with Levels
+Enable turning on/off different categories of message in addition to level filtering
+```
+DEDUP:TRACE - Show all deduplication decisions
+PREDICT:DEBUG - Show prediction creation but not internal details
+QUEUE:INFO - Show only major queue operations
+COMPLETE:TRACE - Show all completion operations
+```
+
+#### 4. Better Test Integration
+```bash
+# Compare debug output between cases
+cargo run -- suite --debug-diff failing_case working_case
+
+# Save debug output per test automatically
+cargo run -- suite --debug-archive log/suite_debug/
+
+# Regression detection
+cargo run -- suite --debug-baseline --detect-debug-changes
+```
+
+#### 5. Contextual Information
+Automatically include:
+- Task genealogy (parent → child chains)
+- Parsing phase indicators
+- Queue state snapshots
+- Cross-references between related operations
+
+**Priority**: High - This infrastructure would dramatically improve debugging efficiency for complex parsing issues

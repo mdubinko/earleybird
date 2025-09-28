@@ -487,7 +487,10 @@ impl Parser {
                 }
                 self.farthest_pos = current_pos;
             }
-            debug!("🔄 PROCESSING: Pulled from queue {} at {}", self.traces.format_task(tid), current_pos);
+            debug!("🔄 PROCESSING: Pulled from queue {} at {} | Queue size: {} -> {} | Queue: [{}]",
+                   self.traces.format_task(tid), current_pos,
+                   self.traces.queue.len() + 1, self.traces.queue.len(),
+                   self.queue_snapshot());
 
             // SELECT:
             //    finished task:
@@ -517,6 +520,7 @@ impl Parser {
             }
         }
 
+        info!("🔚 QUEUE EMPTY: Parse loop exited with queue empty. Last position: {}, Input length: {}", self.farthest_pos, self.input_length);
         info!("Finished parse with {} items in trace", self.traces.arena.len());
         self.unpack_parse_tree()
     }
@@ -638,7 +642,8 @@ impl Parser {
 
     fn queue_back(&mut self, maybe_id: Option<TraceId>) {
         if let Some(id) = maybe_id {
-            debug!("QUEUE: Adding to back (normal priority): {}", self.traces.format_task(id));
+            debug!("QUEUE: Adding to back (normal priority): {} | Queue size: {} -> {}",
+                   self.traces.format_task(id), self.traces.queue.len(), self.traces.queue.len() + 1);
             self.traces.queue.push_back(id);
             self.validate_queue_invariants();
         }
@@ -646,7 +651,8 @@ impl Parser {
 
     fn queue_front(&mut self, maybe_id: Option<TraceId>) {
         if let Some(id) = maybe_id {
-            debug!("QUEUE: Adding to front (high priority): {}", self.traces.format_task(id));
+            debug!("QUEUE: Adding to front (high priority): {} | Queue size: {} -> {}",
+                   self.traces.format_task(id), self.traces.queue.len(), self.traces.queue.len() + 1);
             self.traces.queue.push_front(id);
             self.validate_queue_invariants();
         }
@@ -749,9 +755,11 @@ impl Parser {
         
         // Check if we have a completed parse of our grammar's root rule that spans the entire input
         let name = self.grammar.get_root_definition_name().unwrap();
+        debug!("🔍 LOOKING FOR: completed parse of rule '{}' spanning (0 to {})", name, self.input_length);
         let root_completion = self.filter_completed_trace(&name, 0, self.input_length);
-        
+
         if root_completion.is_none() {
+            debug!("❌ NO ROOT COMPLETION FOUND for '{}' spanning entire input", name);
             // Generate enhanced diagnostics for parse failures
             let mut diagnostic = format!(
                 "Parse failed: no completed parse of rule '{}' spanning entire input (0 to {})\n",
