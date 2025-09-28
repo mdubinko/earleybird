@@ -5,16 +5,24 @@ use earleybird::{grammar::Grammar, parser::Parser, debug::DebugLevel};
 use earleybird::{debug_basic, debug_detailed};
 
 #[derive(FromArgs)]
-/// Read an ixml file and parse another file with that grammar
+/// Parse an input file or string using an ixml grammar
 #[argh(subcommand, name = "parse")]
 pub struct Parse {
     /// ixml grammar file
-    #[argh(option, short = 'g')]
-    grammar: OsString,
+    #[argh(option, short = 'g', long = "grammar-file")]
+    grammar_file: Option<OsString>,
 
-    /// input document
-    #[argh(option, short = 'i')]
-    input: OsString,
+    /// ixml grammar string
+    #[argh(option, long = "grammar-str")]
+    grammar_str: Option<String>,
+
+    /// input file
+    #[argh(option, short = 'i', long = "input-file")]
+    input_file: Option<OsString>,
+
+    /// input string
+    #[argh(option, long = "input-str")]
+    input_str: Option<String>,
 
     /// output format
     #[argh(option, short = 'o', default = "default_output_fmt()")]
@@ -52,15 +60,30 @@ impl Parse {
         earleybird::debug::set_debug_config(debug_config);
 
         debug_basic!("=== {} DEBUG MODE ===", self.verbose.to_uppercase());
-        debug_basic!("Grammar file: {:?}", self.grammar);
-        debug_basic!("Input file: {:?}", self.input);
         debug_basic!("");
 
-        // 1. Read ixml grammar file
-        let grammar_content = match fs::read_to_string(&self.grammar) {
-            Ok(content) => content,
-            Err(e) => {
-                eprintln!("Error reading grammar file {:?}: {}", self.grammar, e);
+        // 1. Get grammar content from either file or string
+        let grammar_content = match (self.grammar_file, self.grammar_str) {
+            (Some(file), None) => {
+                debug_basic!("Grammar file: {:?}", file);
+                match fs::read_to_string(&file) {
+                    Ok(content) => content,
+                    Err(e) => {
+                        eprintln!("Error reading grammar file {:?}: {}", file, e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            (None, Some(string)) => {
+                debug_basic!("Grammar string: {}", string);
+                string
+            }
+            (Some(_), Some(_)) => {
+                eprintln!("Error: Cannot specify both --grammar-file and --grammar-str");
+                std::process::exit(1);
+            }
+            (None, None) => {
+                eprintln!("Error: Must specify either --grammar-file or --grammar-str");
                 std::process::exit(1);
             }
         };
@@ -83,11 +106,28 @@ impl Parse {
             }
         };
 
-        // 3. Read input file
-        let input_content = match fs::read_to_string(&self.input) {
-            Ok(content) => content,
-            Err(e) => {
-                eprintln!("Error reading input file {:?}: {}", self.input, e);
+        // 3. Get input content from either file or string
+        let input_content = match (self.input_file, self.input_str) {
+            (Some(file), None) => {
+                debug_basic!("Input file: {:?}", file);
+                match fs::read_to_string(&file) {
+                    Ok(content) => content,
+                    Err(e) => {
+                        eprintln!("Error reading input file {:?}: {}", file, e);
+                        std::process::exit(1);
+                    }
+                }
+            }
+            (None, Some(string)) => {
+                debug_basic!("Input string: {}", string);
+                string
+            }
+            (Some(_), Some(_)) => {
+                eprintln!("Error: Cannot specify both --input-file and --input-str");
+                std::process::exit(1);
+            }
+            (None, None) => {
+                eprintln!("Error: Must specify either --input-file or --input-str");
                 std::process::exit(1);
             }
         };

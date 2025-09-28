@@ -87,6 +87,39 @@ This is a project to implement Invisible XML (ixml) parser and CLI tool with 100
 - Bootstrap implementation should match spec grammar productions exactly
 - This project's goal is 100% conformance to the ixml spec
 
+# CLI Commands
+
+## parse - Parse input using ixml grammar
+```bash
+# Parse files
+cargo run -- parse -g grammar.ixml -i input.txt
+
+# Parse strings (great for quick testing)
+cargo run -- parse --grammar-str 'A: "a".' --input-str 'a'
+
+# Mix file and string
+cargo run -- parse -g grammar.ixml --input-str 'test input'
+```
+
+## validate - Validate ixml grammar (bootstrap parsing)
+```bash
+# Validate grammar file
+cargo run -- validate -g grammar.ixml
+
+# Validate grammar string (useful for debugging bootstrap parsing issues)
+cargo run -- validate --grammar-str 'A: B. B: "b".'
+```
+
+## suite - Run conformance test suite
+```bash
+# Run all tests
+cargo run -- suite
+
+# Filter tests by pattern
+cargo run -- suite expr1              # Tests containing "expr1"
+cargo run -- suite correct            # Tests in correct/ directory
+```
+
 # Debugging Workflow
 
 Whenever generating log files or capturing trace output, put the files in the log/ directory, to avoid cluttering up the project root dir.
@@ -144,7 +177,7 @@ cargo run -- suite --stdout quiet --file-mode failures-only -o log/failures.txt 
 ## Trace-Based Debugging (Highly Efficient)
 ```bash
 # Generate focused trace files
-cargo run -- test -g 'test: [#41].' -i 'A' -v trace --trace-file log/debug.log
+cargo run -- parse --grammar-str 'test: [#41].' --input-str 'A' -v trace --trace-file log/debug.log
 
 # Post-hoc filtering (very token-efficient)
 grep "charset\|inclusion\|set\|member" log/debug.log # Character set parsing
@@ -260,7 +293,7 @@ fn have_we_seen(&mut self, task: &Task) -> bool {
 ### Verification:
 ```bash
 # Left recursion now works perfectly
-cargo run -- test -g 'S: S, "a"; "b".' -i 'ba'
+cargo run -- parse --grammar-str 'S: S, "a"; "b".' --input-str 'ba'
 # Output: <S><S>b</S>a</S>
 
 # Traces show proper alternative indexing
@@ -326,9 +359,7 @@ In particular, focus on unit testing complex & tricky sections of code
 
 ```bash
 # Control debug levels and categories from CLI
-cargo run -- test -g 'grammar' -i 'input' --debug-level trace --debug-filter "dedup,predict"
-
-(discuss potential confusion between `cargo test` and `cargo -- test` i.e a CLI option called 'test')
+cargo run -- parse --grammar-str 'grammar' --input-str 'input' --debug-level trace --debug-filter "dedup,predict"
 
 # Clean separation of outputs
 cargo run -- --trace-file trace.log --debug-file debug.log --quiet-stdout

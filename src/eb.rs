@@ -1,7 +1,7 @@
 use argh::FromArgs;
 mod cmd_parse;
 mod cmd_suite;
-mod cmd_test;
+mod cmd_validate;
 
 #[derive(FromArgs)]
 /// An experimental ixml implementation in Rust
@@ -11,12 +11,12 @@ struct Args {
 }
 
 #[derive(FromArgs)]
-/// parse something
+/// ixml parser and validator
 #[argh(subcommand)]
 enum Subcommand {
     Parse(cmd_parse::Parse),
     Suite(cmd_suite::RunSuite),
-    Test(cmd_test::Test),
+    Validate(cmd_validate::Validate),
 }
 
 impl Subcommand {
@@ -24,7 +24,7 @@ impl Subcommand {
         match self {
             Subcommand::Parse(cmd) => cmd.run(),
             Subcommand::Suite(cmd) => cmd.run(),
-            Subcommand::Test(cmd) => cmd.run(),
+            Subcommand::Validate(cmd) => cmd.run(),
         }
     }
 }

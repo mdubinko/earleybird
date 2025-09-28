@@ -230,34 +230,6 @@ impl TraceArena {
         }
     }
     
-    /// originate a new Task, "downstream" from another task, like
-    /// ... = x { <-- processing this rule }
-    /// x = ... { <-- so queue up this one next, at same pos, etc. }
-    /// Returns Some(TraceId) (unless this is a duplicate Task, in which case None is returned)
-    fn task_downstream(&mut self, name: &str, alt_index: usize, mark: Mark, origin: usize, pos: usize, dot: DotNotation, _parent_id: TraceId) -> Option<TraceId> {
-        let id = TraceId(self.arena.len());
-        let task_content = format!("{}[{}] {}:{} {}", name, alt_index, origin, pos, dot);
-        let hash = utils::hash_to_u64(&task_content);
-
-        let task = Task{
-            id,
-            name: SmolStr::new(name),
-            alt_index,
-            mark,
-            origin,
-            pos,
-            dot,
-            hash,
-        };
-
-        if self.have_we_seen(&task) {
-            None
-        } else {
-            self.save_task(task);
-            Some(id)
-        }
-    }
-    
     /// clone a task, except advancing the cursor (storing given `MatchRec` for the piece just advanced-over)
     /// Maintains the same parentage, and position
     fn task_advance_cursor(&mut self, from: TraceId, rec: MatchRec) -> Option<TraceId> {
@@ -564,7 +536,12 @@ impl Parser {
         Ok(())
     }
 
-    /// PREDICTOR: Handle nonterminal predictions by adding new tasks for all alternatives
+    /// PREDICTOR: Create downstream tasks from nonterminal references
+    /// When processing a rule like "A: B, C." and we encounter nonterminal B,
+    /// we create new tasks for all alternatives of B:
+    /// A: • B, C. { <-- currently processing this rule }
+    /// B: • "x".  { <-- queue up this alternative }
+    /// B: • "y".  { <-- and this alternative }
     /// Implements: grammar nonterminal sym: START grammar FOR sym AT pos
     fn predict(&mut self, g: &Grammar, tid: TraceId, mark: Mark, name: SmolStr) -> Result<(), ParseError> {
         let current_pos = self.traces.get(tid).pos;
