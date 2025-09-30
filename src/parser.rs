@@ -741,8 +741,8 @@ impl Parser {
             let maybe_id = self.traces.task(&name, alt_index, effective_mark, current_pos, current_pos, alt.dot_notator());
 
             // CRITICAL FIX: Handle nullable alternatives immediately whether new or deduplicated
-            // Check if this alternative is nullable (can produce epsilon)
-            if g.is_alternative_nullable(alt)? {
+            // Check if this alternative is nullable (can produce epsilon) - use efficient cached method
+            if g.is_alternative_nullable_by_index(&name, alt_index)? {
                 debug_earley_pos!(DebugLevel::Trace, current_pos, "PREDICTOR: Nullable rule {}[{}] - triggering immediate completion (Bpredict/complete)", name, alt_index);
 
                 // For empty rules, we need to trigger completion regardless of deduplication

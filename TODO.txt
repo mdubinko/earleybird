@@ -8,58 +8,9 @@
   - [ ] Create verification that bootstrap implementation matches embedded iXML specification
   - [ ] Consider declarative grammar builder macro as alternative approach
 
-## Bootstrap Implementation TODOs
-
-- [x] Fix character range parsing in bootstrap tree processing (src/grammar.rs:227-271) #HIGH
-  - Bug: `["a"-"z"]` ranges not parsed correctly in tree processing
-  - Fixed: Updated `inclusion` and `exclusion` handlers to process child `member` elements
-  - Fixed: Added support for `from`/`to` attributes to create Range matchers
-  - Fixed: SmokeElem test now passes with character range parsing working correctly
-- [x] Implement comment parsing: `{...}` nested comment syntax (src/validator.rs) #HIGH
-  - Fixed: Added validator.rs module with comment preprocessing
-  - Fixed: Integrated comment stripping into Grammar::from_ixml_str pipeline
-  - Fixed: Handles nested comments correctly with proper error reporting
-- [x] Add prolog/version support: Grammar versioning with `ixml version "1.0"` (src/ixml_bootstrap.rs:44)
-  - Note: Already implemented in previous session
-- [x] Complete Unicode character class support (src/ixml_bootstrap.rs:24,98)
-  - Fixed: Updated namestart, namefollower, whitespace to use proper Unicode categories
-  - Fixed: namestart uses Unicode L (Letters), namefollower includes Nd (Decimal Numbers) and Mn (Nonspacing Marks)
-  - Fixed: whitespace uses Unicode Zs (Space Separators) plus tab/lf/cr
-- [x] Implement insertion syntax: `+` insertion for literal text (src/ixml_bootstrap.rs:247)
-  - Fixed: Added insertion rule to bootstrap grammar: insertion: -"+", s, (string; -"#", hex), s.
-  - Fixed: Added insertion tree processing case in grammar.rs append_factor_from_tree
-  - Note: Full insertion semantics (output generation) is placeholder implementation
-- [x] Improve character handling: proper line break exclusion, quote doubling (src/ixml_bootstrap.rs:164,169)
-- [x] Fix missing 'alt' element handler in grammar tree processing (src/grammar.rs:209-214)
-  - Bug: `("+" | "-")` style nested alternations caused panic with "unknown element alt child of <alt>"
-  - Fixed: Added handler for individual `alt` elements in `append_factor_from_tree` function
-- [x] Fix mute mark preservation during tree processing (src/grammar.rs:217-295) #HIGH
-  - Bug: Mute marks (`-`) on terminals and nonterminals not preserved when parsing ixml grammars
-  - Issue: `Terminal(Default, ...)` generated instead of `Terminal(Mute, ...)` for `-":"` literals
-  - Issue: `Nonterm(Default, "b")` generated instead of `Nonterm(Mute, "b")` for `-b` nonterminals  
-  - Fixed: Added mark attribute extraction for `literal` and `nonterminal` elements in `append_factor_from_tree`
-  - Fixed: SmokeMute test now passes with proper mute mark handling
-
-## Critical Parser Fixes (Session Progress)
-
-- [x] Fix empty character class handling: `[]` should never match any character #HIGH
-  - Bug: Parser incorrectly succeeded when `[]` failed to match at input boundary
-  - Root cause: unpack_parse_tree() looked for bootstrap grammar completions instead of user grammar
-  - Fixed: Check for completed parse of user's root rule spanning entire input (src/parser.rs:530-540)
-  - Test case: syntax/elem1/elem1 now PASSES (was failing)
-- [x] Add comprehensive grammar debug output with structured logging #MED 
-  - Added GRAMMAR| prefix debug output to trace files
-  - Tracks rule discovery, element counts, tree traversal for "no rules present" debugging
-  - Integrated with existing --trace-file infrastructure
-- [x] Implement validator.rs module for grammar preprocessing #HIGH
-  - Added comment stripping with proper nested comment handling
-  - Framework for future syntax validation phases
-  - Clean separation of concerns from core grammar parsing
-
 ## Enhanced Debugging & Transparency
 
 ### Phase 1: CLI & Logging (Complete)
-- [x] Add cmd_test for inline string grammar/input testing
 - [x] Add --verbose levels to cmd_parse command
 - [x] Create centralized debug logging module with structured levels
 - [x] Enhance Earley parser logging with key decision points
@@ -74,12 +25,6 @@
 - [ ] Parse tree diff viewer for comparing expected vs actual
 - [ ] Interactive parser stepper (step through one operation at a time)
 - [ ] Export parse states to JSON/GraphViz formats
-
-## Critical Parser Fix Complete ✓
-- [x] Fixed infinite loop bug in Earley parser with offset bounds checking #CRITICAL
-  - Issue: `line++lf` pattern caused position to advance beyond input length
-  - Fixed: Added bounds validation in SCANNER before position advancement
-  - Added comprehensive unit tests to prevent regression
 
 ## Immediate Priorities - Quick Test Suite Wins (Target: 35% → 65% pass rate)
 
@@ -143,34 +88,7 @@
   - Impact: Left recursion fully working, no more infinite loops or 🚧 TODO markers in test results
 - **Infrastructure Improvements**: Enhanced diagnostics, background task support, emoji documentation, simplified architecture
 
-## CURRENT FOCUS AREAS (2025-09-30)
-
-### ✅ PHASE 1 COMPLETE: Parser Architecture & Infinite Loop Detection
-- [x] **Position-based infinite loop detection** #CRITICAL
-  - Status: COMPLETED - 1000 operations per position vs 100,000 total operations (100x more efficient)
-  - Solution: ParseSession struct with position_repeat_count HashMap and configurable infinite_loop_threshold
-  - Implementation: Clean separation of core parsing (&mut self) vs statistics (&mut session)
-  - Verification: Successfully detected real infinite loop in unicode-v06.0-diagnostic test (2M+ operations at position 1617)
-  - Files: src/parser.rs (ParseSession, parse_with_session method)
-  - Impact: Much faster infinite loop detection, cleaner architecture, enhanced error reporting
-
-- [x] **Simplified Parser struct and constructors** #HIGH
-  - Status: COMPLETED - Removed max_trace_size, farthest_pos, input_length from Parser
-  - Solution: Single Parser::new() constructor, removed new_with_trace_limit()
-  - Implementation: Moved session-specific state to ParseSession struct
-  - Impact: Cleaner API, better separation of concerns, easier testing
-
-### 🎉 PHASE 2 COMPLETE: Position-Bucketed Queue Implementation
-- [x] **Implement position-bucketed queue for proper Earley parsing** #CRITICAL
-  - Status: COMPLETED - Dramatic test suite improvement achieved
-  - Solution: PositionBucketedQueue with BTreeMap<usize, VecDeque<TraceId>> ensuring tasks at position N completed before N+1
-  - Implementation: Clean Display trait, iterator support, front/back priority within positions
-  - Results: 62.4% pass rate (58/93) vs Phase 1's 30.1% (28/93) - MORE THAN DOUBLED success rate
-  - Impact: Bootstrap grammar parsing now works for complex cases like `a: b. b: "x".`
-  - Files: src/parser.rs (PositionBucketedQueue struct, queue_front/queue_back methods updated)
-  - Architecture: S(N) notation for debugging, proper Earley left-to-right processing restored
-
-### Primary Issue: Bootstrap Grammar Parsing (67 tests failing)
+### Primary Issue: Bootstrap Grammar Parsing
 - [x] **Implement nullability-based epsilon completion** #CRITICAL
   - Status: COMPLETED - Fixed epsilon completion logic in predict() function
   - Solution: Added `is_alternative_nullable()` method to check individual Rule nullability
@@ -188,29 +106,6 @@
   - Root Cause: NOT in plus-sep logic or epsilon completion - likely task ordering issue that position-bucketed queue will fix
   - Pattern: Simple grammars work (e.g., `'a: "x".\nb: "y".'`) but complex ones fail (e.g., `'a: b. b: "x".'`)
   - Next: Implement position-bucketed queue as this may resolve the fundamental parsing order issue
-
-### Recent Major Achievements (2025-09-29)
-- [x] **Nullability-Based Epsilon Completion** #CRITICAL
-  - Replaced faulty `is_completed()` check with proper `is_alternative_nullable()` check
-  - Added public `is_alternative_nullable()` method to Grammar struct (with TODO for performance optimization)
-  - Fixed core issue where nullable alternatives weren't triggering immediate completion in predict()
-  - Verified epsilon rules like `a: .` work correctly, producing `<a></a>` for empty input
-
-- [x] **Plus-Separated Rule Validation** #HIGH
-  - Created minimal test case proving `repeat1_sep()` synthetic rules work correctly
-  - Ruled out plus-separated logic as root cause of bootstrap failures
-  - Confirmed that synthetic rule generation and processing is not the primary issue
-
-- [x] **Architecture Understanding** #MED
-  - Confirmed integration tests work properly (some fail due to bootstrap issue, others pass)
-  - Verified test infrastructure is sound
-  - Established clear distinction between core parser functionality (working) and bootstrap grammar processing (failing)
-
-### Next Priority Actions (For Next Session)
-1. **Deep-dive bootstrap trace analysis** - Compare traces between working and failing grammar cases
-2. **Isolate grammar pattern differences** - Why do terminal-based grammars work but nonterminal-based ones fail?
-3. **Investigate complex bootstrap ixml patterns** - Focus on specific patterns that cause failures
-4. **Performance optimization** - Cache `is_alternative_nullable` results to avoid repeated computation
 
 ## Lower Priority - Architecture
 - [ ] Implement Grammar::to_string() method for bootstrap self-validation #MED

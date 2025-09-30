@@ -426,6 +426,10 @@ fn all_attrs(attrs: Attributes) -> HashMap<String, String> {
     hashmap
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
 #[test]
 fn test_canonize_xml() {
     // N.B. extra various whitespace, attribute order, single vs double quotes, char entities
@@ -440,3 +444,5 @@ fn test_canonize_xml() {
     println!("2: {}", xml_canonicalize(xml2));
     assert_eq!(xml_canonicalize(xml1), xml_canonicalize(xml2));
 }
+
+} // end tests module

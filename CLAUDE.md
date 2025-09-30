@@ -217,7 +217,7 @@ grep "pos=0" log/debug.log                           # Focus on specific positio
 ### Character Sets Status
 - ✅ Single hex: `[#20]` works
 - ✅ Hex ranges: `[#41-#46]` works
-- ✅ String members: `["A"]` now works (bootstrap parsing improved)
+- ✅ String members: `["A"]` works
 - ✅ Unicode classes: `[L]`, `[Nd]`, `[Mn]`, `[Zs]` working
 
 # TODO File Management
@@ -243,126 +243,10 @@ grep "pos=0" log/debug.log                           # Focus on specific positio
 
 - Always ensure that we are producing code that can target WebAssembly (this does not include test harnesses or suites)
 
-# ✅ RESOLVED: CRITICAL EARLEY PARSER BUGS
-
-## ~~Root Cause 1: Premature Completion in Earley Parser~~ **FIXED**
-
-**Issue**: ~~Character range parsing failed~~ **Character range parsing now works correctly**
-
-**Problem RESOLVED**: The parser was continuing parent tasks immediately when a child completed, rather than exploring all alternatives at the current position first. This prevented patterns like `["0"-"9"]` from working because `member → string` would complete with `"0"` and trigger parent continuation before `member → range` could process the full `"0"-"9"` pattern.
-
-## ~~Root Cause 2: Overly Aggressive Task Deduplication~~ **FIXED**
-
-**Issue**: ~~Single string members like `["A"]` failed bootstrap grammar parsing~~ **String character sets now work correctly**
-
-**Problem RESOLVED**: The parser was deduplicating tasks too aggressively across different parent contexts. When `member → string` and `member → range` were both viable at the same position, only one path was explored because tasks were deduplicated based solely on rule name and position, ignoring the derivation context.
-
-**Solution Implemented**: **Parent-hash task hashing** where each task's hash included its parent's hash, creating a unique chain back to the root that ensured different derivation contexts got unique identifiers.
-
-**Key Changes** (src/parser.rs):
-- Modified `Task` struct to include `parent_hash: u64` and `full_hash: u64`
-- Updated task creation to compute parent-hash chains: `hash(rule + position + parent_hash)`
-- Tasks displayed as `[parent.child]` using base58 encoding for human readability
-- Binary u64 hashes used for deduplication performance
-
-### Solution Implemented:
-**Fixed COMPLETER queue management** - Parent continuations are now queued at the back (`queue_back`) instead of front (`queue_front`), ensuring all alternatives at the current position are explored before parent propagation.
-
-**Key Change** (src/parser.rs:438):
-```rust
-// OLD: self.queue_front(maybe_id);  // Immediate parent continuation
-// NEW: self.queue_back(maybe_id);   // Defer parent continuation
-```
-
-## ✅ Root Cause 3: Left Recursion Infinite Loops **COMPLETELY RESOLVED**
-
-**Issue**: Left-recursive grammars like `expr: expr, "+", term; term.` caused infinite loops hitting 100,000 operation limits
-
-**Root Cause Identified**: Parent-hash chaining created infinitely growing chains for predictions. Each prediction of `expr→sum→expr` generated unique hashes `[A→B→C→D...]` instead of stable cycles `[A→B→A→B]`, preventing proper Earley deduplication.
-
-**Fundamental Architecture Problem**: Confusion between individual alternatives (Rules) vs grouped alternatives under one name (BranchingRules). The Earley paper expects individual alternatives as separate rules, but our implementation grouped them.
-
-**Solution Implemented**: **Alternative Indexing with Simple Deduplication (CURRENT)**
-
-### Technical Implementation:
-```rust
-// Added to Task struct (src/parser.rs:95-105)
-pub alt_index: usize,  // which alt of this BranchingRule (0-based)
-
-// Simple deduplication strategy (src/parser.rs:have_we_seen)
-fn have_we_seen(&mut self, task: &Task) -> bool {
-    // Use task identity hash based on name, alt_index, origin, pos, dot
-    if self.hashes.contains(&task.hash) {
-        true // duplicate
-    } else {
-        self.hashes.insert(task.hash);
-        false // new task
-    }
-}
-```
-
 ### Position Semantics Upgrade:
 - Changed from `pos=N` to `S(N)` notation (position N = before character N)
 - Updated InputIter.get_at() for graphics-style coordinate system
 - Position 0 = before first character, matches HTML trace format
-
-### Key Changes:
-- **src/parser.rs**: Added `alt_index` field, updated all task constructors, implemented simple deduplication
-- **src/debug.rs**: Changed trace format from `pos=N` to `S(N)` notation
-- **Removed**: Unused `at_end()` method that wasn't following Rust iterator conventions
-- **SIMPLIFIED (Current)**: Removed parent-hash system entirely, using basic identity hash only
-
-### Verification:
-```bash
-# Left recursion now works perfectly
-cargo run -- parse --grammar-str 'S: S, "a"; "b".' --input-str 'ba'
-# Output: <S><S>b</S>a</S>
-
-# Traces show proper alternative indexing
-# S[0]: First alternative (S, "a")
-# S[1]: Second alternative ("b")
-```
-
-### Impact:
-- **Left recursion completely resolved**: No more infinite loops or trace size limits
-- **Performance**: Hybrid approach maintains deduplication benefits while preventing infinite chains
-- **Correctness**: Follows original Earley paper approach with individual alternatives
-- **Diagnostics**: `expr[4]` notation makes traces much more readable
-
-### Architecture Simplification (Current Status)
-
-The simple deduplication approach elegantly solves the core problems:
-1. **All Tasks**: Basic identity hash based on `name[alt_index] origin:pos dot` prevents infinite left-recursion
-2. **Nullable Handling**: Proper nullable nonterminal advancement ensures correct Earley parsing
-
-**Benefits of simplified approach**:
-- Hash computation performance: Single hash computation per task
-- Code clarity: Much simpler to understand and debug
-- Storage efficiency: Single u64 hash per task, no parent-hash chains
-
-**Priority**: Technical debt eliminated - the simple approach is both correct and efficient.
-
-## 🚀 CURRENT STATUS (2025-09-25)
-
-### Recent Major Simplification
-- **REMOVED**: All parent-hash/blockchain complexity from Task struct and deduplication logic
-- **SIMPLIFIED**: Task identity now based only on core fields: `name[alt_index] origin:pos dot`
-- **MAINTAINED**: All functionality preserved - test suite still at 28/108 PASS rate
-- **CLEAN**: Much simpler codebase for debugging remaining bootstrap grammar parsing issues
-
-### Current Test Suite Performance
-- **Total**: 108 tests
-- **PASS**: 28 (25.9%) - Core functionality working correctly
-- **FAIL**: 15 (13.9%) - Output format mismatches, mostly minor XML formatting
-- **Bootstrap Errors**: 65 (60.2%) - Bootstrap grammar parsing failures, primary remaining issue
-- **Parse Errors**: 0 - Input parsing with valid grammars working well
-
-### Active Work Areas
-1. **Bootstrap Grammar Parsing**: 65 tests failing due to bootstrap ixml grammar parsing issues
-2. **Nullable Nonterminal Handling**: Recently fixed deduplication logic for nullable nonterminals
-3. **Code Architecture**: Successfully simplified from complex parent-hash chains to simple identity hashing
-
-## Debug Infrastructure Improvements Needed
 
 ### Current Problems with Debugging
 - **Temporary code pollution**: Adding `eprintln!` statements directly in source code that must be manually removed
@@ -372,22 +256,7 @@ The simple deduplication approach elegantly solves the core problems:
 
 ### Proposed Debug Infrastructure
 
-#### 1. Command-Line Debug Control
-
-Audit what `cargo test` does
-
-Is it helpful as currently put together? What would be better?
-In particular, focus on unit testing complex & tricky sections of code
-
-```bash
-# Control debug levels and categories from CLI
-cargo run -- parse --grammar-str 'grammar' --input-str 'input' --debug-level trace --debug-filter "dedup,predict"
-
-# Clean separation of outputs
-cargo run -- --trace-file trace.log --debug-file debug.log --quiet-stdout
-```
-
-#### 2. Structured Debug Macros
+#### 1. Structured Debug Macros
 Replace manual `eprintln!` with structured macros:
 ```rust
 debug_dedup!("Skipping duplicate", task);
@@ -397,7 +266,7 @@ debug_queue!("Adding to queue", task, queue_size);
 
 Auto-include context: arena size, queue size, parsing phase, parent relationships, timestamps
 
-#### 3. Debug Categories with Levels
+#### 2. Debug Categories with Levels
 Enable turning on/off different categories of message in addition to level filtering
 ```
 DEDUP:TRACE - Show all deduplication decisions
@@ -406,19 +275,7 @@ QUEUE:INFO - Show only major queue operations
 COMPLETE:TRACE - Show all completion operations
 ```
 
-#### 4. Better Test Integration
-```bash
-# Compare debug output between cases
-cargo run -- suite --debug-diff failing_case working_case
-
-# Save debug output per test automatically
-cargo run -- suite --debug-archive log/suite_debug/
-
-# Regression detection
-cargo run -- suite --debug-baseline --detect-debug-changes
-```
-
-#### 5. Contextual Information
+#### 3. Contextual Information
 Automatically include:
 - Task genealogy (parent → child chains)
 - Parsing phase indicators

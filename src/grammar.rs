@@ -26,11 +26,20 @@
 //! This module includes an ergonomic interface for building grammars by hand,
 //! or from the output of upstream processes (including ixml parsing!)
 
-use std::{fmt, collections::{HashMap, HashSet}, cell::{Cell, OnceCell}, rc::Rc};
+use std::{fmt, collections::HashMap, cell::{Cell, OnceCell}, rc::Rc};
 use smol_str::SmolStr;
 use indextree::{Arena, NodeId};
 use crate::{parser::{Parser, DotNotation}, unicode_ranges::UnicodeRange, debug::DebugLevel};
 use crate::{ixml_bootstrap::bootstrap_ixml_grammar, debug_grammar};
+
+/// Key for caching nullability information for both BranchingRules and individual alternatives
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum NullabilityKey {
+    /// Entire BranchingRule (true if any alternative is nullable)
+    BranchingRule(SmolStr),
+    /// Specific alternative within a BranchingRule
+    Alternative(SmolStr, usize),
+}
 
 /// Detailed error types for the three-phase grammar parsing process
 #[derive(Debug)]
@@ -60,8 +69,8 @@ pub struct Grammar {
     definitions: HashMap<SmolStr, BranchingRule>,
     /// remember insertion order of rules (used for tests & comparing grammars)
     pub defn_order: Vec<SmolStr>,
-    /// cached nullability information - computed on demand
-    nullable_rules: OnceCell<HashSet<SmolStr>>,
+    /// unified cache for all nullability information - computed on demand
+    nullability_cache: OnceCell<HashMap<NullabilityKey, bool>>,
 }
 
 impl Grammar {
@@ -69,7 +78,7 @@ impl Grammar {
         Self {
             definitions: HashMap::new(),
             defn_order: Vec::new(),
-            nullable_rules: OnceCell::new(),
+            nullability_cache: OnceCell::new(),
         }
     }
 
@@ -142,63 +151,111 @@ impl Grammar {
     }
 
     pub fn is_nullable(&self, name: &str) -> Result<bool, crate::parser::ParseError> {
-        // Compute nullability on first use with OnceCell
-        let nullable_set = self.nullable_rules.get_or_init(|| {
-            let mut temp_grammar = self.clone();
-            // If this fails, we'll just return an empty set and let the caller handle errors
-            temp_grammar.compute_nullability_internal().unwrap_or_else(|_| HashSet::new())
-        });
+        // Ensure nullability cache is computed
+        self.ensure_nullability_cache()?;
 
-        Ok(nullable_set.contains(name))
+        let cache = self.nullability_cache.get().expect("Cache should be initialized");
+        let key = NullabilityKey::BranchingRule(SmolStr::new(name));
+
+        Ok(cache.get(&key).copied().unwrap_or(false))
     }
 
     /// Check if a specific rule (alternative) is nullable
-    /// TODO: Performance optimization needed - cache rule nullability to avoid repeated computation
+    /// Uses cached nullability computation for optimal performance
     pub fn is_alternative_nullable(&self, rule: &Rule) -> Result<bool, crate::parser::ParseError> {
-        // Use the cached nullable set from OnceCell
-        let nullable_set = self.nullable_rules.get_or_init(|| {
+        // Ensure nullability cache is computed
+        self.ensure_nullability_cache()?;
+
+        let cache = self.nullability_cache.get().expect("Cache should be initialized");
+
+        // For backwards compatibility, we compute on the fly from the rule structure
+        // This is still more efficient than before since the nullable set is cached
+        self.is_rule_nullable_from_cache(rule, cache)
+    }
+
+    /// Check if a specific alternative (by name and index) is nullable
+    /// This is the optimized version that uses pre-computed cache
+    pub fn is_alternative_nullable_by_index(&self, rule_name: &str, alt_index: usize) -> Result<bool, crate::parser::ParseError> {
+        // Ensure nullability cache is computed
+        self.ensure_nullability_cache()?;
+
+        let cache = self.nullability_cache.get().expect("Cache should be initialized");
+        let key = NullabilityKey::Alternative(SmolStr::new(rule_name), alt_index);
+
+        Ok(cache.get(&key).copied().unwrap_or(false))
+    }
+
+    /// Ensure the nullability cache is computed
+    fn ensure_nullability_cache(&self) -> Result<(), crate::parser::ParseError> {
+        if self.nullability_cache.get().is_none() {
             let mut temp_grammar = self.clone();
-            temp_grammar.compute_nullability_internal().unwrap_or_else(|_| HashSet::new())
-        });
-        self.is_rule_nullable(rule, nullable_set)
+            let cache = temp_grammar.compute_nullability_internal()?;
+            // Try to set the cache, but ignore errors if another thread set it first
+            let _ = self.nullability_cache.set(cache);
+        }
+        Ok(())
     }
 
     /// Compute nullability using fixed point algorithm
-    /// A rule is nullable if:
-    /// 1. It directly produces empty (no factors)
-    /// 2. All symbols on the right-hand side are nullable
-    fn compute_nullability_internal(&mut self) -> Result<HashSet<SmolStr>, crate::parser::ParseError> {
-        let mut nullable_rules = HashSet::new();
+    /// Populates both BranchingRule and individual alternative nullability
+    fn compute_nullability_internal(&mut self) -> Result<HashMap<NullabilityKey, bool>, crate::parser::ParseError> {
+        let mut cache = HashMap::new();
         let mut changed = true;
+
+        // First pass: Initialize all entries to false
+        for rule_name in &self.defn_order {
+            let branching_key = NullabilityKey::BranchingRule(rule_name.clone());
+            cache.insert(branching_key, false);
+
+            let branching_rule = &self.definitions[rule_name];
+            for alt_index in 0..branching_rule.alts.len() {
+                let alt_key = NullabilityKey::Alternative(rule_name.clone(), alt_index);
+                cache.insert(alt_key, false);
+            }
+        }
 
         // Fixed point iteration
         while changed {
             changed = false;
 
-            for rule_name in &self.defn_order {
-                // Skip if already marked nullable
-                if nullable_rules.contains(rule_name) {
-                    continue;
-                }
-
+            for rule_name in &self.defn_order.clone() {
                 let branching_rule = &self.definitions[rule_name];
 
-                // Check if ANY alternative of this rule is nullable
-                for rule in branching_rule.iter() {
-                    if self.is_rule_nullable(&rule, &nullable_rules)? {
-                        nullable_rules.insert(rule_name.clone());
+                // Check each alternative and update its nullability
+                let mut any_alternative_nullable = false;
+                for (alt_index, rule) in branching_rule.iter().enumerate() {
+                    let alt_key = NullabilityKey::Alternative(rule_name.clone(), alt_index);
+
+                    // Compute nullability for this alternative
+                    let is_nullable = self.is_rule_nullable_with_cache(&rule, &cache)?;
+
+                    // Update the cache if the value changed
+                    let old_value = cache[&alt_key];
+                    if old_value != is_nullable {
+                        cache.insert(alt_key, is_nullable);
                         changed = true;
-                        break; // Found one nullable alternative, rule is nullable
                     }
+
+                    if is_nullable {
+                        any_alternative_nullable = true;
+                    }
+                }
+
+                // Update BranchingRule nullability
+                let branching_key = NullabilityKey::BranchingRule(rule_name.clone());
+                let old_branching_value = cache[&branching_key];
+                if old_branching_value != any_alternative_nullable {
+                    cache.insert(branching_key, any_alternative_nullable);
+                    changed = true;
                 }
             }
         }
 
-        Ok(nullable_rules)
+        Ok(cache)
     }
 
-    /// Check if a specific rule (sequence of factors) is nullable
-    fn is_rule_nullable(&self, rule: &Rule, nullable_rules: &HashSet<SmolStr>) -> Result<bool, crate::parser::ParseError> {
+    /// Check if a specific rule (sequence of factors) is nullable using the unified cache
+    fn is_rule_nullable_from_cache(&self, rule: &Rule, cache: &HashMap<NullabilityKey, bool>) -> Result<bool, crate::parser::ParseError> {
         // Empty rule is nullable
         if rule.factors.is_empty() {
             return Ok(true);
@@ -212,8 +269,9 @@ impl Grammar {
                     return Ok(false);
                 }
                 Factor::Nonterm(_, name) => {
-                    // Check if this nonterminal is in our current nullable set
-                    if !nullable_rules.contains(name) {
+                    // Check if this nonterminal is nullable using the cache
+                    let key = NullabilityKey::BranchingRule(name.clone());
+                    if !cache.get(&key).copied().unwrap_or(false) {
                         return Ok(false);
                     }
                 }
@@ -222,6 +280,34 @@ impl Grammar {
 
         Ok(true)
     }
+
+    /// Check if a specific rule (sequence of factors) is nullable using current cache during computation
+    fn is_rule_nullable_with_cache(&self, rule: &Rule, cache: &HashMap<NullabilityKey, bool>) -> Result<bool, crate::parser::ParseError> {
+        // Empty rule is nullable
+        if rule.factors.is_empty() {
+            return Ok(true);
+        }
+
+        // All factors must be nullable for the rule to be nullable
+        for factor in &rule.factors {
+            match factor {
+                Factor::Terminal(_, _) => {
+                    // Terminals are never nullable
+                    return Ok(false);
+                }
+                Factor::Nonterm(_, name) => {
+                    // Check if this nonterminal is nullable using the cache
+                    let key = NullabilityKey::BranchingRule(name.clone());
+                    if !cache.get(&key).copied().unwrap_or(false) {
+                        return Ok(false);
+                    }
+                }
+            }
+        }
+
+        Ok(true)
+    }
+
 
     /// Parse an iXML grammar string and construct a Grammar (legacy method)
     pub fn from_ixml_str(ixml: &str) -> Result<Grammar, crate::parser::ParseError> {
@@ -1246,7 +1332,10 @@ impl SeqBuilder {
 
 }
 
-
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::Parser;
 
 #[test]
 fn parse_ixml() -> Result<(), crate::parser::ParseError> {
@@ -1321,7 +1410,7 @@ fn test_nullability_algorithm() -> Result<(), crate::parser::ParseError> {
     assert!(g.is_nullable("complex")?);
 
     // Test that nullability computation is cached
-    assert!(g.nullable_rules.get().is_some());
+    assert!(g.nullability_cache.get().is_some());
 
     Ok(())
 }
@@ -1646,7 +1735,7 @@ fn test_synthetic_rules_nullability() -> Result<(), crate::parser::ParseError> {
 
     // Now examine the actual synthetic rules that were generated
     println!("\n=== Examining synthetic rules directly ===");
-    for (name, rule) in &g.definitions {
+    for (name, _rule) in &g.definitions {
         if name.contains("--test.f-") {
             println!("Synthetic rule: {} -> nullable: {}", name, g.is_nullable(name)?);
 
@@ -1679,3 +1768,100 @@ fn test_synthetic_rules_nullability() -> Result<(), crate::parser::ParseError> {
 
     Ok(())
 }
+
+#[test]
+fn test_nullability_caching_simple() -> Result<(), crate::parser::ParseError> {
+    // Test that the new caching mechanism is more efficient than repeated computation
+    let ctx = RuleContext::new("test");
+    let mut g = Grammar::new();
+
+    // Create a complex grammar with many synthetic rules
+    g.define("root", ctx.seq()
+        .opt(ctx.seq().nt("complex"))
+        .repeat0(ctx.seq().nt("complex"))
+        .repeat1_sep(ctx.seq().nt("base"), ctx.seq().ch(','))
+    );
+
+    g.define("complex", ctx.seq()
+        .alts(vec![
+            ctx.seq().nt("base").opt(ctx.seq().ch('?')),
+            ctx.seq().repeat0_sep(ctx.seq().nt("base"), ctx.seq().ch(';')),
+            ctx.seq() // epsilon alternative
+        ])
+    );
+
+    g.define("base", ctx.seq().ch('a'));
+
+    // Test the new efficient method multiple times - should hit cache
+    for _ in 0..10 {
+        assert!(!g.is_alternative_nullable_by_index("base", 0)?);
+
+        // Test that we have at least one nullable alternative in complex (epsilon)
+        let complex_def = g.get_definition("complex")?;
+        let mut found_epsilon = false;
+        for idx in 0..complex_def.alts.len() {
+            if g.is_alternative_nullable_by_index("complex", idx)? {
+                found_epsilon = true;
+                break;
+            }
+        }
+        assert!(found_epsilon, "Should have at least one nullable alternative in complex");
+    }
+
+    // Verify cache consistency between methods
+    for (rule_name, branching_rule) in &g.definitions {
+        for (alt_index, rule) in branching_rule.iter().enumerate() {
+            let cached_result = g.is_alternative_nullable_by_index(rule_name, alt_index)?;
+            let direct_result = g.is_alternative_nullable(rule)?;
+            assert_eq!(cached_result, direct_result,
+                "Mismatch for {}[{}]: cached={}, direct={}",
+                rule_name, alt_index, cached_result, direct_result);
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_nullability_cache_structure() -> Result<(), crate::parser::ParseError> {
+    // Test that the cache contains all expected entries
+    let ctx = RuleContext::new("test");
+    let mut g = Grammar::new();
+
+    g.define("empty", ctx.seq());
+    g.define("terminal", ctx.seq().ch('a'));
+    g.define("choice", ctx.seq().alts(vec![
+        ctx.seq().nt("empty"),
+        ctx.seq().nt("terminal")
+    ]));
+
+    // Trigger cache computation
+    g.is_nullable("empty")?;
+
+    // Verify cache structure
+    let cache = g.nullability_cache.get().expect("Cache should be populated");
+
+    // Check that both BranchingRule and Alternative entries exist
+    assert!(cache.contains_key(&NullabilityKey::BranchingRule(SmolStr::new("empty"))));
+    assert!(cache.contains_key(&NullabilityKey::Alternative(SmolStr::new("empty"), 0)));
+
+    assert!(cache.contains_key(&NullabilityKey::BranchingRule(SmolStr::new("terminal"))));
+    assert!(cache.contains_key(&NullabilityKey::Alternative(SmolStr::new("terminal"), 0)));
+
+    // Check synthetic rule from alts()
+    let synthetic_name = cache.keys()
+        .filter_map(|k| match k {
+            NullabilityKey::BranchingRule(name) if name.contains("--test.f-opt") => Some(name.clone()),
+            _ => None
+        })
+        .next()
+        .expect("Should have synthetic rule");
+
+    assert!(cache.contains_key(&NullabilityKey::BranchingRule(synthetic_name.clone())));
+    assert!(cache.contains_key(&NullabilityKey::Alternative(synthetic_name.clone(), 0)));
+    assert!(cache.contains_key(&NullabilityKey::Alternative(synthetic_name, 1)));
+
+    Ok(())
+}
+
+} // end tests module
