@@ -152,6 +152,17 @@ impl Grammar {
         Ok(nullable_set.contains(name))
     }
 
+    /// Check if a specific rule (alternative) is nullable
+    /// TODO: Performance optimization needed - cache rule nullability to avoid repeated computation
+    pub fn is_alternative_nullable(&self, rule: &Rule) -> Result<bool, crate::parser::ParseError> {
+        // Use the cached nullable set from OnceCell
+        let nullable_set = self.nullable_rules.get_or_init(|| {
+            let mut temp_grammar = self.clone();
+            temp_grammar.compute_nullability_internal().unwrap_or_else(|_| HashSet::new())
+        });
+        self.is_rule_nullable(rule, nullable_set)
+    }
+
     /// Compute nullability using fixed point algorithm
     /// A rule is nullable if:
     /// 1. It directly produces empty (no factors)
@@ -1342,6 +1353,329 @@ fn test_nullability_recursive_patterns() -> Result<(), crate::parser::ParseError
     assert!(!g.is_nullable("plus")?);  // + requires at least one non-nullable item
     assert!(g.is_nullable("empty")?);
     assert!(g.is_nullable("empty_star")?);
+
+    Ok(())
+}
+
+#[test]
+fn test_f_option() -> Result<(), crate::parser::ParseError> {
+    // Test SeqBuilder::opt() creates synthetic f-option rules correctly
+    // f? ⇒ f-option
+    // -f-option: f | ().
+    let ctx = RuleContext::new("test");
+    let mut g = Grammar::new();
+
+    // optional: base?.  (should create --test.f-option1 synthetic rule)
+    // Define this first so it becomes the root rule
+    g.define("optional", ctx.seq().opt(ctx.seq().nt("base")));
+
+    // base: "a".
+    g.define("base", ctx.seq().ch('a'));
+
+    // Print the effective grammar after synthetic rule generation
+    println!("=== Grammar after opt() synthetic rule generation ===");
+    println!("{}", &g);
+
+    // Test that the optional rule is nullable (due to empty alternative)
+    assert!(g.is_nullable("optional")?);
+    assert!(!g.is_nullable("base")?);
+
+    // Test actual parsing with both epsilon and non-epsilon branches
+
+    // Test 1: epsilon branch (empty input should match optional)
+    let mut parser1 = crate::parser::Parser::new(g.clone());
+    let arena1 = parser1.parse("")?;
+    let result1 = crate::parser::Parser::tree_to_test_format(&arena1);
+    println!("Empty input parse result: {}", result1);
+    assert!(result1.contains("<optional>"));
+
+    // Test 2: non-epsilon branch (input "a" should match base inside optional)
+    let mut parser2 = crate::parser::Parser::new(g);
+    let arena2 = parser2.parse("a")?;
+    let result2 = crate::parser::Parser::tree_to_test_format(&arena2);
+    println!("Input 'a' parse result: {}", result2);
+    assert!(result2.contains("<optional>"));
+    assert!(result2.contains("a"));
+
+    Ok(())
+}
+
+#[test]
+fn test_f_star() -> Result<(), crate::parser::ParseError> {
+    // Test SeqBuilder::repeat0() creates synthetic f-star rules correctly
+    // f* ⇒ f-star
+    // f-star: (f, f-star)?.
+    // This creates nested synthetic rules: f-star uses opt() which creates f-option rules
+    let ctx = RuleContext::new("test");
+    let mut g = Grammar::new();
+
+    // star: base*.  (should create --test.f-star1 synthetic rule)
+    // Define this first so it becomes the root rule
+    g.define("star", ctx.seq().repeat0(ctx.seq().nt("base")));
+
+    // base: "a".
+    g.define("base", ctx.seq().ch('a'));
+
+    // Print the effective grammar after synthetic rule generation
+    println!("=== Grammar after repeat0() synthetic rule generation ===");
+    println!("{}", &g);
+
+    // Test that the star rule is nullable (due to * operator)
+    assert!(g.is_nullable("star")?);
+    assert!(!g.is_nullable("base")?);
+
+    // Test actual parsing with different repetition counts
+
+    // Test 1: zero repetitions (epsilon branch)
+    let mut parser1 = crate::parser::Parser::new(g.clone());
+    let arena1 = parser1.parse("")?;
+    let result1 = crate::parser::Parser::tree_to_test_format(&arena1);
+    println!("Empty input parse result: {}", result1);
+    assert!(result1.contains("<star>"));
+
+    // Test 2: one repetition
+    let mut parser2 = crate::parser::Parser::new(g.clone());
+    let arena2 = parser2.parse("a")?;
+    let result2 = crate::parser::Parser::tree_to_test_format(&arena2);
+    println!("Input 'a' parse result: {}", result2);
+    assert!(result2.contains("<star>"));
+    assert!(result2.contains("a"));
+
+    // Test 3: multiple repetitions
+    let mut parser3 = crate::parser::Parser::new(g);
+    let arena3 = parser3.parse("aaa")?;
+    let result3 = crate::parser::Parser::tree_to_test_format(&arena3);
+    println!("Input 'aaa' parse result: {}", result3);
+    assert!(result3.contains("<star>"));
+    assert_eq!(result3.matches("<base>").count(), 3);
+
+    Ok(())
+}
+
+#[test]
+fn test_f_plus() -> Result<(), crate::parser::ParseError> {
+    // Test SeqBuilder::repeat1() creates synthetic f-plus rules correctly
+    // f+ ⇒ f-plus
+    // -f-plus: f, f*.
+    let ctx = RuleContext::new("test");
+    let mut g = Grammar::new();
+
+    // plus: base+.  (should create --test.f-plus1 synthetic rule)
+    // Define this first so it becomes the root rule
+    g.define("plus", ctx.seq().repeat1(ctx.seq().nt("base")));
+
+    // base: "a".
+    g.define("base", ctx.seq().ch('a'));
+
+    // Print the effective grammar after synthetic rule generation
+    println!("=== Grammar after repeat1() synthetic rule generation ===");
+    println!("{}", &g);
+
+    // Test that the plus rule is NOT nullable (requires at least one)
+    assert!(!g.is_nullable("plus")?);
+    assert!(!g.is_nullable("base")?);
+
+    // Test actual parsing with different repetition counts
+
+    // Test 1: one repetition (minimum required)
+    let mut parser1 = crate::parser::Parser::new(g.clone());
+    let arena1 = parser1.parse("a")?;
+    let result1 = crate::parser::Parser::tree_to_test_format(&arena1);
+    println!("Input 'a' parse result: {}", result1);
+    assert!(result1.contains("<plus>"));
+    assert_eq!(result1.matches("<base>").count(), 1);
+
+    // Test 2: multiple repetitions
+    let mut parser2 = crate::parser::Parser::new(g);
+    let arena2 = parser2.parse("aaa")?;
+    let result2 = crate::parser::Parser::tree_to_test_format(&arena2);
+    println!("Input 'aaa' parse result: {}", result2);
+    assert!(result2.contains("<plus>"));
+    assert_eq!(result2.matches("<base>").count(), 3);
+
+    Ok(())
+}
+
+#[test]
+fn test_f_plus_sep() -> Result<(), crate::parser::ParseError> {
+    // Test SeqBuilder::repeat1_sep() creates synthetic f-plus-sep rules correctly
+    // f++sep ⇒ f-plus-sep
+    // -f-plus-sep: f, (sep, f)*.
+    let ctx = RuleContext::new("test");
+    let mut g = Grammar::new();
+
+    // plus_sep: base++",".  (should create --test.f-plus-sep1 synthetic rule)
+    // Define this first so it becomes the root rule
+    g.define("plus_sep", ctx.seq().repeat1_sep(ctx.seq().nt("base"), ctx.seq().ch(',')));
+
+    // base: "a".
+    g.define("base", ctx.seq().ch('a'));
+
+    // Print the effective grammar after synthetic rule generation
+    println!("=== Grammar after repeat1_sep() synthetic rule generation ===");
+    println!("{}", &g);
+
+    // Test that the plus_sep rule is NOT nullable (requires at least one)
+    assert!(!g.is_nullable("plus_sep")?);
+    assert!(!g.is_nullable("base")?);
+
+    // Test actual parsing with different repetition counts
+
+    // Test 1: one item (no separator needed)
+    let mut parser1 = crate::parser::Parser::new(g.clone());
+    let arena1 = parser1.parse("a")?;
+    let result1 = crate::parser::Parser::tree_to_test_format(&arena1);
+    println!("Input 'a' parse result: {}", result1);
+    assert!(result1.contains("<plus_sep>"));
+    assert_eq!(result1.matches("<base>").count(), 1);
+
+    // Test 2: multiple items with separators
+    let mut parser2 = crate::parser::Parser::new(g);
+    let arena2 = parser2.parse("a,a,a")?;
+    let result2 = crate::parser::Parser::tree_to_test_format(&arena2);
+    println!("Input 'a,a,a' parse result: {}", result2);
+    assert!(result2.contains("<plus_sep>"));
+    assert_eq!(result2.matches("<base>").count(), 3);
+
+    Ok(())
+}
+
+#[test]
+fn test_f_star_sep() -> Result<(), crate::parser::ParseError> {
+    // Test SeqBuilder::repeat0_sep() creates synthetic f-star-sep rules correctly
+    // f**sep ⇒ f-star-sep
+    // -f-star-sep: (f++sep)?.
+    let ctx = RuleContext::new("test");
+    let mut g = Grammar::new();
+
+    // star_sep: base**",".  (should create --test.f-star-sep1 synthetic rule)
+    // Define this first so it becomes the root rule
+    g.define("star_sep", ctx.seq().repeat0_sep(ctx.seq().nt("base"), ctx.seq().ch(',')));
+
+    // base: "a".
+    g.define("base", ctx.seq().ch('a'));
+
+    // Print the effective grammar after synthetic rule generation
+    println!("=== Grammar after repeat0_sep() synthetic rule generation ===");
+    println!("{}", &g);
+
+    // Test that the star_sep rule IS nullable (allows zero)
+    assert!(g.is_nullable("star_sep")?);
+    assert!(!g.is_nullable("base")?);
+
+    // Test actual parsing with different repetition counts
+
+    // Test 1: zero items (epsilon)
+    let mut parser1 = crate::parser::Parser::new(g.clone());
+    let arena1 = parser1.parse("")?;
+    let result1 = crate::parser::Parser::tree_to_test_format(&arena1);
+    println!("Empty input parse result: {}", result1);
+    assert!(result1.contains("<star_sep>"));
+
+    // Test 2: one item (no separator needed)
+    let mut parser2 = crate::parser::Parser::new(g.clone());
+    let arena2 = parser2.parse("a")?;
+    let result2 = crate::parser::Parser::tree_to_test_format(&arena2);
+    println!("Input 'a' parse result: {}", result2);
+    assert!(result2.contains("<star_sep>"));
+    assert_eq!(result2.matches("<base>").count(), 1);
+
+    // Test 3: multiple items with separators
+    let mut parser3 = crate::parser::Parser::new(g);
+    let arena3 = parser3.parse("a,a,a")?;
+    let result3 = crate::parser::Parser::tree_to_test_format(&arena3);
+    println!("Input 'a,a,a' parse result: {}", result3);
+    assert!(result3.contains("<star_sep>"));
+    assert_eq!(result3.matches("<base>").count(), 3);
+
+    Ok(())
+}
+
+#[test]
+fn test_synthetic_rules_nullability() -> Result<(), crate::parser::ParseError> {
+    // Comprehensive test to verify nullability computation for all synthetic rule types
+    // This is critical for bootstrap grammar parsing where synthetic rules must
+    // have correct nullability to trigger proper epsilon completions
+    let ctx = RuleContext::new("test");
+    let mut g = Grammar::new();
+
+    // Create all types of synthetic rules with various nullability scenarios
+
+    // 1. f-option (from opt()) - ALWAYS nullable
+    g.define("opt_rule", ctx.seq().opt(ctx.seq().nt("base")));
+
+    // 2. f-star (from repeat0()) - ALWAYS nullable
+    g.define("star_rule", ctx.seq().repeat0(ctx.seq().nt("base")));
+
+    // 3. f-plus (from repeat1()) - NOT nullable (requires at least one)
+    g.define("plus_rule", ctx.seq().repeat1(ctx.seq().nt("base")));
+
+    // 4. f-star-sep (from repeat0_sep()) - ALWAYS nullable
+    g.define("star_sep_rule", ctx.seq().repeat0_sep(ctx.seq().nt("base"), ctx.seq().ch(',')));
+
+    // 5. f-plus-sep (from repeat1_sep()) - NOT nullable (requires at least one)
+    g.define("plus_sep_rule", ctx.seq().repeat1_sep(ctx.seq().nt("base"), ctx.seq().ch(',')));
+
+    // 6. Mix nullable and non-nullable base elements
+    g.define("base", ctx.seq().ch('a'));           // NOT nullable
+    g.define("empty", ctx.seq());                  // nullable (epsilon)
+    g.define("opt_empty", ctx.seq().opt(ctx.seq())); // nullable (optional epsilon)
+
+    // More complex scenarios with nullable bases
+    g.define("star_nullable", ctx.seq().repeat0(ctx.seq().nt("empty")));
+    g.define("plus_nullable", ctx.seq().repeat1(ctx.seq().nt("empty")));
+
+    println!("=== Grammar with all synthetic rule types ===");
+    println!("{}", &g);
+
+    // Test nullability for all user-defined rules
+    assert!(!g.is_nullable("base")?, "base should NOT be nullable (contains 'a')");
+    assert!(g.is_nullable("empty")?, "empty should be nullable (epsilon rule)");
+    assert!(g.is_nullable("opt_empty")?, "opt_empty should be nullable (optional epsilon)");
+
+    // Test nullability for synthetic rules with non-nullable base
+    assert!(g.is_nullable("opt_rule")?, "opt_rule should be nullable (optional)");
+    assert!(g.is_nullable("star_rule")?, "star_rule should be nullable (zero or more)");
+    assert!(!g.is_nullable("plus_rule")?, "plus_rule should NOT be nullable (one or more)");
+    assert!(g.is_nullable("star_sep_rule")?, "star_sep_rule should be nullable (zero or more)");
+    assert!(!g.is_nullable("plus_sep_rule")?, "plus_sep_rule should NOT be nullable (one or more)");
+
+    // Test nullability for synthetic rules with nullable base
+    assert!(g.is_nullable("star_nullable")?, "star_nullable should be nullable (zero or more of nullable)");
+    assert!(g.is_nullable("plus_nullable")?, "plus_nullable should be nullable (one or more of nullable)");
+
+    // Now examine the actual synthetic rules that were generated
+    println!("\n=== Examining synthetic rules directly ===");
+    for (name, rule) in &g.definitions {
+        if name.contains("--test.f-") {
+            println!("Synthetic rule: {} -> nullable: {}", name, g.is_nullable(name)?);
+
+            // Verify synthetic rules follow expected nullability patterns
+            if name.contains("-option") {
+                assert!(g.is_nullable(name)?, "All f-option synthetic rules should be nullable");
+            } else if name.contains("-star") && !name.contains("-plus") {
+                assert!(g.is_nullable(name)?, "All f-star synthetic rules should be nullable");
+            } else if name.contains("-plus") {
+                // f-plus nullability depends on what it's repeating
+                let is_nullable = g.is_nullable(name)?;
+                println!("f-plus rule {} nullability: {}", name, is_nullable);
+                // Don't assert here since f-plus of nullable elements can be nullable
+            }
+        }
+    }
+
+    // Test that epsilon completion would work for the nullable synthetic rules
+    // This is the core issue: synthetic rules that are nullable should trigger
+    // immediate completion when predicted, matching the "Bpredict/complete" pattern
+
+    // Parse empty input with nullable synthetic rules
+    let mut parser = crate::parser::Parser::new(g.clone());
+    let arena = parser.parse("")?;
+    let result = crate::parser::Parser::tree_to_test_format(&arena);
+    println!("\nEmpty input parse result: {}", result);
+
+    // Should succeed because opt_rule is nullable
+    assert!(result.contains("<opt_rule>"), "Empty input should parse successfully with nullable opt_rule");
 
     Ok(())
 }

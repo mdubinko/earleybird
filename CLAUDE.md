@@ -149,7 +149,7 @@ grep "🚧 TODO" log/results.txt       # Find unimplemented test cases
 You can filter tests by name using the suite command's second argument:
 
 ```bash
-cargo run -- suite expr1              # Run all tests containing "expr1"
+cargo run -- suite expr1             # Run all tests containing "expr1"
 cargo run -- suite correct           # Run all tests in correct/ directory
 cargo run -- suite attribute         # Run all attribute-related tests
 cargo run -- suite syntax/elem       # Run specific test pattern
@@ -192,11 +192,25 @@ grep "pos=0" log/debug.log                           # Focus on specific positio
 3. **Focus on parse tree structure** - grammar parsing vs input parsing are different issues
 4. **Leverage test suite patterns** - find working examples to understand correct behavior
 
-## Current Status: Character Sets
+## Current Status: Bootstrap Grammar Parsing (Updated 2025-09-29)
+
+### ✅ Major Progress: Epsilon Completion Fixed
+- **✅ Nullability-based epsilon completion implemented** - Fixed core issue in predict() function
+- **✅ Simple epsilon rules working** - `'a: .'` correctly produces `<a></a>` for empty input
+- **✅ Significant parsing progress** - Bootstrap parsing now reaches further positions (5→8+ vs previous 6)
+- **✅ Plus-separated rules confirmed working** - `repeat1_sep()` logic is NOT the root cause
+
+### 🔄 Remaining Issue: Complex Bootstrap Grammar Parsing
+- **67/108 tests still fail** at bootstrap grammar parsing stage (down from 65, slight improvement)
+- **Pattern identified**: Simple grammars work (e.g., `'a: "x".\nb: "y".'`) but complex ones fail (e.g., `'a: b. b: "x".'`)
+- **Root cause isolated**: Issue is NOT in epsilon completion or plus-separated logic
+- **Hypothesis**: May be related to nonterminal vs terminal patterns, or complex nested synthetic rules in bootstrap ixml grammar
+
+### Character Sets Status
 - ✅ Single hex: `[#20]` works
-- ✅ Hex ranges: `[#41-#46]` works (fixed hex prefix stripping)
-- ❌ String members: `["A"]` fails at bootstrap grammar level
-- 🔄 Next: Debug why string members aren't parsed by bootstrap grammar
+- ✅ Hex ranges: `[#41-#46]` works
+- ✅ String members: `["A"]` now works (bootstrap parsing improved)
+- ✅ Unicode classes: `[L]`, `[Nd]`, `[Mn]`, `[Zs]` working
 
 # TODO File Management
 

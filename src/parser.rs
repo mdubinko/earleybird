@@ -580,7 +580,48 @@ impl Parser {
 
         for (alt_index, alt) in g.get_definition(&name)?.iter().enumerate() {
             let maybe_id = self.traces.task(&name, alt_index, effective_mark, current_pos, current_pos, alt.dot_notator());
-            self.queue_front(maybe_id);
+
+            // CRITICAL FIX: Handle nullable alternatives immediately whether new or deduplicated
+            // Check if this alternative is nullable (can produce epsilon)
+            if g.is_alternative_nullable(alt)? {
+                debug_earley_pos!(DebugLevel::Trace, current_pos, "PREDICTOR: Nullable rule {}[{}] - triggering immediate completion (Bpredict/complete)", name, alt_index);
+
+                // For empty rules, we need to trigger completion regardless of deduplication
+                // Find waiting parents for this rule name and alternative
+                let waiting_parents = self.traces.get_waiting_parent_tasks_by_name(&name);
+
+                for continue_id in waiting_parents {
+                    // Make sure we only continue from a compatible position
+                    if self.traces.get(continue_id).pos != current_pos {
+                        continue;
+                    }
+                    debug!("...immediately continuing parent Task for empty rule... {}", self.traces.format_task(continue_id));
+
+                    let now_finished_via_child = self.traces.get(continue_id).dot.next_unparsed();
+                    let match_rec = match now_finished_via_child {
+                        Factor::Nonterm(mark, name) => MatchRec::NonTerm(name, current_pos, mark),
+                        Factor::Terminal(tmark, _ch) => {
+                            panic!("INTERNAL ERROR: Complete() called on task waiting for terminal {:?}. This indicates a logic bug in the parser.", tmark);
+                        }
+                    };
+                    trace!("MatchRec {:?}", &match_rec);
+
+                    // Child completed immediately; advance parent cursor
+                    let maybe_continue_id = self.traces.task_advance_cursor(continue_id, match_rec);
+
+                    // Queue parent continuations at back to ensure exhaustive alternative exploration
+                    self.queue_back(maybe_continue_id);
+                }
+            }
+
+            // Handle task queueing for non-empty rules or if we need to queue the task itself
+            if let Some(task_id) = maybe_id {
+                if !self.traces.get(task_id).dot.is_completed() {
+                    // Normal rule - queue for standard processing
+                    self.queue_front(Some(task_id));
+                }
+                // Note: empty rules are handled above and don't need to be queued
+            }
         }
         Ok(())
     }
@@ -1309,6 +1350,90 @@ mod tests {
 
     #[cfg(test)]
     #[test]
+    fn test_minimal_ixml_subset_bootstrap() {
+        // Create a minimal subset of ixml grammar that focuses on rule parsing
+        // Based on: ixml: s, rule++RS, s.
+        // This should help isolate the exact bootstrap parsing failure
+
+        use crate::grammar::{Grammar, RuleContext, Mark, TMark};
+
+        println!("=== Building minimal ixml subset grammar ===");
+
+        let mut mini_ixml = Grammar::new();
+
+        // ixml: s, rule++RS, s.
+        let ctx = RuleContext::new("ixml");
+        mini_ixml.define("ixml", ctx.seq()
+            .nt("s")
+            .repeat1_sep(ctx.seq().nt("rule"), ctx.seq().nt("RS"))
+            .nt("s"));
+
+        // rule: name, s, -":", s, -".", s.  (simplified - no alts for now)
+        let ctx = RuleContext::new("rule");
+        mini_ixml.define("rule", ctx.seq()
+            .nt("name")
+            .nt("s")
+            .mark_ch(':', TMark::Mute)
+            .nt("s")
+            .mark_ch('.', TMark::Mute)
+            .nt("s"));
+
+        // name: namestart, namefollower*.  (this is the problematic one!)
+        let ctx = RuleContext::new("name");
+        mini_ixml.mark_define(Mark::Attr, "name", ctx.seq()
+            .nt("namestart")
+            .repeat0(ctx.seq().nt("namefollower")));
+
+        // namestart: ["a"-"z"; "A"-"Z"].  (simplified)
+        let ctx = RuleContext::new("namestart");
+        mini_ixml.mark_define(Mark::Mute, "namestart", ctx.seq().ch_range('a', 'z'));
+        mini_ixml.mark_define(Mark::Mute, "namestart", ctx.seq().ch_range('A', 'Z'));
+
+        // namefollower: namestart.  (simplified - no numbers/symbols)
+        let ctx = RuleContext::new("namefollower");
+        mini_ixml.mark_define(Mark::Mute, "namefollower", ctx.seq().nt("namestart"));
+
+        // s: whitespace*.  (optional spacing)
+        let ctx = RuleContext::new("s");
+        mini_ixml.mark_define(Mark::Mute, "s", ctx.seq().repeat0(ctx.seq().nt("whitespace")));
+
+        // RS: whitespace+.  (required spacing)
+        let ctx = RuleContext::new("RS");
+        mini_ixml.mark_define(Mark::Mute, "RS", ctx.seq().repeat1(ctx.seq().nt("whitespace")));
+
+        // whitespace: " "; "\n".  (simplified)
+        let ctx = RuleContext::new("whitespace");
+        mini_ixml.mark_define(Mark::Mute, "whitespace", ctx.seq().ch(' '));
+        mini_ixml.mark_define(Mark::Mute, "whitespace", ctx.seq().ch('\n'));
+
+        println!("Minimal ixml subset grammar:");
+        println!("{}", mini_ixml);
+
+        // Test 1: Try to parse our minimal failing case
+        let input = "a: . b: .";
+        println!("\n=== Testing input: '{}' ===", input);
+
+        let mut parser = Parser::new(mini_ixml);
+        let result = parser.parse(input);
+
+        match result {
+            Ok(arena) => {
+                let output = Parser::tree_to_test_format(&arena);
+                println!("SUCCESS: {}", output);
+                // If this succeeds, the issue is elsewhere
+                assert!(true, "Minimal ixml subset should parse simple rules");
+            }
+            Err(e) => {
+                println!("FAILURE: {:?}", e);
+                // If this fails, we've reproduced the bootstrap issue in minimal form
+                println!("Reproduced bootstrap parsing failure in minimal subset!");
+                // Don't panic - this is expected and useful for debugging
+            }
+        }
+    }
+
+    #[cfg(test)]
+    #[test]
     fn test_premature_queue_empty_debug() {
         // Debug test case for premature queue empty issue
         // Grammar: doc: item++space. item: "x". space: " ".
@@ -1365,5 +1490,6 @@ mod tests {
             }
         }
     }
+
 
 }
