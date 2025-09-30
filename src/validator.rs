@@ -67,20 +67,7 @@ impl fmt::Display for ValidationError {
 
 /// Main validation entry point
 pub fn validate_ixml(input: &str) -> ValidationResult {
-    // TODO: Comment preprocessing disabled due to bootstrap circular dependency
-    // The current strip_comments implementation incorrectly treats braces inside string literals
-    // as comment delimiters (e.g., `test: "{"` fails with "unclosed comment").
-    // Since native comment parsing is now implemented in the bootstrap grammar,
-    // we can safely disable preprocessing and let the Earley parser handle comments.
-    // Future fix: Use ANTLR or similar for proper comment preprocessing that respects string boundaries.
-
-    // Phase 1: Comment preprocessing (DISABLED - see TODO above)
-    // match strip_comments(input) {
-    //     Ok(processed) => ValidationResult::new(processed),
-    //     Err(error) => ValidationResult::new(String::new()).with_error(error),
-    // }
-
-    // For now, return input unchanged
+    // Comments are handled directly by the Earley parser in context-aware manner
     ValidationResult::new(input.to_string())
 
     // TODO: Phase 2: Basic syntax validation
@@ -140,52 +127,7 @@ mod tests {
         assert_eq!(result.processed_text, "rule: \"a\".");
     }
     
-    #[test]
-    fn test_simple_comment() {
-        let input = "rule: \"a\". {simple comment}";
-        let result = validate_ixml(input);
-        assert!(result.is_valid());
-        assert_eq!(result.processed_text, "rule: \"a\". ");
-    }
-    
-    #[test]
-    fn test_nested_comments() {
-        let input = "rule: \"a\". {outer {nested} comment}";
-        let result = validate_ixml(input);
-        assert!(result.is_valid());
-        assert_eq!(result.processed_text, "rule: \"a\". ");
-    }
-    
-    #[test]
-    fn test_multiple_comments() {
-        let input = "rule: \"a\". {first} rule2: \"b\". {second}";
-        let result = validate_ixml(input);
-        assert!(result.is_valid());
-        assert_eq!(result.processed_text, "rule: \"a\".  rule2: \"b\". ");
-    }
-    
-    #[test]
-    fn test_unclosed_comment() {
-        let input = "rule: \"a\". {unclosed comment";
-        let result = validate_ixml(input);
-        assert!(!result.is_valid());
-        assert_eq!(result.errors.len(), 1);
-        assert!(matches!(result.errors[0].kind, ValidationErrorKind::UncloseComment));
-    }
-    
-    #[test]
-    fn test_deeply_nested_comments() {
-        let input = "rule: \"a\". {a {b {c} d} e}";
-        let result = validate_ixml(input);
-        assert!(result.is_valid());
-        assert_eq!(result.processed_text, "rule: \"a\". ");
-    }
-    
-    #[test]
-    fn test_empty_comment() {
-        let input = "rule: \"a\". {}";
-        let result = validate_ixml(input);
-        assert!(result.is_valid());
-        assert_eq!(result.processed_text, "rule: \"a\". ");
-    }
+    // TODO: Comment processing tests removed - current pre-stripping approach is flawed.
+    // Comments should be parsed context-aware within the Earley parser, not pre-stripped,
+    // since { and } can appear in quoted strings and other contexts.
 }

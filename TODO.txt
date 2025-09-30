@@ -236,3 +236,12 @@
   - Add contextual information to all parsing operations
   - Enable hierarchical debugging with proper instrumentation
   - Self-documenting error types with source location info
+- [ ] Improve parse error reporting with expected token information (src/parser.rs) #MED
+  - Problem: Current errors like "no completed parse" are too generic and unhelpful
+  - Solution: Track SCANNER failures at furthest position reached during parsing
+  - Implementation: Collect unique expected tokens/characters at failure point
+  - Format: "Parse failed at position 15: expected one of ['.', ')', 'digit'] but found 'x'"
+  - Benefits: Works for both bootstrap ixml parsing and target grammar parsing
+  - Considerations: Limit expectation set size (max 5-10), avoid noise from irrelevant backtrack attempts
+  - Technical: Enhance ParseError struct with expected_tokens HashSet and actual_char fields
+  - Files: src/parser.rs (ParseError, error collection in SCANNER), src/debug.rs (error formatting)

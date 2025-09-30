@@ -352,9 +352,9 @@ pub fn xml_canonicalize(input_xml: &str) -> String {
                     for (k,v) in attrs.into_iter().sorted() {
                         builder.append(" ");
                         builder.append(k);
-                        builder.append("='");
-                        builder.append(v.replace('\'', "&apos;").replace('&', "&amp;").replace('<', "&lt;"));
-                        builder.append("'")
+                        builder.append("=\"");
+                        builder.append(v.replace('&', "&amp;").replace('<', "&lt;").replace('"', "&quot;"));
+                        builder.append("\"")
                     }
                 }
                 builder.append("\n>");

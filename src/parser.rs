@@ -1254,7 +1254,7 @@ mod tests {
 
     #[test]
     fn test_bounds_check_with_zero_length_input() {
-        let grammar_str = r#"test: "a"?"#;
+        let grammar_str = r#"test: "a"?."#;
         let grammar = Grammar::from_ixml_str(grammar_str).expect("Failed to parse grammar");
         let mut parser = Parser::new(grammar);
 
@@ -1271,7 +1271,7 @@ mod tests {
 
     #[test]
     fn test_bounds_check_with_single_char() {
-        let grammar_str = r#"test: "a", "b"?"#;
+        let grammar_str = r#"test: "a", "b"?."#;
         let grammar = Grammar::from_ixml_str(grammar_str).expect("Failed to parse grammar");
         let mut parser = Parser::new(grammar);
 
