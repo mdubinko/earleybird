@@ -11,6 +11,72 @@ use crate::utils;
 
 const DOTSEP: &str = "•";
 
+/// Parse session state - contains per-parse mutable state including statistics and progress tracking
+#[derive(Debug)]
+pub struct ParseSession {
+    /// Total length of input being parsed
+    pub input_length: usize,
+    /// Track operations at each position for infinite loop detection
+    pub position_repeat_count: HashMap<usize, u32>,
+    /// Total operations performed during this parse
+    pub total_operations: u32,
+    /// Furthest position reached in input (for debugging)
+    pub farthest_pos: usize,
+    /// Maximum queue size reached during parsing
+    pub max_queue_size: usize,
+    /// Maximum operations allowed at any single position before detecting infinite loop
+    pub infinite_loop_threshold: u32,
+}
+
+impl Default for ParseSession {
+    fn default() -> Self {
+        Self {
+            input_length: 0,
+            position_repeat_count: HashMap::new(),
+            total_operations: 0,
+            farthest_pos: 0,
+            max_queue_size: 0,
+            infinite_loop_threshold: 1000,
+        }
+    }
+}
+
+impl ParseSession {
+    /// Increment operation count at given position and return new count
+    pub fn increment_position(&mut self, pos: usize) -> u32 {
+        let count = self.position_repeat_count.entry(pos).or_insert(0);
+        *count += 1;
+        *count
+    }
+
+    /// Reset position tracking when advancing to new positions
+    pub fn reset_position_tracking(&mut self) {
+        self.position_repeat_count.clear();
+    }
+
+    /// Record an operation and update statistics
+    pub fn record_operation(&mut self, queue_size: usize) {
+        self.total_operations += 1;
+        self.max_queue_size = self.max_queue_size.max(queue_size);
+    }
+}
+
+impl fmt::Display for ParseSession {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ParseSession {{ ops: {}, pos: {}/{}, max_queue: {}, hotspots: [{}] }}",
+            self.total_operations,
+            self.farthest_pos,
+            self.input_length,
+            self.max_queue_size,
+            self.position_repeat_count.iter()
+                .filter(|(_, &count)| count > 10) // Show positions with many operations
+                .map(|(pos, count)| format!("{}:{}", pos, count))
+                .collect::<Vec<_>>()
+                .join(",")
+        )
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 /// A sort of iterator for a Rule.
 /// Instead of just calling next(), For completed terms, it tracks positions and specifically-matched chars
@@ -384,9 +450,6 @@ pub struct Parser {
     /// the permanent owner of all tasks, referenced by TraceId
     traces: TraceArena,
     completed_trace: Vec<TraceId>,
-    farthest_pos: usize,  // hint for later reading the trace
-    input_length: usize,  // total length of input to ensure complete consumption
-    max_trace_size: usize,  // maximum number of operations before timeout
 }
 
 /// Earley parser with LIFO prediction strategy and modified completion strategy
@@ -404,24 +467,23 @@ pub struct Parser {
 impl Parser {
 
     pub fn new(grammar: Grammar) -> Self {
-        Self::new_with_trace_limit(grammar, 100_000)
-    }
-
-    pub fn new_with_trace_limit(grammar: Grammar, max_trace_size: usize) -> Self {
         Self {
             grammar,
             traces: TraceArena::new(),
             completed_trace: Vec::new(),
-            farthest_pos: 0,
-            input_length: 0,
-            max_trace_size,
         }
     }
 
     /// Successful return value is an indextree over Content. Consider this temporary
     pub fn parse(&mut self, input: &str) -> Result<Arena<Content>, ParseError> {
+        let mut session = ParseSession::default();
+        self.parse_with_session(input, &mut session)
+    }
+
+    /// Parse with explicit session for statistics tracking and infinite loop detection
+    fn parse_with_session(&mut self, input: &str, session: &mut ParseSession) -> Result<Arena<Content>, ParseError> {
         let mut input = InputIter::new(input);
-        self.input_length = input.tokens.len();
+        session.input_length = input.tokens.len();
 
         // help avoid borrow-contention on *self
         let g = self.grammar.clone();
@@ -442,22 +504,29 @@ impl Parser {
         // WHILE more.tasks:
         //    TAKE task
         while let Some(tid) = self.traces.queue.pop_front() {
-            // Check trace size limit to prevent infinite loops
-            if self.traces.arena.len() > self.max_trace_size {
+            let current_pos = self.traces.get(tid).pos;
+
+            // Position-based infinite loop detection (much more efficient than total operation count)
+            let repeat_count = session.increment_position(current_pos);
+            if repeat_count > session.infinite_loop_threshold {
                 return Err(ParseError::static_err(&format!(
-                    "Parse exceeded maximum trace size of {} operations (infinite loop detected)",
-                    self.max_trace_size
+                    "Parse exceeded {} operations at position {} (infinite loop detected). Session: {}",
+                    session.infinite_loop_threshold, current_pos, session
                 )));
             }
 
-            let current_pos = self.traces.get(tid).pos;
-            if current_pos > self.farthest_pos {
-                if current_pos < self.input_length {
+            // Record operation statistics
+            session.record_operation(self.traces.queue.len());
+
+            // Track progress and reset position tracking when advancing
+            if current_pos > session.farthest_pos {
+                if current_pos < session.input_length {
                     debug!("⏭ Advanced input to position {} (next char: '{}')", current_pos, input.get_at(current_pos));
                 } else {
                     debug!("⏭ Advanced input to position {} (at end)", current_pos);
                 }
-                self.farthest_pos = current_pos;
+                session.farthest_pos = current_pos;
+                session.reset_position_tracking(); // Clear position repeat counts when advancing
             }
             debug!("🔄 PROCESSING: Pulled from queue {} at {} | Queue size: {} -> {} | Queue: [{}]",
                    self.traces.format_task(tid), current_pos,
@@ -486,15 +555,15 @@ impl Parser {
                     // ELSE:
                     //    PASS \Terminal, doesn't match
                     Factor::Terminal(tmark, matcher) => {
-                        self.scan(tid, tmark, matcher, &mut input)?;
+                        self.scan(tid, tmark, matcher, &mut input, session)?;
                     }
                 }
             }
         }
 
-        info!("🔚 QUEUE EMPTY: Parse loop exited with queue empty. Last position: {}, Input length: {}", self.farthest_pos, self.input_length);
-        info!("Finished parse with {} items in trace", self.traces.arena.len());
-        self.unpack_parse_tree()
+        info!("🔚 QUEUE EMPTY: Parse loop exited with queue empty. Last position: {}, Input length: {}", session.farthest_pos, session.input_length);
+        info!("Finished parse with {} items in trace, {} total operations", self.traces.arena.len(), session.total_operations);
+        self.unpack_parse_tree(session)
     }
 
     /// COMPLETER: Handle completed tasks by continuing their parent tasks
@@ -630,14 +699,14 @@ impl Parser {
     /// Implements: sym starts (input, pos): RECORD TERMINAL input FOR task
     ///                                      CONTINUE task AT (pos incremented (input, sym))
     ///             ELSE: PASS \Terminal, doesn't match
-    fn scan(&mut self, tid: TraceId, tmark: TMark, matcher: TerminalDefn, input: &mut InputIter) -> Result<(), ParseError> {
+    fn scan(&mut self, tid: TraceId, tmark: TMark, matcher: TerminalDefn, input: &mut InputIter, session: &ParseSession) -> Result<(), ParseError> {
         let current_pos = self.traces.get(tid).pos;
         debug!("SCANNER: Terminal {tmark}{matcher} at pos={current_pos}");
         debug_earley_pos!(DebugLevel::Trace, current_pos, "SCANNER: {} scanning {}{}", self.traces.format_task(tid), tmark, matcher);
 
         // Bounds check: don't scan beyond input length
-        if current_pos >= self.input_length {
-            debug!("Position {} >= input length {}; 🛑", current_pos, self.input_length);
+        if current_pos >= session.input_length {
+            debug!("Position {} >= input length {}; 🛑", current_pos, session.input_length);
             debug_earley_fail!(current_pos, &format!("{}", matcher), '∅', &self.queue_snapshot());
             return Ok(());
         }
@@ -663,7 +732,6 @@ impl Parser {
             debug!("QUEUE: Adding to back (normal priority): {} | Queue size: {} -> {}",
                    self.traces.format_task(id), self.traces.queue.len(), self.traces.queue.len() + 1);
             self.traces.queue.push_back(id);
-            self.validate_queue_invariants();
         }
     }
 
@@ -672,31 +740,10 @@ impl Parser {
             debug!("QUEUE: Adding to front (high priority): {} | Queue size: {} -> {}",
                    self.traces.format_task(id), self.traces.queue.len(), self.traces.queue.len() + 1);
             self.traces.queue.push_front(id);
-            self.validate_queue_invariants();
         }
     }
 
 
-    #[cfg(debug_assertions)]
-    fn validate_queue_invariants(&self) {
-        // Ensure queue doesn't grow unbounded (catch infinite loops)
-        assert!(self.traces.queue.len() < 100_000,
-            "Queue size {} exceeded safety limit - possible infinite loop",
-            self.traces.queue.len());
-
-        // Ensure all queued tasks have valid positions
-        for &tid in &self.traces.queue {
-            let task = self.traces.get(tid);
-            assert!(task.pos <= self.input_length,
-                "Task {} has position {} beyond input length {}",
-                self.traces.format_task(tid), task.pos, self.input_length);
-        }
-    }
-
-    #[cfg(not(debug_assertions))]
-    fn validate_queue_invariants(&self) {
-        // No-op in release builds for performance
-    }
 
     /// Generate a compact snapshot of the current queue state for debugging
     /// Shows entries from both front (LIFO) and back (FIFO) since deque has both aspects
@@ -763,7 +810,7 @@ impl Parser {
         }
     }
 
-    fn unpack_parse_tree(&mut self) -> Result<Arena<Content>, ParseError> {
+    fn unpack_parse_tree(&mut self, session: &ParseSession) -> Result<Arena<Content>, ParseError> {
         debug!("TRACE...");
         debug!("COMPLETED TASKS ({} total):", self.completed_trace.len());
         for tid in &self.completed_trace {
@@ -773,8 +820,8 @@ impl Parser {
         
         // Check if we have a completed parse of our grammar's root rule that spans the entire input
         let name = self.grammar.get_root_definition_name().unwrap();
-        debug!("🔍 LOOKING FOR: completed parse of rule '{}' spanning (0 to {})", name, self.input_length);
-        let root_completion = self.filter_completed_trace(&name, 0, self.input_length);
+        debug!("🔍 LOOKING FOR: completed parse of rule '{}' spanning (0 to {})", name, session.input_length);
+        let root_completion = self.filter_completed_trace(&name, 0, session.input_length);
 
         if root_completion.is_none() {
             debug!("❌ NO ROOT COMPLETION FOUND for '{}' spanning entire input", name);
@@ -782,11 +829,11 @@ impl Parser {
             let mut diagnostic = format!(
                 "Parse failed: no completed parse of rule '{}' spanning entire input (0 to {})\n",
                 name,
-                self.input_length
+                session.input_length
             );
 
             // Find the furthest position we reached
-            diagnostic.push_str(&format!("Furthest position reached: {}\n", self.farthest_pos));
+            diagnostic.push_str(&format!("Furthest position reached: {}\n", session.farthest_pos));
 
             // Show partial completions of the root rule
             let partial_completions: Vec<_> = self.completed_trace.iter()
@@ -808,7 +855,7 @@ impl Parser {
             let nearby_completions: Vec<_> = self.completed_trace.iter()
                 .filter_map(|&tid| {
                     let task = self.traces.get(tid);
-                    if task.pos >= self.farthest_pos.saturating_sub(5) && task.pos <= self.farthest_pos + 5 {
+                    if task.pos >= session.farthest_pos.saturating_sub(5) && task.pos <= session.farthest_pos + 5 {
                         Some((tid, task))
                     } else { None }
                 })
@@ -816,7 +863,7 @@ impl Parser {
                 .collect();
 
             if !nearby_completions.is_empty() {
-                diagnostic.push_str(&format!("Completions near furthest position ({}±5):\n", self.farthest_pos));
+                diagnostic.push_str(&format!("Completions near furthest position ({}±5):\n", session.farthest_pos));
                 for (tid, task) in nearby_completions {
                     diagnostic.push_str(&format!("  {} (origin={}, pos={})\n",
                         self.traces.format_task(tid), task.origin, task.pos));
@@ -841,8 +888,8 @@ impl Parser {
         
         let mut arena = Arena::new();
         let root = arena.new_node(Content::Root);
-        debug!("Found completed parse of '{}' from 0 to {}", name, self.input_length);
-        self.unpack_parse_tree_internal(&mut arena, &name, Mark::Default, 0, self.input_length, root);
+        debug!("Found completed parse of '{}' from 0 to {}", name, session.input_length);
+        self.unpack_parse_tree_internal(&mut arena, &name, Mark::Default, 0, session.input_length, root);
 
         // the standard algorithm above leaves attribute nodes in an inconvenient state.
         // with a bare Content::Attribute node, for which one needs to plumb all descendants to find text nodes

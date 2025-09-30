@@ -144,6 +144,29 @@
 
 ## CURRENT FOCUS AREAS (2025-09-29)
 
+### ✅ PHASE 1 COMPLETE: Parser Architecture & Infinite Loop Detection
+- [x] **Position-based infinite loop detection** #CRITICAL
+  - Status: COMPLETED - 1000 operations per position vs 100,000 total operations (100x more efficient)
+  - Solution: ParseSession struct with position_repeat_count HashMap and configurable infinite_loop_threshold
+  - Implementation: Clean separation of core parsing (&mut self) vs statistics (&mut session)
+  - Verification: Successfully detected real infinite loop in unicode-v06.0-diagnostic test (2M+ operations at position 1617)
+  - Files: src/parser.rs (ParseSession, parse_with_session method)
+  - Impact: Much faster infinite loop detection, cleaner architecture, enhanced error reporting
+
+- [x] **Simplified Parser struct and constructors** #HIGH
+  - Status: COMPLETED - Removed max_trace_size, farthest_pos, input_length from Parser
+  - Solution: Single Parser::new() constructor, removed new_with_trace_limit()
+  - Implementation: Moved session-specific state to ParseSession struct
+  - Impact: Cleaner API, better separation of concerns, easier testing
+
+### 🚀 PHASE 2 READY: Position-Bucketed Queue Implementation
+- [ ] **Implement position-bucketed queue for proper Earley parsing** #CRITICAL
+  - Issue: Current simple VecDeque processes tasks out of canonical Earley order
+  - Solution: BTreeMap<usize, VecDeque<TraceId>> to process all tasks at position N before advancing to N+1
+  - Expected Impact: May fix 67 bootstrap parsing failures by ensuring correct left-to-right processing
+  - Design: PositionBucketedQueue with advance_position() method and current_position tracking
+  - Files: src/parser.rs (TraceArena queue field, queue_front/queue_back methods)
+
 ### Primary Issue: Bootstrap Grammar Parsing (67 tests failing)
 - [x] **Implement nullability-based epsilon completion** #CRITICAL
   - Status: COMPLETED - Fixed epsilon completion logic in predict() function
@@ -158,11 +181,10 @@
   - Evidence: `item++sep` pattern correctly parses "a a" as `<root><item>a</item><sep> </sep><item>a</item></root>`
   - Conclusion: The issue is NOT in the core plus-separated logic
 - [ ] **Investigate remaining bootstrap parsing issue** #CRITICAL
-  - Issue: 67/108 tests still fail at bootstrap grammar parsing stage (was 65, slight change)
-  - Root Cause: NOT in plus-sep logic or epsilon completion - somewhere else in bootstrap ixml grammar processing
+  - Issue: 67/108 tests still fail at bootstrap grammar parsing stage (confirmed with Phase 1 changes)
+  - Root Cause: NOT in plus-sep logic or epsilon completion - likely task ordering issue that position-bucketed queue will fix
   - Pattern: Simple grammars work (e.g., `'a: "x".\nb: "y".'`) but complex ones fail (e.g., `'a: b. b: "x".'`)
-  - Hypothesis: Issue may be in nonterminal vs terminal patterns, or complex nested synthetic rules
-  - Next: Deep-dive trace analysis comparing working vs failing cases
+  - Next: Implement position-bucketed queue as this may resolve the fundamental parsing order issue
 
 ### Recent Major Achievements (2025-09-29)
 - [x] **Nullability-Based Epsilon Completion** #CRITICAL
