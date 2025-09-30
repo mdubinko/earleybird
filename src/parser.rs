@@ -191,14 +191,104 @@ impl fmt::Display for Task {
 pub struct TraceId(usize);
 
 #[derive(Debug)]
+/// Position-bucketed queue for proper Earley left-to-right processing.
+/// Ensures all tasks at position N are completed before advancing to N+1.
+/// Within each position, maintains front/back priority for predictions vs completions.
+pub struct PositionBucketedQueue {
+    /// Map from position to tasks at that position
+    buckets: std::collections::BTreeMap<usize, VecDeque<TraceId>>,
+    /// Current position being processed
+    current_position: usize,
+}
+
+impl PositionBucketedQueue {
+    pub fn new() -> Self {
+        Self {
+            buckets: std::collections::BTreeMap::new(),
+            current_position: 0,
+        }
+    }
+
+    /// Add task to front of its position bucket (high priority - predictions)
+    pub fn push_front(&mut self, task_id: TraceId, position: usize) {
+        self.buckets.entry(position).or_insert_with(VecDeque::new).push_front(task_id);
+    }
+
+    /// Add task to back of its position bucket (normal priority - completions, scanning)
+    pub fn push_back(&mut self, task_id: TraceId, position: usize) {
+        self.buckets.entry(position).or_insert_with(VecDeque::new).push_back(task_id);
+    }
+
+    /// Get next task, advancing position when current bucket is empty
+    pub fn pop_front(&mut self) -> Option<TraceId> {
+        loop {
+            if let Some(bucket) = self.buckets.get_mut(&self.current_position) {
+                if let Some(task_id) = bucket.pop_front() {
+                    return Some(task_id);
+                }
+                // Current bucket is empty, remove it and advance position
+                self.buckets.remove(&self.current_position);
+            }
+
+            // Find next non-empty position
+            if let Some((&next_pos, _)) = self.buckets.range(self.current_position..).next() {
+                self.current_position = next_pos;
+            } else {
+                // No more tasks
+                return None;
+            }
+        }
+    }
+
+    /// Check if queue is empty
+    pub fn is_empty(&self) -> bool {
+        self.buckets.is_empty()
+    }
+
+    /// Get total number of tasks across all buckets
+    pub fn len(&self) -> usize {
+        self.buckets.values().map(|bucket| bucket.len()).sum()
+    }
+
+    /// Get current position being processed
+    pub fn current_position(&self) -> usize {
+        self.current_position
+    }
+
+    /// Iterate over all tasks in queue order (by position, then by priority within position)
+    pub fn iter(&self) -> impl Iterator<Item = &TraceId> {
+        self.buckets.iter().flat_map(|(_, bucket)| bucket.iter())
+    }
+}
+
+impl std::fmt::Display for PositionBucketedQueue {
+    /// Format as "S(0):3 S(1):7 S(2):1" showing position buckets with task counts
+    /// Current position marked with * like "S(1):7*"
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.buckets.is_empty() {
+            write!(f, "empty")
+        } else {
+            let bucket_strs: Vec<String> = self.buckets.iter()
+                .map(|(pos, bucket)| format!("S({}):{}{}",
+                    pos,
+                    bucket.len(),
+                    if *pos == self.current_position { "*" } else { "" }
+                ))
+                .collect();
+            write!(f, "{}", bucket_strs.join(" "))
+        }
+    }
+}
+
+#[derive(Debug)]
 /// the permanent home of all Traces/Tasks
 pub struct TraceArena {
     /// main storage for Tasks. The vector index becomes the TraceId
     /// (which should always match what's stored in task.id)
     arena: Vec<Task>,
 
-    /// active queue of tasks
-    queue: VecDeque<TraceId>,
+    /// active queue of tasks, bucketed by position for proper Earley ordering
+    queue: PositionBucketedQueue,
 
     /// Track every place where a nonterminal can be triggered.
     /// Key is a nonterminal name. Value is a particular TraceId that references it
@@ -220,7 +310,7 @@ impl TraceArena {
     fn new() -> Self {
         Self {
             arena: Vec::new(),
-            queue: VecDeque::new(),
+            queue: PositionBucketedQueue::new(),
             continuations: MultiMap::new(),
             hashes: HashSet::new()
         }
@@ -729,17 +819,21 @@ impl Parser {
 
     fn queue_back(&mut self, maybe_id: Option<TraceId>) {
         if let Some(id) = maybe_id {
-            debug!("QUEUE: Adding to back (normal priority): {} | Queue size: {} -> {}",
-                   self.traces.format_task(id), self.traces.queue.len(), self.traces.queue.len() + 1);
-            self.traces.queue.push_back(id);
+            let task = self.traces.get(id);
+            debug!("QUEUE: Adding to back S({}) (normal priority): {} | Queue: {} -> {}",
+                   task.pos, self.traces.format_task(id), self.traces.queue,
+                   format!("{} +1", self.traces.queue));
+            self.traces.queue.push_back(id, task.pos);
         }
     }
 
     fn queue_front(&mut self, maybe_id: Option<TraceId>) {
         if let Some(id) = maybe_id {
-            debug!("QUEUE: Adding to front (high priority): {} | Queue size: {} -> {}",
-                   self.traces.format_task(id), self.traces.queue.len(), self.traces.queue.len() + 1);
-            self.traces.queue.push_front(id);
+            let task = self.traces.get(id);
+            debug!("QUEUE: Adding to front S({}) (high priority): {} | Queue: {} -> {}",
+                   task.pos, self.traces.format_task(id), self.traces.queue,
+                   format!("{} +1", self.traces.queue));
+            self.traces.queue.push_front(id, task.pos);
         }
     }
 
@@ -774,15 +868,14 @@ impl Parser {
             .collect();
 
         let back: Vec<String> = self.traces.queue.iter()
-            .rev()
-            .take(3)
+            .skip(queue_len.saturating_sub(3))
             .map(|&tid| {
                 let task = self.traces.get(tid);
                 format!("{}@{}", task.name, task.pos)
             })
             .collect();
 
-        format!("{}...{} ({})", front.join(","), back.into_iter().rev().collect::<Vec<_>>().join(","), queue_len)
+        format!("{}...{} ({})", front.join(","), back.join(","), queue_len)
     }
 
     /// Sift through and find only completed Tasks

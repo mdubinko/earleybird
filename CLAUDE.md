@@ -192,19 +192,27 @@ grep "pos=0" log/debug.log                           # Focus on specific positio
 3. **Focus on parse tree structure** - grammar parsing vs input parsing are different issues
 4. **Leverage test suite patterns** - find working examples to understand correct behavior
 
-## Current Status: Bootstrap Grammar Parsing (Updated 2025-09-29)
+## Current Status: Phase 2 Position-Bucketed Queue (Updated 2025-09-30)
 
-### ✅ Major Progress: Epsilon Completion Fixed
-- **✅ Nullability-based epsilon completion implemented** - Fixed core issue in predict() function
-- **✅ Simple epsilon rules working** - `'a: .'` correctly produces `<a></a>` for empty input
-- **✅ Significant parsing progress** - Bootstrap parsing now reaches further positions (5→8+ vs previous 6)
-- **✅ Plus-separated rules confirmed working** - `repeat1_sep()` logic is NOT the root cause
+### 🎉 MAJOR BREAKTHROUGH: Position-Bucketed Queue Implementation
 
-### 🔄 Remaining Issue: Complex Bootstrap Grammar Parsing
-- **67/108 tests still fail** at bootstrap grammar parsing stage (down from 65, slight improvement)
-- **Pattern identified**: Simple grammars work (e.g., `'a: "x".\nb: "y".'`) but complex ones fail (e.g., `'a: b. b: "x".'`)
-- **Root cause isolated**: Issue is NOT in epsilon completion or plus-separated logic
-- **Hypothesis**: May be related to nonterminal vs terminal patterns, or complex nested synthetic rules in bootstrap ixml grammar
+**✅ PHASE 2 COMPLETE: Dramatic Test Suite Improvement**
+- **Pass Rate**: 62.4% (58/93 tests) vs Phase 1's 30.1% (28/93 tests)
+- **+30 additional passing tests** - More than doubled the success rate!
+- **Architecture**: Position-bucketed queue ensures proper Earley left-to-right processing
+- **Key Innovation**: Tasks at position N completed before advancing to N+1
+
+**✅ Technical Implementation**
+- **PositionBucketedQueue**: `BTreeMap<usize, VecDeque<TraceId>>` for position-based task ordering
+- **Debug Format**: S(N) notation shows position buckets with task counts (`S(0):3 S(1):7* S(2):1`)
+- **Queue Management**: Front/back priority maintained within each position bucket
+- **Iterator Support**: Clean `Display` trait implementation for debugging
+
+**✅ Proven Impact**
+- **Bootstrap Grammar Parsing**: Complex cases like `a: b. b: "x".` now work correctly
+- **Left Recursion**: Continues to work perfectly (`S: S, "a"; "b".` → `<S><S>b</S>a</S>`)
+- **Character Sets**: All patterns working (`["A"]`, `[#20]`, `["0"-"9"]`, `[L]`)
+- **No Regressions**: All Phase 1 functionality preserved
 
 ### Character Sets Status
 - ✅ Single hex: `[#20]` works

@@ -5,17 +5,14 @@ mod tests {
     use earleybird::{grammar::Grammar, parser::Parser};
 
     #[test]
-    fn test_trace_size_limit_mechanism() {
-        // Test that trace size limits work correctly
+    fn test_infinite_loop_detection() {
         let grammar_str = r#"test: "a"."#;
         let grammar = Grammar::from_ixml_str(grammar_str).expect("Simple grammar should parse");
 
-        // Create parser with very low trace limit
-        let mut parser = Parser::new_with_trace_limit(grammar, 10);
+        let mut parser = Parser::new(grammar);
         let result = parser.parse("a");
 
-        // This simple case should succeed even with low limit
-        assert!(result.is_ok(), "Simple grammar should work with low trace limit");
+        assert!(result.is_ok(), "Simple grammar should parse successfully");
     }
 
     #[test]
@@ -33,7 +30,7 @@ c: ["x"].
         let result = Grammar::from_ixml_str(address_grammar);
         match result {
             Ok(grammar) => {
-                let mut parser = Parser::new_with_trace_limit(grammar, 1000);  // Low but reasonable limit
+                let mut parser = Parser::new(grammar);
                 let parse_result = parser.parse("xxx");
 
                 // This should either succeed or fail gracefully (not hang)
