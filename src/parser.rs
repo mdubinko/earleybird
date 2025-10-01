@@ -1005,15 +1005,9 @@ impl Parser {
     fn unpack_attr_value(&self, attr_nid: NodeId, arena: &mut Arena<Content>) -> String {
         let mut attr_value = Builder::default();
         for descendant in attr_nid.descendants(arena) {
-            let mut attr_builder = Builder::default();
             if let Content::Text(txt) = arena.get(descendant).unwrap().get() {
-                attr_builder.append(txt.as_str());
+                attr_value.append(txt.as_str());
             }
-            attr_value.append(attr_builder.string().unwrap()
-                .replace('\'', "&apos;")
-                .replace('&', "&amp;")
-                .replace('<', "&lt;")
-            );
         }
         attr_value.string().unwrap()
     }
@@ -1121,7 +1115,11 @@ impl Parser {
                     };
                     builder.append(attr_name.to_string());
                     builder.append("=\"");
-                    builder.append(attr_value.replace('"', "&quot;"));
+                    // Escape XML entities in attribute values - order matters! & must be first
+                    builder.append(attr_value
+                        .replace('&', "&amp;")
+                        .replace('<', "&lt;")
+                        .replace('"', "&quot;"));
                     builder.append("\"");
                 }
 
@@ -1588,6 +1586,7 @@ mod tests {
             position_filter: None,
             failure_only: false,
             trace_file: Some("log/premature_queue_debug.log".to_string()),
+            enabled_categories: None,
         };
         crate::debug::set_debug_config(debug_config);
 

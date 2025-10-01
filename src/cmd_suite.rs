@@ -79,7 +79,7 @@ pub struct RunSuite {
     suite: Option<String>,
 
     /// console output level: DEBUG|INFO|SUMMARY|WARNING|ERROR|ALL|NONE|OFF
-    #[argh(option, long = "console", default = "String::from(\"SUMMARY\")")]
+    #[argh(option, long = "console", default = "String::from(\"INFO\")")]
     console: String,
 
     /// console output categories: BOOTSTRAP,QUEUE,SCANNER,OUTPUT,PREDICT,COMPLETE,DEDUP,GRAMMAR
@@ -95,7 +95,7 @@ pub struct RunSuite {
     file_filter: Option<String>,
 
     /// output filename for results
-    #[argh(option, short = 'o', long = "output", default = "String::from(\"conformance-results.txt\")")]
+    #[argh(option, short = 'o', long = "output", default = "String::from(\"log/conformance-results.txt\")")]
     output: String,
 }
 
@@ -139,6 +139,10 @@ fn run(suite_spec: Option<String>, console: &str, _console_filter: Option<&Strin
     } else {
         if console_level != DebugLevel::Off {
             println!("Writing results to: {}", output_file);
+        }
+        // Create parent directory if it doesn't exist
+        if let Some(parent) = Path::new(output_file).parent() {
+            std::fs::create_dir_all(parent).expect("Could not create output directory");
         }
         Some(OpenOptions::new()
             .create(true)

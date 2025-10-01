@@ -75,14 +75,24 @@
 - [ ] Complete Unicode hex range support in character classes #MED
   - Add support for Unicode block names and hex ranges beyond basic categories
 
-## Current Test Suite Status (Updated 2025-09-30)
-- **Correct Tests**: **MAJOR BREAKTHROUGH** - 58/93 passing (62.4% pass rate)
-  - **58 PASS** (62.4%) - More than doubled from Phase 1's 28/93 (30.1%)
-  - **+30 additional tests now passing** - Position-bucketed queue fixed bootstrap parsing
-  - **~20 Bootstrap Errors** - Remaining bootstrap issues (down from 65+ in Phase 1)
-  - **~15 Fail** - Output format mismatches, mostly minor XML formatting
+## Current Test Suite Status (Updated 2025-10-01)
+- **Correct Tests**: **60/93 passing (64.5% pass rate)** - Steady progress
+  - **60 PASS** (64.5%) - Up from 58/93 (62.4%)
+  - **22 FAIL** (23.7%) - Output format issues (down from ~20, but better categorization)
+  - **9 Bootstrap Errors** (9.7%) - Remaining bootstrap grammar parsing failures
+  - **1 Parse Error** (1.1%) - Down from 6 parse errors
+  - **1 TODO** (1.1%) - AssertDynamicError not yet implemented
   - **Note**: Total test count lower (93 vs 108) due to temporarily commented unicode-version-check tests
-- **Recent Major Fixes**:
+- **Recent Major Fixes (2025-10-01)**:
+  - [x] **XML Output Format**: FIXED - Proper XML entity escaping in attributes and text #HIGH
+    - Fixed: `unpack_attr_value()` now stores literal characters instead of pre-escaped entities (src/parser.rs:1005-1013)
+    - Fixed: `tree_to_test_format()` properly escapes &, <, " during serialization (src/parser.rs:1119-1122)
+    - Fixed: `xml_canonicalize()` re-escapes & in text content (src/testsuite_utils.rs:365,370)
+    - Added: 8 comprehensive tests for xml_canonicalize entity handling
+    - Tests Fixed: attribute-value and related tests now passing
+    - Files: src/parser.rs, src/testsuite_utils.rs
+  - [x] **Test Suite Output**: Default results file now in log/ directory (src/cmd_suite.rs:98,144-146)
+- **Previous Major Fixes**:
   - **Architecture Simplification**: COMPLETED - removed all parent-hash/blockchain complexity from parser
   - **Task Deduplication**: SIMPLIFIED - single identity hash per task based on core fields
   - **Nullable Nonterminal Handling**: FIXED - proper advancement for deduplicated nullable nonterminals

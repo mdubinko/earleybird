@@ -362,12 +362,12 @@ pub fn xml_canonicalize(input_xml: &str) -> String {
             Ok(Event::Text(t)) => {
                 match t.unescape() {
                     Ok(unescaped) => {
-                        builder.append(unescaped.to_string().replace('<', "&lt;"));
+                        builder.append(unescaped.to_string().replace('&', "&amp;").replace('<', "&lt;"));
                     }
                     Err(e) => {
                         eprintln!("Warning: Failed to unescape text content, using raw text: `{}` error: {}", String::from_utf8_lossy(&t).to_string(), e);
                         // Fall back to raw text without unescaping
-                        builder.append(String::from_utf8_lossy(&t).to_string().replace('<', "&lt;"));
+                        builder.append(String::from_utf8_lossy(&t).to_string().replace('&', "&amp;").replace('<', "&lt;"));
                     }
                 }
             },
@@ -431,8 +431,8 @@ mod tests {
     use super::*;
 
 #[test]
-fn test_canonize_xml() {
-    // N.B. extra various whitespace, attribute order, single vs double quotes, char entities
+fn test_canonize_xml_basic() {
+    // Verify whitespace normalization, attribute sorting, and quote style normalization
     let xml1 = r#" <A xmlns = "" >  <B  value ='"'  name= "foo">text&lt;</B >   </A> "#;
     let xml2 = r#"<A
 ><B name="foo" value="&quot;"
@@ -443,6 +443,77 @@ fn test_canonize_xml() {
     assert_eq!(xml_canonicalize(xml1), xml2);
     println!("2: {}", xml_canonicalize(xml2));
     assert_eq!(xml_canonicalize(xml1), xml_canonicalize(xml2));
+}
+
+#[test]
+fn test_canonize_xml_apostrophe_in_attr() {
+    // Apostrophes in double-quoted attributes should remain literal
+    let input = r#"<test a="don't">.</test>"#;
+    let expected = r#"<test a="don't"
+>.</test
+>"#;
+    assert_eq!(xml_canonicalize(input), expected);
+}
+
+#[test]
+fn test_canonize_xml_apostrophe_entity_in_attr() {
+    // &apos; entity should be unescaped to literal apostrophe
+    let input = r#"<test a="&apos;">.</test>"#;
+    let expected = r#"<test a="'"
+>.</test
+>"#;
+    assert_eq!(xml_canonicalize(input), expected);
+}
+
+#[test]
+fn test_canonize_xml_ampersand_in_attr() {
+    // Ampersands in attributes must remain escaped as &amp;
+    let input = r#"<test a="&amp;">.</test>"#;
+    let expected = r#"<test a="&amp;"
+>.</test
+>"#;
+    assert_eq!(xml_canonicalize(input), expected);
+}
+
+#[test]
+fn test_canonize_xml_all_entities_in_attr() {
+    // Comprehensive entity handling in attributes (matching attribute-value test case)
+    // Note: &sol; is not a standard XML entity, so we use literal /
+    let input = r#"<test a="&quot;&apos;&lt;>/&amp;">.</test>"#;
+    let expected = r#"<test a="&quot;'&lt;>/&amp;"
+>.</test
+>"#;
+    assert_eq!(xml_canonicalize(input), expected);
+}
+
+#[test]
+fn test_canonize_xml_single_quoted_attr_to_double() {
+    // Single-quoted attributes convert to double-quoted with literal apostrophe
+    let input = r#"<test a='&apos;'>.</test>"#;
+    let expected = r#"<test a="'"
+>.</test
+>"#;
+    assert_eq!(xml_canonicalize(input), expected);
+}
+
+#[test]
+fn test_canonize_xml_text_entities() {
+    // Entity handling in text content
+    let input = r#"<test>&quot;&apos;&lt;&gt;&amp;</test>"#;
+    let expected = r#"<test
+>"'&lt;>&amp;</test
+>"#;
+    assert_eq!(xml_canonicalize(input), expected);
+}
+
+#[test]
+fn test_canonize_xml_double_escaped_entity() {
+    // Double-escaped entities represent literal entity strings
+    let input = r#"<test a="&amp;apos;">.</test>"#;
+    let expected = r#"<test a="&amp;apos;"
+>.</test
+>"#;
+    assert_eq!(xml_canonicalize(input), expected);
 }
 
 } // end tests module
