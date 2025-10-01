@@ -275,6 +275,10 @@ impl Grammar {
                         return Ok(false);
                     }
                 }
+                Factor::Insertion(_, _) => {
+                    // Insertions are always nullable (don't consume input)
+                    // Continue checking other factors
+                }
             }
         }
 
@@ -301,6 +305,10 @@ impl Grammar {
                     if !cache.get(&key).copied().unwrap_or(false) {
                         return Ok(false);
                     }
+                }
+                Factor::Insertion(_, _) => {
+                    // Insertions are always nullable (don't consume input)
+                    // Continue checking other factors
                 }
             }
         }
@@ -630,10 +638,30 @@ impl Grammar {
             "insertion" => {
                 // insertion: -"+", s, (string; -"#", hex), s.
                 // Insertion consumes no input but adds content to the output
-                // TODO: Implement proper insertion semantics - this is a placeholder
-                // For now, treat as empty match (consumes no input)
-                // The actual insertion semantics need to be handled in the output generation phase
-                debug_grammar!(DebugLevel::Basic, "TODO: Insertion syntax not fully implemented - treating as empty match");
+                let attrs = Parser::get_attributes(arena, nid);
+
+                // Get tmark if present
+                let tmark = match attrs.get("tmark").map(|s| s.as_str()) {
+                    Some("^") => TMark::Unmute,
+                    Some("-") => TMark::Mute,
+                    _ => TMark::Default,
+                };
+
+                // Get the text to insert - either from string attribute or hex attribute
+                let text = if let Some(string_val) = attrs.get("string") {
+                    string_val.to_string()
+                } else if let Some(hex_val) = attrs.get("hex") {
+                    // Parse hex value and convert to char
+                    let code_point = u32::from_str_radix(hex_val, 16)
+                        .expect("Invalid hex in insertion");
+                    char::from_u32(code_point)
+                        .expect("Invalid Unicode code point in insertion")
+                        .to_string()
+                } else {
+                    panic!("Insertion must have either string or hex attribute");
+                };
+
+                seq = seq.insertion(text, tmark);
             }
             _ => unimplemented!("unknown element {name} child of <alt>"),
         }
@@ -895,12 +923,14 @@ impl fmt::Display for Rule {
 }
 
 
-/// At this low level, an individual `Factor` is either a terminal or a nonterminal
-/// TODO: insertions
+/// At this low level, an individual `Factor` is either a terminal, a nonterminal, or an insertion
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Factor {
     Terminal(TMark, TerminalDefn),
     Nonterm(Mark, SmolStr),
+    /// Insertion: text to insert in output without consuming input
+    /// Can be marked with TMark for exclusion or hex representation
+    Insertion(TMark, SmolStr),
 }
 
 impl Factor {
@@ -919,6 +949,7 @@ impl fmt::Display for Factor {
         match self {
             Self::Terminal(tmark, lit) => write!(f, "{tmark}{lit}"),
             Self::Nonterm(mark, str) => write!(f, "{mark}{str}"),
+            Self::Insertion(tmark, text) => write!(f, "{tmark}+\"{text}\""),
         }
     }
 }
@@ -1176,6 +1207,18 @@ impl SeqBuilder {
         self
     }
 
+    /// insertion: text to insert in output without consuming input
+    pub fn insertion(self, text: String, tmark: TMark) -> Self {
+        self.mark_insertion(text, tmark)
+    }
+
+    /// insertion with specified TMark
+    pub fn mark_insertion(mut self, text: String, tmark: TMark) -> Self {
+        let factor = Factor::Insertion(tmark, SmolStr::new(&text));
+        self.factors.push(factor);
+        self
+    }
+
     /// record an entirely new (internal, synthesized) named rule
     fn syn_rule(mut self, name: &str, mut rb: Self) -> Self {
         self = self.siphon(&mut rb);
@@ -1326,7 +1369,7 @@ fn parse_ixml() -> Result<(), crate::parser::ParseError> {
     let mut parser = Parser::new(g);
     let arena = parser.parse(ixml)?;
     let result = Parser::tree_to_test_format(&arena);
-    let expected = r#"<ixml><rule name="doc"><alt><literal string="A"></literal><literal string="B"></literal></alt></rule></ixml>"#;
+    let expected = r#"<ixml><rule name="doc"><alt><literal string="A"/><literal string="B"/></alt></rule></ixml>"#;
     assert_eq!(result, expected);
 
     println!("=============");
@@ -1456,14 +1499,14 @@ fn test_f_option() -> Result<(), crate::parser::ParseError> {
     let arena1 = parser1.parse("")?;
     let result1 = crate::parser::Parser::tree_to_test_format(&arena1);
     println!("Empty input parse result: {}", result1);
-    assert!(result1.contains("<optional>"));
+    assert!(result1.contains("<optional>") || result1.contains("<optional/>"));
 
     // Test 2: non-epsilon branch (input "a" should match base inside optional)
     let mut parser2 = crate::parser::Parser::new(g);
     let arena2 = parser2.parse("a")?;
     let result2 = crate::parser::Parser::tree_to_test_format(&arena2);
     println!("Input 'a' parse result: {}", result2);
-    assert!(result2.contains("<optional>"));
+    assert!(result2.contains("<optional>") || result2.contains("<optional/>"));
     assert!(result2.contains("a"));
 
     Ok(())
@@ -1500,14 +1543,14 @@ fn test_f_star() -> Result<(), crate::parser::ParseError> {
     let arena1 = parser1.parse("")?;
     let result1 = crate::parser::Parser::tree_to_test_format(&arena1);
     println!("Empty input parse result: {}", result1);
-    assert!(result1.contains("<star>"));
+    assert!(result1.contains("<star>") || result1.contains("<star/>"));
 
     // Test 2: one repetition
     let mut parser2 = crate::parser::Parser::new(g.clone());
     let arena2 = parser2.parse("a")?;
     let result2 = crate::parser::Parser::tree_to_test_format(&arena2);
     println!("Input 'a' parse result: {}", result2);
-    assert!(result2.contains("<star>"));
+    assert!(result2.contains("<star>") || result2.contains("<star/>"));
     assert!(result2.contains("a"));
 
     // Test 3: multiple repetitions
@@ -1515,7 +1558,7 @@ fn test_f_star() -> Result<(), crate::parser::ParseError> {
     let arena3 = parser3.parse("aaa")?;
     let result3 = crate::parser::Parser::tree_to_test_format(&arena3);
     println!("Input 'aaa' parse result: {}", result3);
-    assert!(result3.contains("<star>"));
+    assert!(result3.contains("<star>") || result3.contains("<star/>"));
     assert_eq!(result3.matches("<base>").count(), 3);
 
     Ok(())
@@ -1639,14 +1682,14 @@ fn test_f_star_sep() -> Result<(), crate::parser::ParseError> {
     let arena1 = parser1.parse("")?;
     let result1 = crate::parser::Parser::tree_to_test_format(&arena1);
     println!("Empty input parse result: {}", result1);
-    assert!(result1.contains("<star_sep>"));
+    assert!(result1.contains("<star_sep>") || result1.contains("<star_sep/>"));
 
     // Test 2: one item (no separator needed)
     let mut parser2 = crate::parser::Parser::new(g.clone());
     let arena2 = parser2.parse("a")?;
     let result2 = crate::parser::Parser::tree_to_test_format(&arena2);
     println!("Input 'a' parse result: {}", result2);
-    assert!(result2.contains("<star_sep>"));
+    assert!(result2.contains("<star_sep>") || result2.contains("<star_sep/>"));
     assert_eq!(result2.matches("<base>").count(), 1);
 
     // Test 3: multiple items with separators
@@ -1654,7 +1697,7 @@ fn test_f_star_sep() -> Result<(), crate::parser::ParseError> {
     let arena3 = parser3.parse("a,a,a")?;
     let result3 = crate::parser::Parser::tree_to_test_format(&arena3);
     println!("Input 'a,a,a' parse result: {}", result3);
-    assert!(result3.contains("<star_sep>"));
+    assert!(result3.contains("<star_sep>") || result3.contains("<star_sep/>"));
     assert_eq!(result3.matches("<base>").count(), 3);
 
     Ok(())
@@ -1744,7 +1787,7 @@ fn test_synthetic_rules_nullability() -> Result<(), crate::parser::ParseError> {
     println!("\nEmpty input parse result: {}", result);
 
     // Should succeed because opt_rule is nullable
-    assert!(result.contains("<opt_rule>"), "Empty input should parse successfully with nullable opt_rule");
+    assert!(result.contains("<opt_rule>") || result.contains("<opt_rule/>"), "Empty input should parse successfully with nullable opt_rule");
 
     Ok(())
 }

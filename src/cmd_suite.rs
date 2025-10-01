@@ -237,8 +237,10 @@ fn run(suite_spec: Option<String>, console: &str, _console_filter: Option<&Strin
                 if should_write_to_file && file_writer.is_some() {
                     let file = file_writer.as_mut().unwrap();
                     writeln!(file, "FAIL {}", test_name).unwrap();
-                    writeln!(file, "  Expected: {}", expected).unwrap();
-                    writeln!(file, "  Actual:   {}", actual).unwrap();
+                    writeln!(file, "  Expected:").unwrap();
+                    writeln!(file, "{}", expected).unwrap();
+                    writeln!(file, "  Actual:").unwrap();
+                    writeln!(file, "{}", actual).unwrap();
                     writeln!(file, "").unwrap();
                 }
             }

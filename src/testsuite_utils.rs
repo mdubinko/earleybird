@@ -9,6 +9,7 @@ use quick_xml::events::attributes::{Attributes};
 use quick_xml::name::QName;
 use quick_xml::reader::Reader;
 use string_builder::Builder;
+use quick_xml::escape::unescape;
 
 use crate::grammar::Grammar;
 
@@ -184,7 +185,11 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                     },
                     b"ixml-grammar" => {
                         let grammar = reader.read_text(e.to_end().name());
-                        current_grammar = grammar.expect("parse error reading inline grammar").to_string();
+                        let raw_grammar = grammar.expect("parse error reading inline grammar");
+                        // quick-xml's read_text() doesn't decode entities, so we use unescape()
+                        current_grammar = unescape(&raw_grammar)
+                            .expect("Failed to unescape inline grammar")
+                            .to_string();
                     },
                     b"ixml-grammar-ref" => {
                         let href = attr_by_name(&e.attributes(), "href");
@@ -238,7 +243,11 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                     },
                     b"test-string" => {
                         let input = reader.read_text(e.to_end().name());
-                        builder.input = Some(input.expect("parse error reading inline test-string").to_string());
+                        let raw_input = input.expect("parse error reading inline test-string");
+                        // quick-xml's read_text() doesn't decode entities, so we use unescape()
+                        builder.input = Some(unescape(&raw_input)
+                            .expect("Failed to unescape test-string")
+                            .to_string());
                     },
                     b"test-string-ref" => {
                         let href = attr_by_name(&e.attributes(), "href");
@@ -296,8 +305,26 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                     b"assert-xml" => {
                         enable_accum = false;
                         let xml_string = from_utf8(&raw_xml_accum).expect("UTF-8 error in assert-xml").to_string();
+
+                        // Warn about special ixml:state values (features not yet supported)
+                        if let Some(ref name) = builder.name {
+                            // Match ixml:state containing specific words (may have other text)
+                            if xml_string.contains("ixml:state") {
+                                if xml_string.contains("ambiguous") {
+                                    eprintln!("🫥 Ambiguous case: {}", name);
+                                }
+                                if xml_string.contains("version-mismatch") {
+                                    eprintln!("📦 Version mismatch: {}", name);
+                                }
+                                if xml_string.contains("failed") {
+                                    eprintln!("💥 Expected failure: {}", name);
+                                }
+                            }
+                        }
+
                         //println!("assert-xml literal {xml_string}");
                         builder.expected.push(TestResult::AssertXml(xml_string));
+                        raw_xml_accum.clear(); // Clear buffer for next assert-xml
                     }
                     _ => {
                         if enable_accum {

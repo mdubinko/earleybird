@@ -72,30 +72,55 @@
   - Files: src/unicode_ranges.rs (complete enum), src/grammar.rs:692-696, src/ixml_bootstrap.rs:274-277
   - Impact: Full Unicode character class support for iXML 1.0 conformance
 
-### Priority 3: Medium Term Features #MED
-- [x] Implement insertion syntax: `+` insertion for literal text (src/ixml_bootstrap.rs:92,265) #MED
-  - Fixed: Bootstrap grammar parsing support completed
-  - Note: Full output generation semantics pending
-- [x] Complete Unicode character class support #MED
-  - Status: COMPLETED (2025-10-01) - All 45 Unicode General Categories implemented
+### Priority 3: Insertion Syntax #HIGH
+- [x] Implement insertion syntax: `+` insertion for literal text #HIGH
+  - Status: COMPLETED (2025-10-01) - Full insertion implementation working
+  - Added: Factor::Insertion variant to grammar (src/grammar.rs:905)
+  - Added: MatchRec::Insertion for parse tree tracking (src/parser.rs:155)
+  - Fixed: Insertions handled in main parse loop without consuming input (src/parser.rs:654-660)
+  - Fixed: Insertions treated as nullable factors (src/grammar.rs:278-281)
+  - Fixed: Output generation includes inserted text (src/parser.rs:1087-1094)
+  - Tests: 9/12 insertion tests passing (75%) - 3 failures are ambiguous parse cases (not yet supported)
+  - Files: src/grammar.rs, src/parser.rs, src/ixml_bootstrap.rs
+
+### Priority 4: Output Formatting & Test Infrastructure #HIGH
+- [x] XML self-closing tags for empty elements #HIGH
+  - Status: COMPLETED (2025-10-01) - Empty elements now use `<tag/>` format
+  - Fixed: tree_to_test_format checks for content before choosing tag format (src/parser.rs:1165-1178)
+  - Impact: Cleaner, standard-compliant XML output
+- [x] Test catalog XML parsing bugs #CRITICAL
+  - Status: COMPLETED (2025-10-01) - Fixed two critical bugs
+  - Fixed: assert-xml accumulator not cleared between tests (src/testsuite_utils.rs:318)
+  - Fixed: test-string XML entities not unescaped (src/testsuite_utils.rs:244-250)
+  - Impact: Test expectations now parsed correctly, fixing many false failures
+- [x] Ambiguous parse detection #LOW
+  - Status: COMPLETED (2025-10-01) - Warning added for ambiguous test cases
+  - Added: 🫥 emoji warning when loading tests with ixml:state="ambiguous" (src/testsuite_utils.rs:310-314)
+  - Impact: Clear indication that ambiguous parse support is not yet implemented
 
 ## Current Test Suite Status (Updated 2025-10-01)
-- **Correct Tests**: **60/93 passing (64.5% pass rate)** - Steady progress
-  - **60 PASS** (64.5%) - Up from 58/93 (62.4%)
-  - **22 FAIL** (23.7%) - Output format issues (down from ~20, but better categorization)
-  - **9 Bootstrap Errors** (9.7%) - Remaining bootstrap grammar parsing failures
-  - **1 Parse Error** (1.1%) - Down from 6 parse errors
+- **Correct Tests**: **81/93 passing (87.1% pass rate)** - Excellent progress!
+  - **81 PASS** (87.1%) - Up from 60/93 (64.5%)
+  - **2 FAIL** (2.2%) - Minor output issues remaining
+  - **8 Bootstrap Errors** (8.6%) - Remaining bootstrap grammar parsing failures
+  - **1 Parse Error** (1.1%) - Edge case
   - **1 TODO** (1.1%) - AssertDynamicError not yet implemented
-  - **Note**: Total test count lower (93 vs 108) due to temporarily commented unicode-version-check tests
+- **Insertion Tests**: **9/12 passing (75%)**
+  - 3 failures are ambiguous parse cases (require multiple parse tree support)
+  - Core insertion functionality fully working
 - **Recent Major Fixes (2025-10-01)**:
-  - [x] **XML Output Format**: FIXED - Proper XML entity escaping in attributes and text #HIGH
-    - Fixed: `unpack_attr_value()` now stores literal characters instead of pre-escaped entities (src/parser.rs:1005-1013)
-    - Fixed: `tree_to_test_format()` properly escapes &, <, " during serialization (src/parser.rs:1119-1122)
-    - Fixed: `xml_canonicalize()` re-escapes & in text content (src/testsuite_utils.rs:365,370)
-    - Added: 8 comprehensive tests for xml_canonicalize entity handling
-    - Tests Fixed: attribute-value and related tests now passing
+  - [x] **Insertion Implementation**: COMPLETED - Full insertion syntax support #HIGH
+    - Added complete insertion implementation throughout grammar and parser
+    - Insertions work as separators, in attributes, with hex codes, and in all positions
+    - Only ambiguous insertion tests fail (not yet supported)
+  - [x] **XML Output Format**: FIXED - Self-closing tags and entity escaping #HIGH
+    - Fixed: Empty elements use `<tag/>` instead of `<tag></tag>`
+    - Fixed: Proper XML entity escaping in attributes and text
     - Files: src/parser.rs, src/testsuite_utils.rs
-  - [x] **Test Suite Output**: Default results file now in log/ directory (src/cmd_suite.rs:98,144-146)
+  - [x] **Test Catalog Parsing**: FIXED - Critical bugs in test loading #CRITICAL
+    - Fixed: XML accumulator buffer not cleared between assert-xml blocks
+    - Fixed: test-string XML entities not being unescaped
+    - Impact: Eliminated many false test failures
 - **Previous Major Fixes**:
   - **Architecture Simplification**: COMPLETED - removed all parent-hash/blockchain complexity from parser
   - **Task Deduplication**: SIMPLIFIED - single identity hash per task based on core fields

@@ -200,9 +200,14 @@ When running test suites or grepping log files, these emoji indicators help iden
 
 Example grep commands:
 ```bash
-grep "✅ PASS" log/results.txt        # Find passing tests
+grep "✅ PASS" log/results.txt           # Find passing tests
 grep "🔥 GRAMMAR ERROR" log/results.txt  # Find bootstrap grammar issues
-grep "🚧 TODO" log/results.txt       # Find unimplemented test cases
+grep "🚧 TODO" log/results.txt           # Find unimplemented test cases
+
+# Special test case indicators (shown during test loading)
+grep "🫥 Ambiguous" log/results.txt      # Tests expecting ambiguous parses (multiple trees)
+grep "📦 Version mismatch" log/results.txt  # Tests with version-specific behavior
+grep "💥 Expected failure" log/results.txt  # Tests that should fail
 ```
 
 ## Test Suite Filtering
@@ -290,33 +295,45 @@ grep "FAIL" log/debug.log          # All failures
 3. **Focus on parse tree structure** - grammar parsing vs input parsing are different issues
 4. **Leverage test suite patterns** - find working examples to understand correct behavior
 
-## Current Status: Phase 2 Position-Bucketed Queue (Updated 2025-09-30)
+## Current Status: Phase 3 - Insertion & Output Formatting (Updated 2025-10-01)
 
-### 🎉 MAJOR BREAKTHROUGH: Position-Bucketed Queue Implementation
+### 🎉 BREAKTHROUGH: 87% Test Pass Rate!
 
-**✅ PHASE 2 COMPLETE: Dramatic Test Suite Improvement**
-- **Pass Rate**: 62.4% (58/93 tests) vs Phase 1's 30.1% (28/93 tests)
-- **+30 additional passing tests** - More than doubled the success rate!
-- **Architecture**: Position-bucketed queue ensures proper Earley left-to-right processing
-- **Key Innovation**: Tasks at position N completed before advancing to N+1
+**✅ PHASE 3 COMPLETE: Insertion Implementation + Test Infrastructure Fixes**
+- **Pass Rate**: 87.1% (81/93 tests) - Up from 62.4% (58/93 tests)
+- **+23 additional passing tests** in one session!
+- **Key Achievements**:
+  - Full insertion syntax support (`+` for text insertion)
+  - Self-closing XML tags (`<tag/>` for empty elements)
+  - Critical test catalog parsing bugs fixed
 
-**✅ Technical Implementation**
-- **PositionBucketedQueue**: `BTreeMap<usize, VecDeque<TraceId>>` for position-based task ordering
-- **Debug Format**: S(N) notation shows position buckets with task counts (`S(0):3 S(1):7* S(2):1`)
-- **Queue Management**: Front/back priority maintained within each position bucket
-- **Iterator Support**: Clean `Display` trait implementation for debugging
+**✅ Insertion Implementation**
+- **Grammar Support**: Added `Factor::Insertion(TMark, SmolStr)` variant
+- **Parser Integration**: Insertions advance without consuming input (nullable)
+- **Output Generation**: Inserted text properly included in parse trees
+- **Test Results**: 9/12 insertion tests passing (75%)
+  - 3 failures are ambiguous parse cases (multiple parse trees not yet supported)
+  - All non-ambiguous insertion patterns working correctly
 
-**✅ Proven Impact**
-- **Bootstrap Grammar Parsing**: Complex cases like `a: b. b: "x".` now work correctly
-- **Left Recursion**: Continues to work perfectly (`S: S, "a"; "b".` → `<S><S>b</S>a</S>`)
-- **Character Sets**: All patterns working (`["A"]`, `[#20]`, `["0"-"9"]`, `[L]`)
-- **No Regressions**: All Phase 1 functionality preserved
+**✅ Output Format Improvements**
+- **Self-Closing Tags**: Empty elements use `<tag/>` instead of `<tag></tag>`
+- **Entity Escaping**: Proper handling of `&`, `<`, `"` in attributes and text
+- **xmlns Attributes**: Automatically stripped by canonicalization (already working)
 
-### Character Sets Status
-- ✅ Single hex: `[#20]` works
-- ✅ Hex ranges: `[#41-#46]` works
-- ✅ String members: `["A"]` works
-- ✅ Unicode classes: `[L]`, `[Nd]`, `[Mn]`, `[Zs]` working
+**✅ Test Infrastructure Fixes**
+- **XML Accumulator Bug**: Fixed concatenation of test expectations (src/testsuite_utils.rs:318)
+- **Entity Unescaping**: Fixed test-string parsing to unescape XML entities (src/testsuite_utils.rs:244-250)
+- **Ambiguity Detection**: Added 🫥 warning for tests expecting ambiguous parses
+- **Failure Output**: Improved readability of FAILURES log format
+
+### Feature Status Summary
+- ✅ **Position-Bucketed Queue**: Working perfectly
+- ✅ **Left Recursion**: Fully supported
+- ✅ **Character Sets**: All patterns working (`["A"]`, `[#20]`, `["0"-"9"]`, `[L]`, Unicode classes)
+- ✅ **Insertion Syntax**: Complete implementation
+- ✅ **Comments**: Nested comment support
+- ⚠️ **Ambiguous Parses**: Not yet supported (affects ~3 tests)
+- 📝 **Dynamic Errors**: AssertDynamicError not yet implemented (affects 1 test)
 
 # TODO File Management
 

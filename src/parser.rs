@@ -131,6 +131,7 @@ impl fmt::Display for DotNotation {
                 match i {
                     MatchRec::Term(ch, pos, tmark) => format!("{tmark}'{ch}'@{pos}"),
                     MatchRec::NonTerm(name, pos, mark) => format!("{mark}{name}@{pos}"),
+                    MatchRec::Insertion(pos, text, tmark) => format!("{tmark}+\"{text}\"@{pos}"),
             })
             .collect::<Vec<_>>()
             .join(", ");
@@ -151,6 +152,8 @@ impl fmt::Display for DotNotation {
 enum MatchRec {
     Term(char, usize, TMark),
     NonTerm(SmolStr, usize, Mark),
+    /// Insertion: text inserted without consuming input (position, text, mark)
+    Insertion(usize, SmolStr, TMark),
 }
 
 impl MatchRec {
@@ -158,6 +161,7 @@ impl MatchRec {
         match self {
             Self::Term(_, pos, _) => *pos,
             Self::NonTerm(_, pos, _) => *pos,
+            Self::Insertion(pos, _, _) => *pos,
         }
     }
 }
@@ -647,6 +651,14 @@ impl Parser {
                     Factor::Terminal(tmark, matcher) => {
                         self.scan(tid, tmark, matcher, &mut input, session)?;
                     }
+                    // Insertion: advance without consuming input
+                    Factor::Insertion(tmark, text) => {
+                        let current_pos = self.traces.get(tid).pos;
+                        let match_rec = MatchRec::Insertion(current_pos, text.clone(), tmark);
+                        let maybe_id = self.traces.task_advance_cursor(tid, match_rec);
+                        // Queue at front for immediate processing
+                        self.queue_front(maybe_id);
+                    }
                 }
             }
         }
@@ -681,6 +693,10 @@ impl Parser {
                 Factor::Terminal(tmark, _ch) => {
                     // This should never happen - terminals are handled by Scanner
                     panic!("INTERNAL ERROR: Complete() called on task waiting for terminal {:?}. This indicates a logic bug in the parser.", tmark);
+                }
+                Factor::Insertion(_tmark, text) => {
+                    // This should never happen - insertions are handled directly in main loop
+                    panic!("INTERNAL ERROR: Complete() called on task waiting for insertion {:?}. This indicates a logic bug in the parser.", text);
                 }
             };
             trace!("MatchRec {:?}", &match_rec);
@@ -772,6 +788,9 @@ impl Parser {
                         Factor::Nonterm(mark, name) => MatchRec::NonTerm(name, current_pos, mark),
                         Factor::Terminal(tmark, _ch) => {
                             panic!("INTERNAL ERROR: Complete() called on task waiting for terminal {:?}. This indicates a logic bug in the parser.", tmark);
+                        }
+                        Factor::Insertion(_tmark, text) => {
+                            panic!("INTERNAL ERROR: Complete() called on task waiting for insertion {:?}. This indicates a logic bug in the parser.", text);
                         }
                     };
                     trace!("MatchRec {:?}", &match_rec);
@@ -1065,6 +1084,14 @@ impl Parser {
                                 self.unpack_parse_tree_internal(arena, nt_name, mark.clone(), new_origin, *pos, new_root);
                                 new_origin = *pos;
                             }
+                            MatchRec::Insertion(_pos, text, tmark) => {
+                                // Insertions add text to output without consuming input
+                                if *tmark != TMark::Mute {
+                                    let new_child = arena.new_node(Content::Text(text.to_string()));
+                                    new_root.append(new_child, arena);
+                                }
+                                // Note: pos doesn't change since insertion doesn't consume input
+                            }
                         }
                     }
             
@@ -1134,15 +1161,21 @@ impl Parser {
                     builder.append("\"");
                 }
 
-                builder.append(">");
-    
-                for child in nid.children(arena) {
-                    Self::tree_to_test_format_recurse(arena, builder, child);
+                // Check if element has any non-attribute children for self-closing tag
+                let has_content = nid.children(arena).any(|n| !arena.get(n).unwrap().get().is_attr());
+
+                if has_content {
+                    builder.append(">");
+                    for child in nid.children(arena) {
+                        Self::tree_to_test_format_recurse(arena, builder, child);
+                    }
+                    builder.append("</");
+                    builder.append(name.to_string());
+                    builder.append(">");
+                } else {
+                    // Self-closing tag for empty elements
+                    builder.append("/>");
                 }
-    
-                builder.append("</");
-                builder.append(name.to_string());
-                builder.append(">");
             },
             Content::Attribute(..) => {}, // handled above
             Content::Text(utf8) => builder.append(utf8.replace('&', "&amp;").replace('<', "&lt;")),
