@@ -688,31 +688,11 @@ impl Grammar {
         lit_builder
     }
 
-    /// Process Unicode class member like L, N, Nd
+    /// Process Unicode class member like L, LC, Nd, etc.
     fn process_class_member(class_attr: &str, lit_builder: LitBuilder) -> LitBuilder {
-        match class_attr {
-            "L" => {
-                lit_builder.ch_unicode("L")
-            }
-            "N" => {
-                // N covers all number categories - using Nd as primary approximation
-                // Full Unicode N would include Nd, Nl, No but we only have Nd implemented
-                lit_builder.ch_unicode("Nd")
-            }
-            "Nd" => {
-                lit_builder.ch_unicode("Nd")
-            }
-            "Mn" => {
-                lit_builder.ch_unicode("Mn")
-            }
-            "Zs" => {
-                lit_builder.ch_unicode("Zs")
-            }
-            _ => {
-                debug_grammar!(DebugLevel::Basic, "WARNING: Unsupported Unicode class '{}'", class_attr);
-                lit_builder
-            }
-        }
+        // All Unicode General Category codes are valid - pass directly to ch_unicode
+        // This delegates validation to UnicodeRange::new() which will panic on invalid codes
+        lit_builder.ch_unicode(class_attr)
     }
 
     /// Parse range values that could be characters or hex values

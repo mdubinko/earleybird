@@ -271,8 +271,9 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     let ctx = RuleContext::new("capital");
     g.mark_define(Mark::Mute, "capital", ctx.seq().ch_range('A', 'Z'));
 
-    // -letter: ["a"-"z"].
+    // -letter: ["A"-"Z"; "a"-"z"]. (from 2025-09-01 draft spec - allows codes like "LC")
     let ctx = RuleContext::new("letter");
+    g.mark_define(Mark::Mute, "letter", ctx.seq().ch_range('A', 'Z'));
     g.mark_define(Mark::Mute, "letter", ctx.seq().ch_range('a', 'z'));
 
     // insertion: -"+", s, (string; -"#", hex), s.
