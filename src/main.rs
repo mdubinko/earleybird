@@ -1,6 +1,4 @@
 
 fn main() {
-
-    println!("unused");
-    
+    unimplemented!("main.rs is unused - the actual entry point is src/eb.rs");
 }

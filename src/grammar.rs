@@ -1221,9 +1221,9 @@ impl SeqBuilder {
         for name in sub.defn_order.drain(..) { // maintain insertion order
             let rule = sub.syn_rules.remove(&name); //.expect("intenal syn_rules and defn_order out of sync");
             if rule.is_none() {
-                println!("###### {name} ######");
-                dbg!(&self.defn_order);
-                dbg!(&self.syn_rules);
+                debug_grammar!(DebugLevel::Trace, "Missing rule in siphon: {}", name);
+                debug_grammar!(DebugLevel::Trace, "defn_order: {:?}", self.defn_order);
+                debug_grammar!(DebugLevel::Trace, "syn_rules: {:?}", self.syn_rules);
             }
             let rule = rule.expect("defn_order and syn_rules out of sync");
             self.defn_order.push(name.clone());

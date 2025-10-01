@@ -1,8 +1,43 @@
 use std::ffi::OsString;
 use std::fs;
+use std::collections::HashSet;
 use argh::FromArgs;
 use earleybird::{grammar::Grammar, parser::Parser, debug::DebugLevel};
 use earleybird::{debug_basic, debug_detailed};
+
+// Helper functions for parsing case-insensitive CLI options
+fn parse_level(level_str: &str) -> Result<DebugLevel, String> {
+    match level_str.to_uppercase().as_str() {
+        "DEBUG" | "ALL" => Ok(DebugLevel::Trace),
+        "INFO" => Ok(DebugLevel::Detailed),
+        "SUMMARY" => Ok(DebugLevel::Basic),
+        "WARNING" => Ok(DebugLevel::Basic),
+        "ERROR" => Ok(DebugLevel::Basic),
+        "NONE" | "OFF" => Ok(DebugLevel::Off),
+        "FAILURES" => Ok(DebugLevel::Basic), // Special case for file output
+        _ => Err(format!("Invalid level: {}. Valid levels: DEBUG, INFO, SUMMARY, WARNING, ERROR, ALL, NONE, OFF, FAILURES", level_str))
+    }
+}
+
+fn parse_categories(categories_str: Option<&String>) -> Result<Option<HashSet<String>>, String> {
+    match categories_str {
+        None => Ok(None),
+        Some(cats) => {
+            let mut category_set = HashSet::new();
+            for cat in cats.split(',') {
+                let cat_upper = cat.trim().to_uppercase();
+                match cat_upper.as_str() {
+                    "BOOTSTRAP" | "QUEUE" | "SCANNER" | "OUTPUT" |
+                    "PREDICT" | "COMPLETE" | "DEDUP" | "GRAMMAR" => {
+                        category_set.insert(cat_upper);
+                    }
+                    _ => return Err(format!("Invalid category: {}. Valid categories: BOOTSTRAP, QUEUE, SCANNER, OUTPUT, PREDICT, COMPLETE, DEDUP, GRAMMAR", cat))
+                }
+            }
+            Ok(Some(category_set))
+        }
+    }
+}
 
 #[derive(FromArgs)]
 /// Parse an input file or string using an ixml grammar
@@ -25,47 +60,97 @@ pub struct Parse {
     input_str: Option<String>,
 
     /// output format
-    #[argh(option, short = 'o', default = "default_output_fmt()")]
+    #[argh(option, short = 'f', long = "format", default = "default_output_fmt()")]
     out_format: String,
 
-    /// verbosity level: off, basic, detailed, trace
-    #[argh(option, short = 'v', default = "default_verbose()")]
-    verbose: String,
+    /// console output level: DEBUG|INFO|SUMMARY|WARNING|ERROR|ALL|NONE|OFF
+    #[argh(option, long = "console", default = "default_console_level()")]
+    console: String,
+
+    /// console output categories: BOOTSTRAP,QUEUE,SCANNER,OUTPUT,PREDICT,COMPLETE,DEDUP,GRAMMAR
+    #[argh(option, long = "console-filter")]
+    console_filter: Option<String>,
+
+    /// file output level: DEBUG|INFO|SUMMARY|WARNING|ERROR|ALL|NONE|OFF|FAILURES
+    #[argh(option, long = "file", default = "default_file_level()")]
+    file: String,
+
+    /// file output categories: BOOTSTRAP,QUEUE,SCANNER,OUTPUT,PREDICT,COMPLETE,DEDUP,GRAMMAR
+    #[argh(option, long = "file-filter")]
+    file_filter: Option<String>,
+
+    /// output filename for debug/trace information
+    #[argh(option, short = 'o', long = "output", default = "default_output_file()")]
+    output: String,
 
     /// debug only at specific input position (for trace mode)
     #[argh(option, long = "debug-pos")]
     debug_pos: Option<usize>,
-
-    /// write trace output to file instead of stdout
-    #[argh(option, long = "trace-file")]
-    trace_file: Option<String>,
 }
 
 impl Parse {
     pub fn run(self) {
-        // Set up debug configuration
-        let debug_level = match DebugLevel::from_str(&self.verbose) {
+        // Parse console and file levels
+        let console_level = match parse_level(&self.console) {
             Ok(level) => level,
             Err(e) => {
-                eprintln!("{}", e);
+                eprintln!("Console level error: {}", e);
                 std::process::exit(1);
             }
         };
+
+        let file_level = match parse_level(&self.file) {
+            Ok(level) => level,
+            Err(e) => {
+                eprintln!("File level error: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        // Parse categories
+        let console_categories = match parse_categories(self.console_filter.as_ref()) {
+            Ok(cats) => cats,
+            Err(e) => {
+                eprintln!("Console filter error: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        let file_categories = match parse_categories(self.file_filter.as_ref()) {
+            Ok(cats) => cats,
+            Err(e) => {
+                eprintln!("File filter error: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        // Set up debug configuration with category filtering
         let debug_config = earleybird::debug::DebugConfig {
-            level: debug_level,
+            level: console_level,
             position_filter: self.debug_pos,
             failure_only: false,
-            trace_file: self.trace_file.clone(),
+            trace_file: if file_level != DebugLevel::Off { Some(self.output.clone()) } else { None },
+            enabled_categories: console_categories.clone(),
         };
         earleybird::debug::set_debug_config(debug_config);
 
-        debug_basic!("=== {} DEBUG MODE ===", self.verbose.to_uppercase());
-        debug_basic!("");
+        if console_level != DebugLevel::Off {
+            debug_basic!("=== CONSOLE: {} | FILE: {} ===", self.console.to_uppercase(), self.file.to_uppercase());
+            if let Some(ref cats) = console_categories {
+                debug_basic!("Console categories: {:?}", cats);
+            }
+            if let Some(ref cats) = file_categories {
+                debug_basic!("File categories: {:?}", cats);
+            }
+            debug_basic!("");
+        }
 
         // 1. Get grammar content from either file or string
         let grammar_content = match (self.grammar_file, self.grammar_str) {
             (Some(file), None) => {
-                debug_basic!("Grammar file: {:?}", file);
+                if console_level != DebugLevel::Off {
+                    debug_basic!("Grammar file: {:?}", file);
+                }
                 match fs::read_to_string(&file) {
                     Ok(content) => content,
                     Err(e) => {
@@ -75,7 +160,9 @@ impl Parse {
                 }
             }
             (None, Some(string)) => {
-                debug_basic!("Grammar string: {}", string);
+                if console_level != DebugLevel::Off {
+                    debug_basic!("Grammar string: {}", string);
+                }
                 string
             }
             (Some(_), Some(_)) => {
@@ -101,7 +188,9 @@ impl Parse {
             }
             Err(e) => {
                 eprintln!("Error parsing ixml grammar: {}", e);
-                debug_basic!("Grammar content: {}", grammar_content);
+                if console_level != DebugLevel::Off {
+                    debug_basic!("Grammar content: {}", grammar_content);
+                }
                 std::process::exit(1);
             }
         };
@@ -109,7 +198,9 @@ impl Parse {
         // 3. Get input content from either file or string
         let input_content = match (self.input_file, self.input_str) {
             (Some(file), None) => {
-                debug_basic!("Input file: {:?}", file);
+                if console_level != DebugLevel::Off {
+                    debug_basic!("Input file: {:?}", file);
+                }
                 match fs::read_to_string(&file) {
                     Ok(content) => content,
                     Err(e) => {
@@ -119,7 +210,9 @@ impl Parse {
                 }
             }
             (None, Some(string)) => {
-                debug_basic!("Input string: {}", string);
+                if console_level != DebugLevel::Off {
+                    debug_basic!("Input string: {}", string);
+                }
                 string
             }
             (Some(_), Some(_)) => {
@@ -141,7 +234,9 @@ impl Parse {
             }
             Err(e) => {
                 eprintln!("Error parsing input file: {}", e);
-                debug_basic!("Input content: {}", input_content);
+                if console_level != DebugLevel::Off {
+                    debug_basic!("Input content: {}", input_content);
+                }
                 earleybird::debug::debug_parse_failure(&input_content, 0, &e.to_string());
                 std::process::exit(1);
             }
@@ -165,6 +260,14 @@ fn default_output_fmt() -> String {
     "XML".to_string()
 }
 
-fn default_verbose() -> String {
-    "off".to_string()
+fn default_console_level() -> String {
+    "SUMMARY".to_string()
+}
+
+fn default_file_level() -> String {
+    "NONE".to_string()
+}
+
+fn default_output_file() -> String {
+    "debug-output.txt".to_string()
 }

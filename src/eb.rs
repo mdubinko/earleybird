@@ -4,7 +4,24 @@ mod cmd_suite;
 mod cmd_validate;
 
 #[derive(FromArgs)]
-/// An experimental ixml implementation in Rust
+#[argh(description = r#"EarleyBird: iXML parser with granular debug control.
+
+Use --console and/or --file with DEBUG|INFO|SUMMARY|WARNING|ERROR|ALL|NONE levels.
+Filtering: Use --console-filter or --file-filter with a comma separated list of:
+   BOOTSTRAP
+   COMPLETE
+   DEDUP
+   GRAMMAR
+   OUTPUT
+   PREDICT
+   QUEUE
+   SCANNER
+
+Examples:
+'eb parse --grammar-str "test: a." --input-str "a" -f XML --console SUMMARY -o debug.log'
+'eb validate -g file.ixml --console DEBUG --console-filter BOOTSTRAP -o validation.log'
+
+Run 'eb COMMAND --help' for detailed options."#)]
 struct Args {
     #[argh(subcommand)]
     subcommand: Subcommand,

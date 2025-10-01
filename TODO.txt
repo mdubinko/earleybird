@@ -1,13 +1,5 @@
 # earleybird TODO
 
-## Bootstrap Grammar Verification
-
-- [ ] Implement Rust macro for embedding iXML specs with bootstrap implementations (src/ixml_bootstrap.rs) #HIGH
-  - [ ] Design procedural macro to annotate bootstrap rule definitions with iXML specs
-  - [ ] Auto-generate round-trip tests comparing hand-coded vs parsed grammar behavior  
-  - [ ] Create verification that bootstrap implementation matches embedded iXML specification
-  - [ ] Consider declarative grammar builder macro as alternative approach
-
 ## Enhanced Debugging & Transparency
 
 ### Phase 1: CLI & Logging (Complete)
@@ -18,6 +10,24 @@
 - [x] Add grammar tree processing debug output (src/grammar.rs with GRAMMAR| prefix)
 - [x] Enhanced parse failure diagnostics with detailed error reporting (src/parser.rs:580-634)
 - [x] Hand-built vs parsed grammar comparison testing methodology
+- [x] **CLI Interface Overhaul**: COMPLETED - Unified --console/--file options across all commands
+  - Status: COMPLETED - Consistent CLI interface with case-insensitive parsing
+  - Implementation: --console/--file levels + --console-filter/--file-filter categories
+  - Coverage: All commands (parse, validate, suite) use same option patterns
+  - Files: src/cmd_parse.rs, src/cmd_validate.rs, src/cmd_suite.rs, src/eb.rs
+  - Documentation: Updated README.md, CLAUDE.md with new CLI examples
+- [x] **Category-based Debug Filtering**: COMPLETED - 8 debug categories with structured macros
+  - Categories: BOOTSTRAP, QUEUE, SCANNER, OUTPUT, PREDICT, COMPLETE, DEDUP, GRAMMAR
+  - Macros: debug_bootstrap!(), debug_queue!(), debug_scanner!(), etc.
+  - Files: src/debug.rs (category functions and macros), all command modules
+  - Integration: Category filtering works across console and file output independently
+- [ ] **stderr Pseudo-Redirect for Claude Code Debugging**: Enhance debug system with stderr routing #MED
+  - Problem: stderr content (warnings, errors) not captured in --console/--file streams, making Claude Code debugging incomplete
+  - Solution: Add --stderr-to option to route stderr through existing console/file debug infrastructure
+  - Implementation: Add StderrRouting enum to DebugConfig, replace eprintln! calls with debug_error() function
+  - Options: --stderr-to console|file|both to route stderr messages through filtered debug streams
+  - Benefits: Claude Code can capture complete debugging output in single stream, better CI/CD integration
+  - Files: src/debug.rs (StderrRouting, debug_error function), all cmd_* modules (replace eprintln! calls)
 
 ### Phase 2: Visual Debugging (Future)
 - [ ] HTML trace viewer for step-by-step parse visualization
@@ -48,6 +58,7 @@
   - Fixed: Added cchar: ~["{}"] rule for comment content
   - Fixed: Integrated comments into s and RS spacing rules
   - Verified: Nested comments working: {outer {inner} comment}
+- [ ] Investigate and fix remaining test suite issues
 
 ### Priority 2: Unicode Character Classes (half day) #HIGH
 - [x] Implement basic Unicode categories in bootstrap grammar (src/ixml_bootstrap.rs:22-24) #HIGH
@@ -88,25 +99,6 @@
   - Impact: Left recursion fully working, no more infinite loops or 🚧 TODO markers in test results
 - **Infrastructure Improvements**: Enhanced diagnostics, background task support, emoji documentation, simplified architecture
 
-### Primary Issue: Bootstrap Grammar Parsing
-- [x] **Implement nullability-based epsilon completion** #CRITICAL
-  - Status: COMPLETED - Fixed epsilon completion logic in predict() function
-  - Solution: Added `is_alternative_nullable()` method to check individual Rule nullability
-  - Implementation: Modified predict() function to trigger immediate completion for nullable alternatives
-  - Impact: Significant progress - bootstrap parsing now reaches further positions (5→8+ vs previous 6)
-  - Files: src/parser.rs (predict function), src/grammar.rs (is_alternative_nullable method)
-  - Verification: Simple epsilon cases like `'a: .'` now work correctly
-- [x] **Validate plus-separated synthetic rules are working** #HIGH
-  - Status: COMPLETED - Created and tested minimal plus-sep case
-  - Result: Plus-separated rules (repeat1_sep) work perfectly for simple cases
-  - Evidence: `item++sep` pattern correctly parses "a a" as `<root><item>a</item><sep> </sep><item>a</item></root>`
-  - Conclusion: The issue is NOT in the core plus-separated logic
-- [ ] **Investigate remaining bootstrap parsing issue** #CRITICAL
-  - Issue: 67/108 tests still fail at bootstrap grammar parsing stage (confirmed with Phase 1 changes)
-  - Root Cause: NOT in plus-sep logic or epsilon completion - likely task ordering issue that position-bucketed queue will fix
-  - Pattern: Simple grammars work (e.g., `'a: "x".\nb: "y".'`) but complex ones fail (e.g., `'a: b. b: "x".'`)
-  - Next: Implement position-bucketed queue as this may resolve the fundamental parsing order issue
-
 ## Lower Priority - Architecture
 - [ ] Implement Grammar::to_string() method for bootstrap self-validation #MED
   - Goal: Serialize internal Grammar representation back to valid iXML syntax
@@ -114,18 +106,19 @@
   - Implementation: Walk grammar structure and emit proper iXML syntax with marks, alternatives, etc.
   - Value: Would enable `Grammar::from_ixml_str(&bootstrap_grammar.to_string())` roundtrip test
   - Complexity: Significant - need to handle all grammar constructs, marks, repeats, character classes
-- [ ] Investigate test suite debug configuration integration #LOW
-  - Add --verbose and --trace-file support to `eb suite` command
-  - Would help with debugging complex conformance failures
+- [x] Investigate test suite debug configuration integration #LOW
+  - Status: COMPLETED - Added full debug configuration to `eb suite` command
+  - Implementation: --console/--file levels and category filtering now available in suite command
+  - Impact: Can now debug conformance failures with granular control over output
 - [x] Follow Rust testing conventions throughout codebase #LOW
   - Use `#[cfg(test)]` modules in source files for unit tests
   - Reserve `tests/` directory for integration tests only
   - Ensures tests stay close to the code they test
-- [ ] Add SUMMARY log level for high-level debugging #HIGH
-  - Implement SUMMARY level (above INFO) with emoji indicators
-  - Focus on major parsing stages and outcomes only
-  - Example: "🔍 SUMMARY: Grammar parsed ✅ | Input parsing ❌ | Character sets: hex✅ string❌"
-  - Extremely token-efficient for debugging workflows
+- [x] Add SUMMARY log level for high-level debugging #HIGH
+  - Status: COMPLETED - SUMMARY level implemented and integrated across all commands
+  - Implementation: SUMMARY maps to DebugLevel::Basic with structured output
+  - Integration: Available in --console and --file options for all commands
+  - Usage: Provides token-efficient debugging with major parsing stages only
 - [ ] Replace ad-hoc logging with structured tracing crate #MED
   - Use `tracing` crate with spans and structured fields
   - Add contextual information to all parsing operations
@@ -140,3 +133,8 @@
   - Considerations: Limit expectation set size (max 5-10), avoid noise from irrelevant backtrack attempts
   - Technical: Enhance ParseError struct with expected_tokens HashSet and actual_char fields
   - Files: src/parser.rs (ParseError, error collection in SCANNER), src/debug.rs (error formatting)
+- [ ] Implement Rust macro for embedding iXML specs with bootstrap implementations (src/ixml_bootstrap.rs) #HIGH
+  - [ ] Design procedural macro to annotate bootstrap rule definitions with iXML specs
+  - [ ] Auto-generate round-trip tests comparing hand-coded vs parsed grammar behavior  
+  - [ ] Create verification that bootstrap implementation matches embedded iXML specification
+  - [ ] Consider declarative grammar builder macro as alternative approach

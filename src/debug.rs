@@ -1,6 +1,7 @@
 use std::sync::OnceLock;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugLevel {
@@ -16,6 +17,7 @@ pub struct DebugConfig {
     pub position_filter: Option<usize>,
     pub failure_only: bool,
     pub trace_file: Option<String>,
+    pub enabled_categories: Option<HashSet<String>>,
 }
 
 impl DebugLevel {
@@ -47,6 +49,7 @@ pub fn set_debug_level(level: DebugLevel) {
         position_filter: None,
         failure_only: false,
         trace_file: None,
+        enabled_categories: None,
     });
 }
 
@@ -62,6 +65,7 @@ pub fn set_debug_with_trace_file(level: DebugLevel, trace_file: Option<String>) 
         position_filter: None,
         failure_only: false,
         trace_file,
+        enabled_categories: None,
     });
 }
 
@@ -71,6 +75,7 @@ pub fn get_debug_level() -> DebugLevel {
         position_filter: None,
         failure_only: false,
         trace_file: None,
+        enabled_categories: None,
     }).level
 }
 
@@ -80,6 +85,7 @@ pub fn get_debug_config() -> &'static DebugConfig {
         position_filter: None,
         failure_only: false,
         trace_file: None,
+        enabled_categories: None,
     })
 }
 
@@ -124,7 +130,7 @@ pub fn debug_trace_print(msg: &str) {
 }
 
 pub fn debug_grammar_print(level: DebugLevel, msg: &str) {
-    if get_debug_level().includes(level) {
+    if get_debug_level().includes(level) && is_category_enabled("GRAMMAR") {
         // Use structured format and write to trace file if configured
         if msg.starts_with("GRAMMAR|") {
             write_debug_output(msg);
@@ -143,6 +149,58 @@ pub fn debug_parser_print(level: DebugLevel, msg: &str) {
 pub fn debug_earley_print(level: DebugLevel, msg: &str) {
     if get_debug_level().includes(level) {
         write_debug_output(&format!("EARLEY|{}", msg));
+    }
+}
+
+// Helper function to check if a category is enabled
+fn is_category_enabled(category: &str) -> bool {
+    let config = get_debug_config();
+    match &config.enabled_categories {
+        None => true, // If no filter specified, all categories enabled
+        Some(categories) => categories.contains(&category.to_uppercase()),
+    }
+}
+
+// Category-specific debug functions
+pub fn debug_bootstrap(level: DebugLevel, msg: &str) {
+    if get_debug_level().includes(level) && is_category_enabled("BOOTSTRAP") {
+        write_debug_output(&format!("BOOTSTRAP|{}", msg));
+    }
+}
+
+pub fn debug_queue(level: DebugLevel, msg: &str) {
+    if get_debug_level().includes(level) && is_category_enabled("QUEUE") {
+        write_debug_output(&format!("QUEUE|{}", msg));
+    }
+}
+
+pub fn debug_scanner(level: DebugLevel, msg: &str) {
+    if get_debug_level().includes(level) && is_category_enabled("SCANNER") {
+        write_debug_output(&format!("SCANNER|{}", msg));
+    }
+}
+
+pub fn debug_output(level: DebugLevel, msg: &str) {
+    if get_debug_level().includes(level) && is_category_enabled("OUTPUT") {
+        write_debug_output(&format!("OUTPUT|{}", msg));
+    }
+}
+
+pub fn debug_predict(level: DebugLevel, msg: &str) {
+    if get_debug_level().includes(level) && is_category_enabled("PREDICT") {
+        write_debug_output(&format!("PREDICT|{}", msg));
+    }
+}
+
+pub fn debug_complete(level: DebugLevel, msg: &str) {
+    if get_debug_level().includes(level) && is_category_enabled("COMPLETE") {
+        write_debug_output(&format!("COMPLETE|{}", msg));
+    }
+}
+
+pub fn debug_dedup(level: DebugLevel, msg: &str) {
+    if get_debug_level().includes(level) && is_category_enabled("DEDUP") {
+        write_debug_output(&format!("DEDUP|{}", msg));
     }
 }
 
@@ -245,6 +303,56 @@ macro_rules! debug_earley_pos {
 macro_rules! debug_earley_fail {
     ($pos:expr, $expected:expr, $actual:expr, $queue_snapshot:expr) => {
         $crate::debug::debug_earley_failure($pos, $expected, $actual, $queue_snapshot)
+    };
+}
+
+// Category-specific macros for structured debug messages
+#[macro_export]
+macro_rules! debug_bootstrap {
+    ($level:expr, $($arg:tt)*) => {
+        $crate::debug::debug_bootstrap($level, &format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! debug_queue {
+    ($level:expr, $($arg:tt)*) => {
+        $crate::debug::debug_queue($level, &format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! debug_scanner {
+    ($level:expr, $($arg:tt)*) => {
+        $crate::debug::debug_scanner($level, &format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! debug_output {
+    ($level:expr, $($arg:tt)*) => {
+        $crate::debug::debug_output($level, &format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! debug_predict {
+    ($level:expr, $($arg:tt)*) => {
+        $crate::debug::debug_predict($level, &format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! debug_complete {
+    ($level:expr, $($arg:tt)*) => {
+        $crate::debug::debug_complete($level, &format!($($arg)*))
+    };
+}
+
+#[macro_export]
+macro_rules! debug_dedup {
+    ($level:expr, $($arg:tt)*) => {
+        $crate::debug::debug_dedup($level, &format!($($arg)*))
     };
 }
 

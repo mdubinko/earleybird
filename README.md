@@ -16,22 +16,24 @@ cargo run -- parse -g grammar.ixml -i input.txt
 ### Quick inline testing (useful for development)
 
 ```bash
-cargo run -- test -g 'rule: "a" | "b".' -i 'a'
+cargo run -- parse --grammar-str 'rule: "a" | "b".' --input-str 'a'
 ```
 
 ### Run test suite
 
 ```bash
-# Full output (default)
-cargo run -- suite
+# Standard usage - summary to console, failures to file
+cargo run -- suite --console SUMMARY --file FAILURES
 
-# Token-efficient modes for development
-cargo run -- suite --stdout summary --file-mode none           # Just summary
-cargo run -- suite syntax --stdout summary --file-mode failures-only  # Focus on syntax with failures logged
+# Focus on specific test categories; can have separate outputs to stdout vs file
+cargo run -- suite syntax --console SUMMARY --file NONE
+cargo run -- suite correct --console SUMMARY --file FAILURES -o results.txt
 
-# Advanced output control
-cargo run -- suite --stdout quiet --file-mode all -o results.txt      # Silent with full logging
-cargo run -- suite --stdout progress-only --file-mode none            # Only show passing tests
+# Debug specific issues with category filtering
+cargo run -- suite syntax --console DEBUG --console-filter BOOTSTRAP,GRAMMAR --file NONE
+
+# Silent operation with full logging
+cargo run -- suite --console NONE --file ALL -o full-results.txt
 
 # Or with environment variables for debugging:
 RUST_LOG=info RUST_BACKTRACE=1 cargo run -- suite
@@ -42,8 +44,8 @@ Alternatively, build the `eb` binary first:
 ```bash
 cargo build --release
 ./target/release/eb parse -g grammar.ixml -i input.txt
-./target/release/eb test -g 'rule: "a" | "b".' -i 'a'
-./target/release/eb suite --stdout summary --file-mode none
+./target/release/eb parse --grammar-str 'rule: "a" | "b".' --input-str 'a'
+./target/release/eb suite --console SUMMARY --file NONE
 ```
 
 The test suite expects the official ixml repo to be available as a symlink at `ixml/`.
@@ -52,46 +54,60 @@ The test suite expects the official ixml repo to be available as a symlink at `i
 
 This implementation includes comprehensive debugging tools to aid in conformance work and troubleshooting.
 
-### Verbosity Levels
+### New Debug System (2025)
 
-Both `parse` and `test` commands support verbosity levels via `-v` or `--verbose`:
+All commands now support granular debug control with console and file output:
 
-- **`off`** (default): Silent operation, only shows final output or errors
-- **`basic`**: Shows input files/strings being processed and basic error context
-- **`detailed`**: Adds grammar statistics, parsing success confirmations, and enhanced error details  
-- **`trace`**: Detailed Earley parser step-by-step tracing with position filtering support
+**Console Levels**: DEBUG, INFO, SUMMARY, WARNING, ERROR, ALL, NONE, OFF
+**File Levels**: DEBUG, INFO, SUMMARY, WARNING, ERROR, ALL, NONE, OFF, FAILURES
+**Categories**: BOOTSTRAP, QUEUE, SCANNER, OUTPUT, PREDICT, COMPLETE, DEDUP, GRAMMAR
 
-Examples:
 ```bash
-# Quick debugging with inline strings
-cargo run -- test -g 'expr: term, ("+", term)*. term: "a".' -i 'a+a' -v detailed
+# Basic usage - summary to console, no file output
+cargo run -- parse -g grammar.ixml -i input.txt -f XML --console SUMMARY --file NONE
 
-# Detailed file-based parsing
-cargo run -- parse -g examples/simple.ixml -i examples/simple.txt -v detailed
+# Debug bootstrap grammar issues
+cargo run -- validate --grammar-str 'test: "a".' --console DEBUG --console-filter BOOTSTRAP,GRAMMAR
 
-# Basic debugging for parse failures
-cargo run -- test -g 'test: "exact".' -i 'wrong' -v basic
+# Focus on parser internals with file logging
+cargo run -- parse -g complex.ixml -i input.txt -f XML \
+  --console INFO --console-filter SCANNER,QUEUE \
+  --file DEBUG -o debug.log
 
-# Trace Earley parser operations at specific position
-cargo run -- test -g 'rule: "a".' -i 'a' -v trace --debug-pos 0
+# Multiple categories for complex debugging
+cargo run -- parse --grammar-str 'expr: term, ("+", term)*. term: "a".' --input-str 'a+a' \
+  --console DEBUG --console-filter BOOTSTRAP,PREDICT,COMPLETE
 
-# Full trace (verbose - use with caution)
-cargo run -- test -g 'rule: "a".' -i 'a' -v trace
+# Silent operation with detailed file logging
+cargo run -- suite correct --console NONE --file DEBUG -o trace.log
 
-# External trace file
-cargo run -- test -g 'rule: "a".' -i 'a' -v trace --trace-file earley.log
-cargo run -- parse -g grammar.ixml -i input.txt -v trace --trace-file debug.log
+# Position-specific debugging (legacy support)
+cargo run -- parse -g test.ixml -i input.txt --console DEBUG --debug-pos 0
 ```
+
+**Category Descriptions:**
+- **BOOTSTRAP**: Grammar parsing (ixml → internal representation)
+- **QUEUE**: Task queue operations (position-bucketed Earley queue)
+- **SCANNER**: Character matching and advancement
+- **OUTPUT**: XML formatting and tree conversion
+- **PREDICT**: Earley prediction operations
+- **COMPLETE**: Earley completion operations
+- **DEDUP**: Task deduplication
+- **GRAMMAR**: Grammar processing and validation
 
 ### Debug Output Structure
 
 The logging system provides structured, component-specific output:
 
-- **`[GRAMMAR]`**: Grammar construction and validation
-- **`[PARSER]`**: High-level parsing operations  
-- **`[EARLEY]`**: Detailed Earley algorithm steps (trace mode)
-- **`[EARLEY@n]`**: Earley operations at specific input position n (legacy format)
-- **`[EARLEY-FAIL@n]`**: Parse failures at position n showing expected vs actual (legacy format)
+- **`BOOTSTRAP|`**: Grammar parsing and bootstrap operations
+- **`QUEUE|`**: Task queue and position management
+- **`SCANNER|`**: Character matching and scanning
+- **`OUTPUT|`**: XML tree formatting and conversion
+- **`PREDICT|`**: Earley prediction operations
+- **`COMPLETE|`**: Earley completion operations
+- **`DEDUP|`**: Task deduplication decisions
+- **`GRAMMAR|`**: Grammar construction and validation
+- **`EARLEY|`**: Legacy detailed Earley algorithm steps (trace mode)
 
 #### Structured Format (New)
 
@@ -117,17 +133,22 @@ EARLEY-FAIL|pos=1|expected='b'|actual='c'
 
 **Analysis with grep:**
 ```bash
-# All operations at position 5
-grep "pos=5" earley.log
+# Focus on specific categories
+grep "BOOTSTRAP|" debug.log
+grep "SCANNER|" debug.log
+grep "GRAMMAR|" debug.log
 
-# All scanner operations
-grep "op=SCANNER" earley.log
+# Legacy Earley operations at position 5
+grep "S(5)" debug.log
 
-# All parse failures
-grep "EARLEY-FAIL" earley.log
+# All scanner operations (legacy format)
+grep "op=SCANNER" debug.log
+
+# Parse failures
+grep "FAIL" debug.log
 
 # Scanner matches with specific character
-grep "op=SCANNER-MATCH.*char='a'" earley.log
+grep "MATCH.*'a'" debug.log
 ```
 
 ### Parse Failure Analysis
@@ -174,26 +195,44 @@ grep "pos=42" trace.log
 
 The debug infrastructure is centralized in `src/debug.rs`:
 
-- **`DebugLevel`**: Enum controlling output verbosity
-- **`DebugConfig`**: Configuration with position filtering, failure-only modes, and trace file output
-- **Debug macros**: `debug_basic!()`, `debug_detailed!()`, `debug_trace!()`
-- **Component-specific macros**: `debug_grammar!()`, `debug_parser!()`, `debug_earley!()`
-- **Position-aware macros**: `debug_earley_pos!()`, `debug_earley_fail!()`
+- **`DebugLevel`**: Enum controlling output verbosity (Off, Basic, Detailed, Trace)
+- **`DebugConfig`**: Configuration with position filtering, category filtering, and trace file output
+- **Category-specific functions**: `debug_bootstrap()`, `debug_queue()`, `debug_scanner()`, etc.
+- **Category-specific macros**: `debug_bootstrap!()`, `debug_queue!()`, `debug_scanner!()`, etc.
+- **Legacy macros**: `debug_basic!()`, `debug_detailed!()`, `debug_trace!()`, `debug_earley!()`
 - **Failure analysis**: `debug_parse_failure()` for detailed error context
 
 Key benefits:
-- No scattered `println!` or `eprintln!` statements throughout codebase
-- Debug levels controlled centrally without conditional bloat in main code
-- Position filtering prevents trace output overload
-- External trace files prevent clutter in debug output (use grep instead!)
-- Structured pipe-separated format for easy grep analysis
-- Easy to add new debugging without changing existing code structure
+- **Granular control**: Both level AND category must be enabled for output
+- **Case-insensitive CLI**: Accepts "debug", "DEBUG", "Debug", "bootstrap", "BOOTSTRAP", etc.
+- **Clean separation**: Console vs file output with independent control
+- **Category filtering**: Focus on specific components (BOOTSTRAP, SCANNER, etc.)
+- **Structured output**: Pipe-separated format for easy analysis
+- **No code pollution**: Centralized debug system eliminates scattered `eprintln!` statements
 
-### Bootstrap Implementation Strategy
+### Advanced Usage Examples
 
-**Comment Handling**: Comments (`{...}`) are preprocessed and stripped before grammar parsing to avoid performance issues. Since comments are fully nestable and never appear in output XML, removing them during preprocessing eliminates the character-by-character parsing overhead that would generate massive trace output. This approach maintains semantic correctness while dramatically improving parse performance for grammars with extensive documentation.
+```bash
+# Bootstrap grammar debugging workflow
+cargo run -- validate -g complex.ixml --console DEBUG --console-filter BOOTSTRAP,GRAMMAR --file NONE
 
-### Future Debugging Enhancements (Phase 2)
+# Parser performance analysis
+cargo run -- parse -g grammar.ixml -i large-input.txt \
+  --console SUMMARY --file DEBUG --file-filter QUEUE,DEDUP --output performance.log
+
+# Test suite debugging with focused output
+cargo run -- suite syntax --console INFO --console-filter BOOTSTRAP \
+  --file DEBUG --file-filter BOOTSTRAP,GRAMMAR --output bootstrap-issues.log
+
+# Character scanning issues
+cargo run -- parse --grammar-str 'test: ["A"-"Z"]+.' --input-str 'Hello123' \
+  --console DEBUG --console-filter SCANNER --file NONE
+
+# Silent CI/CD runs with failure logging
+cargo run -- suite --console NONE --file FAILURES -o ci-failures.txt
+```
+
+### Future Debugging Enhancements
 
 Planned advanced debugging features:
 - HTML trace viewer for step-by-step parse visualization

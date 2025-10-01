@@ -1,11 +1,46 @@
 
 use argh::FromArgs;
-use earleybird::{testsuite_utils::{self, xml_canonicalize, TestGrammar, TestOutcome}, parser::Parser, grammar::Grammar};
+use earleybird::{testsuite_utils::{self, xml_canonicalize, TestGrammar, TestOutcome}, parser::Parser, grammar::Grammar, debug::DebugLevel};
 use crate::cmd_suite::testsuite_utils::TestResult::*;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::collections::HashSet;
+
+// Helper functions for parsing case-insensitive CLI options
+fn parse_level(level_str: &str) -> Result<DebugLevel, String> {
+    match level_str.to_uppercase().as_str() {
+        "DEBUG" | "ALL" => Ok(DebugLevel::Trace),
+        "INFO" => Ok(DebugLevel::Detailed),
+        "SUMMARY" => Ok(DebugLevel::Basic),
+        "WARNING" => Ok(DebugLevel::Basic),
+        "ERROR" => Ok(DebugLevel::Basic),
+        "NONE" | "OFF" => Ok(DebugLevel::Off),
+        "FAILURES" => Ok(DebugLevel::Basic), // Special case for file output
+        _ => Err(format!("Invalid level: {}. Valid levels: DEBUG, INFO, SUMMARY, WARNING, ERROR, ALL, NONE, OFF, FAILURES", level_str))
+    }
+}
+
+fn parse_categories(categories_str: Option<&String>) -> Result<Option<HashSet<String>>, String> {
+    match categories_str {
+        None => Ok(None),
+        Some(cats) => {
+            let mut category_set = HashSet::new();
+            for cat in cats.split(',') {
+                let cat_upper = cat.trim().to_uppercase();
+                match cat_upper.as_str() {
+                    "BOOTSTRAP" | "QUEUE" | "SCANNER" | "OUTPUT" |
+                    "PREDICT" | "COMPLETE" | "DEDUP" | "GRAMMAR" => {
+                        category_set.insert(cat_upper);
+                    }
+                    _ => return Err(format!("Invalid category: {}. Valid categories: BOOTSTRAP, QUEUE, SCANNER, OUTPUT, PREDICT, COMPLETE, DEDUP, GRAMMAR", cat))
+                }
+            }
+            Ok(Some(category_set))
+        }
+    }
+}
 
 /// Parse with built-in trace size limit to prevent infinite loops
 fn parse_with_trace_limit(parser: &mut Parser, input: &str) -> Result<indextree::Arena<earleybird::parser::Content>, earleybird::parser::ParseError> {
@@ -43,20 +78,28 @@ pub struct RunSuite {
     #[argh(positional)]
     suite: Option<String>,
 
-    /// output file for conformance results (default: conformance-results.txt)
-    #[argh(option, short = 'o', default = "String::from(\"conformance-results.txt\")")]
+    /// console output level: DEBUG|INFO|SUMMARY|WARNING|ERROR|ALL|NONE|OFF
+    #[argh(option, long = "console", default = "String::from(\"SUMMARY\")")]
+    console: String,
+
+    /// console output categories: BOOTSTRAP,QUEUE,SCANNER,OUTPUT,PREDICT,COMPLETE,DEDUP,GRAMMAR
+    #[argh(option, long = "console-filter")]
+    console_filter: Option<String>,
+
+    /// file output level: DEBUG|INFO|SUMMARY|WARNING|ERROR|ALL|NONE|OFF|FAILURES
+    #[argh(option, long = "file", default = "String::from(\"FAILURES\")")]
+    file: String,
+
+    /// file output categories: BOOTSTRAP,QUEUE,SCANNER,OUTPUT,PREDICT,COMPLETE,DEDUP,GRAMMAR
+    #[argh(option, long = "file-filter")]
+    file_filter: Option<String>,
+
+    /// output filename for results
+    #[argh(option, short = 'o', long = "output", default = "String::from(\"conformance-results.txt\")")]
     output: String,
-
-    /// stdout display mode: full, summary, quiet, progress-only
-    #[argh(option, long = "stdout", default = "String::from(\"full\")")]
-    stdout_mode: String,
-
-    /// what to write to file: all, failures-only, none
-    #[argh(option, long = "file-mode", default = "String::from(\"all\")")]
-    file_mode: String,
 }
 
-fn run(suite_spec: Option<String>, output_file: &str, stdout_mode: &str, file_mode: &str) {
+fn run(suite_spec: Option<String>, console: &str, _console_filter: Option<&String>, file: &str, _file_filter: Option<&String>, output_file: &str) {
     let (catalog_path, filter) = resolve_suite_spec(suite_spec);
     println!("Running tests from: {}", catalog_path);
 
@@ -83,14 +126,18 @@ fn run(suite_spec: Option<String>, output_file: &str, stdout_mode: &str, file_mo
         .collect();
     println!("Loaded {} test cases", filtered_tests.len());
 
-    // Handle file output based on file_mode
-    let mut file_writer: Option<std::fs::File> = if file_mode == "none" {
-        if stdout_mode != "quiet" {
+    // Parse levels for internal use
+    let console_level = parse_level(console).unwrap_or(DebugLevel::Basic);
+    let file_level = parse_level(file).unwrap_or(DebugLevel::Off);
+
+    // Handle file output based on file level
+    let mut file_writer: Option<std::fs::File> = if file_level == DebugLevel::Off {
+        if console_level != DebugLevel::Off {
             println!("File output disabled");
         }
         None
     } else {
-        if stdout_mode != "quiet" {
+        if console_level != DebugLevel::Off {
             println!("Writing results to: {}", output_file);
         }
         Some(OpenOptions::new()
@@ -119,22 +166,14 @@ fn run(suite_spec: Option<String>, output_file: &str, stdout_mode: &str, file_mo
         count += 1;
         let test_name = test.name.clone();
 
-        // Print test start based on stdout mode
-        match stdout_mode {
-            "full" => {
+        // Print test start based on console level
+        match console_level {
+            DebugLevel::Trace | DebugLevel::Detailed => {
                 print!("🧪 Test {test_name} ... ");
                 std::io::stdout().flush().unwrap();
             }
-            "summary" | "quiet" => {
-                // Don't print individual test progress
-            }
-            "progress-only" => {
-                print!("🧪 Test {test_name} ... ");
-                std::io::stdout().flush().unwrap();
-            }
-            _ => {
-                print!("🧪 Test {test_name} ... ");
-                std::io::stdout().flush().unwrap();
+            DebugLevel::Basic | DebugLevel::Off => {
+                // Don't print individual test progress for SUMMARY or OFF
             }
         }
 
@@ -157,20 +196,24 @@ fn run(suite_spec: Option<String>, output_file: &str, stdout_mode: &str, file_mo
         *stats.entry(category).or_insert(0) += 1;
 
         // Determine what to write to file
-        let should_write_to_file = match file_mode {
-            "none" => false,
-            "all" => true,
-            "failures-only" => !matches!(outcome, TestOutcome::Pass),
-            _ => true,
+        let should_write_to_file = match file_level {
+            DebugLevel::Off => false,
+            DebugLevel::Trace | DebugLevel::Detailed => true, // ALL cases
+            DebugLevel::Basic => {
+                // For FAILURES level, only write non-pass results
+                if file == "FAILURES" {
+                    !matches!(outcome, TestOutcome::Pass)
+                } else {
+                    true
+                }
+            }
         };
 
-        // Print stdout result based on stdout mode
-        let should_print_result = match stdout_mode {
-            "full" => true,
-            "summary" => false,
-            "quiet" => false,
-            "progress-only" => matches!(outcome, TestOutcome::Pass),
-            _ => true,
+        // Print result based on console level
+        let should_print_result = match console_level {
+            DebugLevel::Trace | DebugLevel::Detailed => true, // DEBUG/INFO: show all
+            DebugLevel::Basic => false, // SUMMARY: don't show individual results
+            DebugLevel::Off => false, // NONE/OFF: silent
         };
 
         // Write result to file and/or print status
@@ -297,12 +340,12 @@ fn run(suite_spec: Option<String>, output_file: &str, stdout_mode: &str, file_mo
         }
     }
 
-    // Print summary to stdout based on mode
-    match stdout_mode {
-        "quiet" => {
+    // Print summary to stdout based on console level
+    match console_level {
+        DebugLevel::Off => {
             // Print nothing to stdout
         }
-        "summary" => {
+        DebugLevel::Basic => {
             println!("=== SUMMARY ===");
             println!("Total: {} | Pass: {} | Fail: {} | Bootstrap: {} | Conversion: {} | Parse: {}",
                 count,
@@ -318,18 +361,18 @@ fn run(suite_spec: Option<String>, output_file: &str, stdout_mode: &str, file_mo
             if *validation > 0 || *legacy_grammar > 0 {
                 println!("Details: Validation: {} | Legacy Grammar: {}", validation, legacy_grammar);
             }
-            if file_mode != "none" {
+            if file_level != DebugLevel::Off {
                 println!("Results written to: {}", output_file);
             }
         }
-        _ => {
+        DebugLevel::Detailed | DebugLevel::Trace => {
             println!("");
             println!("=== SUMMARY ===");
             println!("Total tests: {}", count);
             for (category, count) in &stats {
                 println!("{}: {}", category, count);
             }
-            if file_mode != "none" {
+            if file_level != DebugLevel::Off {
                 println!("Results written to: {}", output_file);
             }
         }
@@ -417,6 +460,40 @@ impl RunSuite {
             process::exit(1);
         }
 
-        let _result = run(self.suite, &self.output, &self.stdout_mode, &self.file_mode);
+        // Parse console and file levels
+        let _console_level = match parse_level(&self.console) {
+            Ok(level) => level,
+            Err(e) => {
+                eprintln!("Console level error: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        let _file_level = match parse_level(&self.file) {
+            Ok(level) => level,
+            Err(e) => {
+                eprintln!("File level error: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        // Parse categories
+        let _console_categories = match parse_categories(self.console_filter.as_ref()) {
+            Ok(cats) => cats,
+            Err(e) => {
+                eprintln!("Console filter error: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        let _file_categories = match parse_categories(self.file_filter.as_ref()) {
+            Ok(cats) => cats,
+            Err(e) => {
+                eprintln!("File filter error: {}", e);
+                std::process::exit(1);
+            }
+        };
+
+        let _result = run(self.suite, &self.console, self.console_filter.as_ref(), &self.file, self.file_filter.as_ref(), &self.output);
     }
 }

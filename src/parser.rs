@@ -1128,7 +1128,6 @@ impl Parser {
                 builder.append(">");
     
                 for child in nid.children(arena) {
-                    // println!("testfmt found {child} in ::Element");
                     Self::tree_to_test_format_recurse(arena, builder, child);
                 }
     

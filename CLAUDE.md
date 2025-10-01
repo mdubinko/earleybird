@@ -4,9 +4,19 @@ This is a project to implement Invisible XML (ixml) parser and CLI tool with 100
 
 - For all new and updated code, carefully consider how to make it extremely human comprehensible, an example for other projects to follow. Follow Rust idioms wherever possible.
 
+- Inline comments should indicate intent, and NOT just rephrase what the code is doing. Inline comments must avoid referring to past version of the code that no longer exist.
+
+Examples:
+
+Good:  // Compute weighted average
+Bad:   // Check if foo is null
+Bad:   // No longer calling old_fn_that_no_longer_exists()
+Bad:   // NEW algorithm...
+
 # iXML 1.0 Specification Reference
 
 - The following self-documenting ixml grammar (similar to EBNF) is from the specifiation, and should be followed closely:
+- Comments within ixml_bootstrap.rs reproduce these on a rule-by-rule basis.
 <ixml>
          ixml: s, prolog?, rule++RS, s.
 
@@ -89,40 +99,91 @@ This is a project to implement Invisible XML (ixml) parser and CLI tool with 100
 
 # CLI Commands
 
+All commands support granular debug control with `--console` and `--file` options.
+
 ## parse - Parse input using ixml grammar
 ```bash
-# Parse files
+# Basic parsing
 cargo run -- parse -g grammar.ixml -i input.txt
 
 # Parse strings (great for quick testing)
 cargo run -- parse --grammar-str 'A: "a".' --input-str 'a'
 
-# Mix file and string
-cargo run -- parse -g grammar.ixml --input-str 'test input'
+# Debug bootstrap grammar issues
+cargo run -- parse -g grammar.ixml -i input.txt \
+  --console DEBUG --console-filter BOOTSTRAP,GRAMMAR --file NONE
+
+# Focus on scanner issues with file logging
+cargo run -- parse --grammar-str 'test: ["A"-"Z"]+.' --input-str 'Hello123' \
+  --console DEBUG --console-filter SCANNER --file DEBUG -o log/scanner.log
 ```
 
 ## validate - Validate ixml grammar (bootstrap parsing)
 ```bash
-# Validate grammar file
+# Basic validation
 cargo run -- validate -g grammar.ixml
 
-# Validate grammar string (useful for debugging bootstrap parsing issues)
-cargo run -- validate --grammar-str 'A: B. B: "b".'
+# Debug bootstrap parsing issues
+cargo run -- validate --grammar-str 'A: B. B: "b".' \
+  --console DEBUG --console-filter BOOTSTRAP,GRAMMAR
+
+# Silent validation with detailed file logging
+cargo run -- validate -g complex.ixml \
+  --console NONE --file DEBUG -o log/validation.log
 ```
 
 ## suite - Run conformance test suite
 ```bash
-# Run all tests
-cargo run -- suite
+# Standard usage
+cargo run -- suite --console SUMMARY --file FAILURES
 
 # Filter tests by pattern
-cargo run -- suite expr1              # Tests containing "expr1"
-cargo run -- suite correct            # Tests in correct/ directory
+cargo run -- suite expr1 --console SUMMARY --file NONE
+cargo run -- suite correct --console SUMMARY --file FAILURES -o log/results.txt
+
+# Debug specific test categories
+cargo run -- suite syntax --console DEBUG --console-filter BOOTSTRAP,GRAMMAR --file NONE
 ```
 
 # Debugging Workflow
 
 Whenever generating log files or capturing trace output, put the files in the log/ directory, to avoid cluttering up the project root dir.
+
+## New Debug System (2025)
+
+The debug system now supports granular control with console and file output:
+
+**Console/File Levels**: DEBUG, INFO, SUMMARY, WARNING, ERROR, ALL, NONE, OFF, FAILURES
+**Categories**: BOOTSTRAP, QUEUE, SCANNER, OUTPUT, PREDICT, COMPLETE, DEDUP, GRAMMAR
+
+### Common Debug Patterns
+
+```bash
+# Bootstrap grammar debugging (highest priority issue)
+cargo run -- validate --grammar-str 'test: rule.' \
+  --console DEBUG --console-filter BOOTSTRAP,GRAMMAR --file NONE
+
+# Character set debugging
+cargo run -- parse --grammar-str 'test: ["A"-"Z"]+.' --input-str 'Hello' \
+  --console DEBUG --console-filter SCANNER --file NONE
+
+# Queue management debugging
+cargo run -- parse -g complex.ixml -i input.txt \
+  --console INFO --console-filter QUEUE,DEDUP --file DEBUG -o log/queue.log
+
+# Silent operation with comprehensive logging
+cargo run -- suite syntax --console NONE --file DEBUG -o log/full-debug.log
+```
+
+### Category Descriptions
+- **BOOTSTRAP**: Grammar parsing (ixml → internal representation) - 🔥 critical for 20 failing tests
+- **QUEUE**: Task queue operations (position-bucketed Earley queue)
+- **SCANNER**: Character matching and advancement
+- **OUTPUT**: XML formatting and tree conversion - 📝 quick wins for 15 failing tests
+- **PREDICT**: Earley prediction operations
+- **COMPLETE**: Earley completion operations
+- **DEDUP**: Task deduplication
+- **GRAMMAR**: Grammar processing and validation
 
 ## Test Suite Emoji Indicators
 
@@ -157,33 +218,70 @@ cargo run -- suite syntax/elem       # Run specific test pattern
 
 This is much more efficient than running the full test suite when debugging specific issues.
 
+### Debug Examples by Use Case
+
+```bash
+# Quick test validation
+cargo run -- validate --grammar-str 'test: "a".' --console SUMMARY --file NONE
+
+# Deep bootstrap debugging
+cargo run -- validate -g failing-grammar.ixml \
+  --console DEBUG --console-filter BOOTSTRAP,GRAMMAR \
+  --file DEBUG -o log/bootstrap-debug.log
+
+# Performance analysis
+cargo run -- parse -g large.ixml -i big-input.txt \
+  --console SUMMARY --file DEBUG --file-filter QUEUE,DEDUP -o log/perf.log
+
+# Test suite debugging with focused output
+cargo run -- suite correct \
+  --console INFO --console-filter BOOTSTRAP \
+  --file FAILURES -o log/bootstrap-failures.txt
+```
+
 ## Token-Efficient Test Suite Analysis
 ```bash
-# Built-in token-efficient modes (recommended)
-cargo run -- suite syntax --stdout summary --file-mode none           # Just summary (most efficient)
-cargo run -- suite syntax --stdout summary --file-mode failures-only  # Summary + failures to file
-cargo run -- suite syntax --stdout progress-only --file-mode none     # Only show passes
+# New CLI (recommended)
+cargo run -- suite syntax --console SUMMARY --file NONE                    # Just summary (most efficient)
+cargo run -- suite syntax --console SUMMARY --file FAILURES                # Summary + failures to file
+cargo run -- suite syntax --console INFO --console-filter BOOTSTRAP --file NONE  # Only bootstrap issues
 
 # Legacy shell-based approaches (still useful)
-cargo run -- suite syntax | head -30          # Limit output to first 30 lines
-cargo run -- suite 2>/dev/null | grep -c "✅ PASS"     # Count passes
-cargo run -- suite 2>/dev/null | grep -c "🔥 GRAMMAR ERROR"  # Count grammar errors
+cargo run -- suite syntax --console SUMMARY | head -30          # Limit output to first 30 lines
+cargo run -- suite 2>/dev/null | grep -c "✅ PASS"             # Count passes
+cargo run -- suite 2>/dev/null | grep -c "🔥 GRAMMAR ERROR"    # Count grammar errors
 
-# Advanced: Separate file vs stdout control
-cargo run -- suite --stdout summary --file-mode all -o log/full.txt   # Full details to file, summary to chat
-cargo run -- suite --stdout quiet --file-mode failures-only -o log/failures.txt  # Silent with failures logged
+# stderr handling for debugging workflows
+cargo run -- suite broken-tests 2>log/errors.log               # Capture warnings/errors separately
+cargo run -- parse -g bad.ixml -i input.txt 2>log/parse-errors.log  # CLI errors to file
+cargo run -- suite --console NONE 2>&1 | grep "Warning"        # Merge stderr to stdout, filter warnings
+cargo run -- suite syntax 2>/dev/null | head -20               # Pure stdout analysis, no stderr noise
+
+# Advanced: Separate console vs file control
+cargo run -- suite --console SUMMARY --file ALL -o log/full.txt       # Full details to file, summary to console
+cargo run -- suite --console NONE --file FAILURES -o log/failures.txt  # Silent with failures logged
 ```
 
 ## Trace-Based Debugging (Highly Efficient)
 ```bash
-# Generate focused trace files
-cargo run -- parse --grammar-str 'test: [#41].' --input-str 'A' -v trace --trace-file log/debug.log
+# Generate focused trace files with new CLI
+cargo run -- parse --grammar-str 'test: [#41].' --input-str 'A' \
+  --console NONE --file DEBUG -o log/debug.log
+
+# Category-specific debugging
+cargo run -- parse --grammar-str 'test: ["A"-"C"].' --input-str 'B' \
+  --console DEBUG --console-filter SCANNER --file DEBUG --file-filter SCANNER -o log/scanner.log
+
+# Bootstrap grammar debugging
+cargo run -- validate --grammar-str 'complex: rule.' \
+  --console DEBUG --console-filter BOOTSTRAP,GRAMMAR --file DEBUG -o log/bootstrap.log
 
 # Post-hoc filtering (very token-efficient)
-grep "charset\|inclusion\|set\|member" log/debug.log # Character set parsing
-grep -A 3 -B 3 "FAIL" log/debug.log                  # Context around failures
-grep "SCANNER.*string" log/debug.log                 # String processing issues
-grep "pos=0" log/debug.log                           # Focus on specific position
+grep "BOOTSTRAP|" log/debug.log    # Bootstrap parsing issues
+grep "SCANNER|" log/debug.log      # Character scanning
+grep "GRAMMAR|" log/debug.log      # Grammar processing
+grep "S(0)" log/debug.log          # Focus on position 0
+grep "FAIL" log/debug.log          # All failures
 ```
 
 ## Strategic Debugging Approach
@@ -242,44 +340,9 @@ grep "pos=0" log/debug.log                           # Focus on specific positio
 # WebAssembly
 
 - Always ensure that we are producing code that can target WebAssembly (this does not include test harnesses or suites)
+- Minimize external dependencies; if using dependencies make sure they can readily compile to WebAssembly
 
 ### Position Semantics Upgrade:
 - Changed from `pos=N` to `S(N)` notation (position N = before character N)
-- Updated InputIter.get_at() for graphics-style coordinate system
-- Position 0 = before first character, matches HTML trace format
-
-### Current Problems with Debugging
-- **Temporary code pollution**: Adding `eprintln!` statements directly in source code that must be manually removed
-- **Mixed output streams**: Trace output and debug messages interleaved in stderr, making analysis difficult
-- **No granular control**: Can't filter debug output without code changes
-- **Manual correlation**: Must manually grep and correlate related events across parsing phases
-
-### Proposed Debug Infrastructure
-
-#### 1. Structured Debug Macros
-Replace manual `eprintln!` with structured macros:
-```rust
-debug_dedup!("Skipping duplicate", task);
-debug_predict!("Creating prediction", parent_task, child_name);
-debug_queue!("Adding to queue", task, queue_size);
-```
-
-Auto-include context: arena size, queue size, parsing phase, parent relationships, timestamps
-
-#### 2. Debug Categories with Levels
-Enable turning on/off different categories of message in addition to level filtering
-```
-DEDUP:TRACE - Show all deduplication decisions
-PREDICT:DEBUG - Show prediction creation but not internal details
-QUEUE:INFO - Show only major queue operations
-COMPLETE:TRACE - Show all completion operations
-```
-
-#### 3. Contextual Information
-Automatically include:
-- Task genealogy (parent → child chains)
-- Parsing phase indicators
-- Queue state snapshots
-- Cross-references between related operations
-
-**Priority**: High - This infrastructure would dramatically improve debugging efficiency for complex parsing issues
+- Updated InputIter.get_at() for coordinate system indicating positions *between* characters
+- Position 0 = before first character
