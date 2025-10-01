@@ -429,7 +429,7 @@ impl Grammar {
         use crate::debug::DebugLevel;
         
         debug_grammar!(DebugLevel::Detailed, "Constructing rule '{}' with mark {:?}", rule_name, mark);
-        
+
         let ctx = RuleContext::new(rule_name);
         let mut alt_count = 0;
         for (name, eid) in Parser::get_child_elements(arena, rule) {

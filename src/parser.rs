@@ -745,6 +745,17 @@ impl Parser {
             if g.is_alternative_nullable_by_index(&name, alt_index)? {
                 debug_earley_pos!(DebugLevel::Trace, current_pos, "PREDICTOR: Nullable rule {}[{}] - triggering immediate completion (Bpredict/complete)", name, alt_index);
 
+                // For truly empty rules (zero factors), add to completed_trace here
+                // They never get queued (already completed) so won't go through complete()
+                // For rules with nullable factors, they complete naturally through Earley algorithm
+                if let Some(task_id) = maybe_id {
+                    if alt.factors.is_empty() {
+                        // Truly empty rule - add initial task which is already completed
+                        self.completed_trace.push(task_id);
+                    }
+                    // Else: has nullable factors, will complete naturally
+                }
+
                 // For empty rules, we need to trigger completion regardless of deduplication
                 // Find waiting parents for this rule name and alternative
                 let waiting_parents = self.traces.get_waiting_parent_tasks_by_name(&name);
@@ -1570,6 +1581,75 @@ mod tests {
     }
 
     #[cfg(test)]
+    #[test]
+    fn test_empty_alternative_in_grammar() {
+        // Test that empty alternatives are properly parsed by bootstrap grammar
+        // Grammar: S has two alternatives - empty and "done"
+        let grammar_str = r#"S: ; "done"."#;
+
+        match Grammar::from_ixml_str(grammar_str) {
+            Ok(grammar) => {
+                // Print entire grammar structure
+                println!("\n=== GRAMMAR STRUCTURE ===");
+                for rule_name in grammar.defn_order.iter() {
+                    if let Ok(rule_def) = grammar.get_definition(rule_name) {
+                        println!("Rule: {} (mark: {:?})", rule_name, rule_def.mark());
+                        for (i, alt) in rule_def.iter().enumerate() {
+                            println!("  Alt[{}]: {} factors", i, alt.factors.len());
+                            for (j, factor) in alt.factors.iter().enumerate() {
+                                println!("    Factor[{}]: {:?}", j, factor);
+                            }
+                        }
+                    }
+                }
+                println!("=== END GRAMMAR ===\n");
+
+                // Should have rule S with 2 alternatives
+                let s_def = grammar.get_definition("S").expect("Should have rule S");
+                let alts: Vec<_> = s_def.iter().collect();
+
+                println!("Found {} alternatives for rule S", alts.len());
+                for (i, alt) in alts.iter().enumerate() {
+                    println!("  Alt {}: {} factors: {:?}", i, alt.factors.len(), alt.factors);
+                }
+
+                assert_eq!(alts.len(), 2, "Rule S should have 2 alternatives, got {}", alts.len());
+
+                // First alternative should be empty (0 factors)
+                assert_eq!(alts[0].factors.len(), 0, "First alternative should be empty, got {} factors", alts[0].factors.len());
+
+                // Second alternative should have 4 factors (string "done" gets expanded to chars)
+                assert_eq!(alts[1].factors.len(), 4, "Second alternative should have 4 factors (d,o,n,e), got {}", alts[1].factors.len());
+
+                // Now test that we can actually USE the grammar to parse input
+                // The empty alternative should match empty input
+                let mut parser = Parser::new(grammar.clone());
+                match parser.parse("") {
+                    Ok(_) => {
+                        println!("✓ Successfully parsed empty input with empty alternative");
+                    }
+                    Err(e) => {
+                        panic!("Failed to parse empty input with empty alternative: {:?}", e);
+                    }
+                }
+
+                // And the non-empty alternative should match "done"
+                let mut parser2 = Parser::new(grammar.clone());
+                match parser2.parse("done") {
+                    Ok(_) => {
+                        println!("✓ Successfully parsed 'done' with non-empty alternative");
+                    }
+                    Err(e) => {
+                        panic!("Failed to parse 'done': {:?}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                panic!("Failed to parse grammar with empty alternative: {:?}", e);
+            }
+        }
+    }
+
     #[test]
     fn test_premature_queue_empty_debug() {
         // Debug test case for premature queue empty issue
