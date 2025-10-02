@@ -1120,16 +1120,32 @@ impl Parser {
 
 
     pub fn tree_to_test_format(arena: &Arena<Content>) -> String {
+        Self::tree_to_test_format_with_version(arena, false)
+    }
+
+    pub fn tree_to_test_format_with_version(arena: &Arena<Content>, version_mismatch: bool) -> String {
         let mut builder = Builder::default();
         let root = arena.iter().next().unwrap(); // first item == root
         let root_id = arena.get_node_id(root).unwrap();
+
+        // Build extra attributes for root element if version mismatch
+        let extra_attrs = if version_mismatch {
+            Some(vec![
+                ("xmlns", ""),
+                ("xmlns:ixml", "http://invisiblexml.org/NS"),
+                ("ixml:state", "version-mismatch"),
+            ])
+        } else {
+            None
+        };
+
         for child in root_id.children(arena) {
-            Self::tree_to_test_format_recurse(arena, &mut builder, child);
+            Self::tree_to_test_format_recurse(arena, &mut builder, child, extra_attrs.as_deref());
         }
         builder.string().unwrap()
     }
-    
-    fn tree_to_test_format_recurse(arena: &Arena<Content>, builder: &mut Builder, nid: NodeId) {
+
+    fn tree_to_test_format_recurse(arena: &Arena<Content>, builder: &mut Builder, nid: NodeId, extra_attrs: Option<&[(&str, &str)]>) {
         let maybe_node = arena.get(nid);
         if maybe_node.is_none() {
             return;
@@ -1161,13 +1177,24 @@ impl Parser {
                     builder.append("\"");
                 }
 
+                // Add extra attributes (e.g., for version mismatch on root element)
+                if let Some(attrs) = extra_attrs {
+                    for (attr_name, attr_value) in attrs {
+                        builder.append(" ");
+                        builder.append(attr_name.to_string());
+                        builder.append("=\"");
+                        builder.append(attr_value.to_string());
+                        builder.append("\"");
+                    }
+                }
+
                 // Check if element has any non-attribute children for self-closing tag
                 let has_content = nid.children(arena).any(|n| !arena.get(n).unwrap().get().is_attr());
 
                 if has_content {
                     builder.append(">");
                     for child in nid.children(arena) {
-                        Self::tree_to_test_format_recurse(arena, builder, child);
+                        Self::tree_to_test_format_recurse(arena, builder, child, None);
                     }
                     builder.append("</");
                     builder.append(name.to_string());

@@ -71,6 +71,9 @@ pub struct Grammar {
     pub defn_order: Vec<SmolStr>,
     /// unified cache for all nullability information - computed on demand
     nullability_cache: OnceCell<HashMap<NullabilityKey, bool>>,
+    /// version declared in grammar prolog (if any). Our implementation version is always "1.0"
+    /// NOTE: Future versions may support renaming syntax (rule>newname) and require version-specific parsing
+    declared_version: Option<SmolStr>,
 }
 
 impl Grammar {
@@ -79,12 +82,25 @@ impl Grammar {
             definitions: HashMap::new(),
             defn_order: Vec::new(),
             nullability_cache: OnceCell::new(),
+            declared_version: None,
         }
     }
 
     pub fn get_rule_count(&self) -> usize {
         assert_eq!(self.definitions.len(), self.defn_order.len());
         self.definitions.len()
+    }
+
+    /// Check if the declared version (if any) differs from our implementation version "1.0"
+    pub fn has_version_mismatch(&self) -> bool {
+        self.declared_version.as_ref()
+            .map(|v| v.as_str() != "1.0")
+            .unwrap_or(false)
+    }
+
+    /// Get the declared version string (if any)
+    pub fn declared_version(&self) -> Option<&str> {
+        self.declared_version.as_ref().map(|s| s.as_str())
     }
 
     /// merge contents of `RuleBuilder` (which might include entire synthesized named rules) into Grammar
@@ -401,7 +417,22 @@ impl Grammar {
         for (element_name, count) in &element_counts {
             debug_grammar!(DebugLevel::Basic, "GRAMMAR|phase=tree_summary|element={}|count={}", element_name, count);
         }
-        
+
+        // Extract version declaration from prolog if present
+        for nid in root_id.descendants(arena) {
+            if let Content::Element(name) = arena.get(nid).unwrap().get() {
+                if name == "version" {
+                    // Version text is stored in the "string" attribute of the version element
+                    let attrs = Parser::get_attributes(arena, nid);
+                    if let Some(version_text) = attrs.get("string") {
+                        g.declared_version = Some(SmolStr::new(version_text));
+                        debug_grammar!(DebugLevel::Basic, "GRAMMAR|phase=version_extraction|declared_version={}", version_text);
+                    }
+                    break;
+                }
+            }
+        }
+
         use crate::debug::DebugLevel;
         debug_grammar!(DebugLevel::Basic, "Converting ixml tree to grammar: found {} rules", all_rules.len());
         

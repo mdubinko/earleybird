@@ -332,6 +332,7 @@ grep "FAIL" log/debug.log          # All failures
 - ✅ **Character Sets**: All patterns working (`["A"]`, `[#20]`, `["0"-"9"]`, `[L]`, Unicode classes)
 - ✅ **Insertion Syntax**: Complete implementation
 - ✅ **Comments**: Nested comment support
+- ✅ **Version Declarations**: Full support for version mismatch detection and ixml:state attribute
 - ⚠️ **Ambiguous Parses**: Not yet supported (affects ~3 tests)
 - 📝 **Dynamic Errors**: AssertDynamicError not yet implemented (affects 1 test)
 

@@ -427,10 +427,11 @@ fn run_single_test(test: testsuite_utils::TestCase) -> TestOutcome {
                 TestOutcome::Todo(format!("AssertDynamicError({}) not yet implemented", expected_code))
             }
             AssertXml(expected_xml) => {
+                let version_mismatch = target_grammar.has_version_mismatch();
                 let mut parser = Parser::new(target_grammar.clone());
                 match parse_with_trace_limit(&mut parser, &test.input) {
                     Ok(tree) => {
-                        let actual_xml = Parser::tree_to_test_format(&tree);
+                        let actual_xml = Parser::tree_to_test_format_with_version(&tree, version_mismatch);
                         if xml_canonicalize(&actual_xml) == xml_canonicalize(&expected_xml) {
                             TestOutcome::Pass
                         } else {

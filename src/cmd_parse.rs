@@ -195,6 +195,9 @@ impl Parse {
             }
         };
 
+        // Capture version mismatch flag before grammar is moved into parser
+        let version_mismatch = target_grammar.has_version_mismatch();
+
         // 3. Get input content from either file or string
         let input_content = match (self.input_file, self.input_str) {
             (Some(file), None) => {
@@ -245,7 +248,7 @@ impl Parse {
         // 5. Format and output results
         match self.out_format.as_str() {
             "XML" => {
-                let xml_output = Parser::tree_to_test_format(&parse_tree);
+                let xml_output = Parser::tree_to_test_format_with_version(&parse_tree, version_mismatch);
                 println!("{}", xml_output);
             }
             _ => {

@@ -424,14 +424,14 @@ fn attr_by_name(attrs: &Attributes, name: &str) -> String {
 
 /// Just grab all the attributes as a `HashMap`
 /// Assumes everything here is UTF-8 valid, otherwise panics
-/// Silently deletes the xmlns pseudo-attribute
+/// Silently deletes xmlns and xmlns:* namespace declarations
 fn all_attrs(attrs: Attributes) -> HashMap<String, String> {
     let mut hashmap: HashMap<String, String> = HashMap::new();
     for attr in attrs {
         match attr {
             Ok(a) => {
                 let name: String = from_utf8(a.key.into_inner()).expect("UTF-8 error parsing attribute name").to_string();
-                if name != "xmlns" {
+                if name != "xmlns" && !name.starts_with("xmlns:") {
                     match a.unescape_value() {
                         Ok(value) => {
                             hashmap.insert(name, value.to_string());

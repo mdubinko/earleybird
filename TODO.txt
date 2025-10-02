@@ -174,6 +174,101 @@
   - Files: src/parser.rs (ParseError, error collection in SCANNER), src/debug.rs (error formatting)
 - [ ] Implement Rust macro for embedding iXML specs with bootstrap implementations (src/ixml_bootstrap.rs) #HIGH
   - [ ] Design procedural macro to annotate bootstrap rule definitions with iXML specs
-  - [ ] Auto-generate round-trip tests comparing hand-coded vs parsed grammar behavior  
+  - [ ] Auto-generate round-trip tests comparing hand-coded vs parsed grammar behavior
   - [ ] Create verification that bootstrap implementation matches embedded iXML specification
   - [ ] Consider declarative grammar builder macro as alternative approach
+
+## iXML 1.0 Specification Errata (https://invisiblexml.org/1.0/errata.html)
+
+- [x] E001: The Unicode character class "LC" #HIGH
+  - Status: IMPLEMENTED - Bootstrap grammar 'letter' rule uses ["A"-"Z"; "a"-"z"] per erratum
+  - Issue: Unicode character class "LC" was not properly addressed in original letter definition
+  - Correction: Modified definition of letter nonterminal to use explicit character ranges
+  - Files: src/ixml_bootstrap.rs:274-277
+- [ ] E002: A string cannot contain C0 or C1 control characters #MED
+  - Issue: Original spec did not clearly define restrictions on control characters in strings
+  - Correction: Updated definition of quoted strings to exclude C0 and C1 control characters
+  - Amendment: Error S11 now specifies these restrictions
+  - Implementation: Need to validate string/quoted content against C0 (0x00-0x1F) and C1 (0x80-0x9F) ranges
+  - Files: src/grammar.rs (string validation), src/parser.rs (error reporting for S11)
+- [ ] E003: Ignore UTF-8 BOM #LOW
+  - Issue: Specification needed clarification on handling UTF-8 Byte Order Mark (U+FEFF)
+  - Correction: Added explicit requirement to ignore UTF-8 BOM during parsing
+  - Implementation: Strip BOM (0xEF 0xBB 0xBF) from beginning of grammar and input strings
+  - Files: src/parser.rs (input preprocessing), src/grammar.rs (grammar text preprocessing)
+
+## iXML Draft 2025-09-01 Changes (Beyond 1.0 + Errata)
+
+This draft incorporates all 1.0 errata plus the following new features:
+
+### Renaming/Aliasing Syntax (4 test cases affected)
+- [ ] Implement renaming/aliasing with `>` operator #HIGH
+  - Grammar changes:
+    - `naming: (mark, s)?, name, s, (-">", s, alias, s)?.` (NEW production)
+    - `alias: name.` (NEW production)
+    - `rule: naming, -["=:"], s, -alts, -".".` (was: `(mark, s)?, name, s, ...`)
+    - `nonterminal: naming.` (was: `(mark, s)?, name, s.`)
+  - Syntax: `B>X = "b".` means "match B but serialize as <X>"
+  - Syntax: `S = A, B>C.` means "reference B but serialize as <C>"
+  - Implementation:
+    - Add `alias: Option<SmolStr>` to grammar structures
+    - Update bootstrap grammar with naming/alias productions
+    - Modify output generation to use alias when present
+  - Files: src/ixml_bootstrap.rs, src/grammar.rs, src/parser.rs
+  - Test impact: Enables 4 currently failing tests (naming-elements, naming-elements-rhs, naming-attributes, naming-attributes-rhs)
+
+### Grammar Structure Refinements
+- [ ] Update prolog handling #LOW
+  - Change: `ixml: s, (prolog, RS)?, rule++RS, s.` (was: `prolog?`)
+  - Change: `prolog: version.` (was: `version, s.`)
+  - Impact: Requires RS (required spacing) after prolog if present
+  - Files: src/ixml_bootstrap.rs
+
+### String Content Validation (Errata E002 implementation)
+- [ ] Replace line-break exclusion with Unicode Cc (control character) exclusion #MED
+  - Change: `dchar: ~['"'; Cc]; '"', -'".` (was: `~['"'; #a; #d]; ...`)
+  - Change: `schar: ~["'"; Cc]; "'", -'".` (was: `~["'"; #a; #d]; ...`)
+  - Impact: Excludes all Unicode control characters (C0: 0x00-0x1F, C1: 0x80-0x9F) not just line breaks
+  - Files: src/ixml_bootstrap.rs, src/grammar.rs (implement Cc Unicode category)
+
+### Production Organization
+- [ ] Reorganize mark definition placement #LOW
+  - Change: Move `@mark: ["@^-"].` after `option` rule (was: immediately after `rule`)
+  - Impact: Purely organizational, no semantic change
+  - Files: src/ixml_bootstrap.rs
+
+## Summary: Path to 100% ixml Current Draft Conformance
+
+**Current Status**: Targeting ixml 1.0 + E001 (87.1% pass rate, 81/93 tests)
+**Proposed Target**: ixml Draft 2025-09-01 (all 1.0 errata + renaming + Cc validation)
+
+**Required Changes**:
+1. **E002 (Cc category)**: Replace line-break checks with full Unicode control character exclusion
+2. **E003 (BOM)**: Strip UTF-8 BOM from inputs
+3. **Renaming**: Add alias syntax support (biggest feature addition)
+4. **Prolog/RS**: Adjust spacing requirements around version declaration
+
+**Estimated Impact**: 81/93 → 85+/93 tests passing (adds 4 renaming tests)
+
+## iXML Specification Error Codes (https://invisiblexml.org/1.0/)
+
+### Static Errors (detectable by inspecting grammar)
+- [ ] S01: Two rules not separated by whitespace or comment #MED
+- [ ] S02: Nonterminal name used but not defined in grammar #HIGH
+- [ ] S03: Grammar contains more than one rule for given nonterminal #HIGH
+- [ ] S06: Hex encoding uses characters not allowed in hexadecimal #MED
+- [ ] S07: Hexadecimal value not within Unicode code-point range #MED
+- [ ] S08: Encoded character denotes Unicode noncharacter or surrogate code point #MED
+- [ ] S09: First character in range has greater code point than second character #MED
+- [ ] S10: Unicode character category not defined in Unicode specification #MED
+- [ ] S11: String contains C0 or C1 control character, including line break #MED
+- [ ] S12: Grammar does not conform to implied or declared version #MED
+
+### Dynamic Errors (detected when processing input with grammar)
+- [ ] D01: Parse tree cannot be represented as well-formed XML #MED
+- [ ] D02: Two or more attributes with same name on same element #HIGH
+- [ ] D03: Element or attribute name is not valid XML name #MED
+- [ ] D04: Attempt to serialize characters not permitted in XML #MED
+- [ ] D05: Attempt to serialize attribute as root node of XML document #LOW
+- [ ] D06: Parse tree does not contain exactly one top-level element #MED
+- [ ] D07: Attribute named "xmlns" appears on element #LOW

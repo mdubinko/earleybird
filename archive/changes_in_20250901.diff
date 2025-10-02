@@ -1,0 +1,67 @@
+--- archive/ixml_1.0.ixml	2025-10-01 22:00:06.440486416 -0400
++++ archive/ixml_20250901.ixml	2025-10-01 22:00:13.110273203 -0400
+@@ -1,4 +1,4 @@
+-         ixml: s, prolog?, rule++RS, s.
++         ixml: s, (prolog, RS)?, rule++RS, s.
+ 
+            -s: (whitespace; comment)*. {Optional spacing}
+           -RS: (whitespace; comment)+. {Required spacing}
+@@ -9,11 +9,16 @@
+       comment: -"{", (cchar; comment)*, -"}".
+        -cchar: ~["{}"].
+ 
+-       prolog: version, s.
++       prolog: version.
+       version: -"ixml", RS, -"version", RS, string, s, -'.' .
+ 
+-         rule: (mark, s)?, name, s, -["=:"], s, -alts, -".".
+-        @mark: ["@^-"].
++         rule: naming, -["=:"], s, -alts, -".".
++      -naming: (mark, s)?, name, s, (-">", s, alias, s)?.
++        @name: namestart, namefollower*.
++   -namestart: ["_"; L].
++-namefollower: namestart; ["-.·‿⁀"; Nd; Mn].
++
++       @alias: name.
+          alts: alt++(-[";|"], s).
+           alt: term**(-",", s).
+         -term: factor;
+@@ -27,13 +32,9 @@
+       repeat0: factor, (-"*", s; -"**", s, sep).
+       repeat1: factor, (-"+", s; -"++", s, sep).
+        option: factor, -"?", s.
++        @mark: ["@^-"].
+           sep: factor.
+-  nonterminal: (mark, s)?, name, s.
+-
+-        @name: namestart, namefollower*.
+-   -namestart: ["_"; L].
+--namefollower: namestart; ["-.·‿⁀"; Nd; Mn].
+-
++  nonterminal: naming.
+     -terminal: literal; 
+                charset.
+       literal: quoted;
+@@ -43,10 +44,10 @@
+        @tmark: ["^-"].
+       @string: -'"', dchar+, -'"';
+                -"'", schar+, -"'".
+-        dchar: ~['"'; #a; #d];
+-               '"', -'"'. {all characters except line breaks; quotes must be doubled}
+-        schar: ~["'"; #a; #d];
+-               "'", -"'". {all characters except line breaks; quotes must be doubled}
++        dchar: ~['"'; Cc];
++               '"', -'"'. {all characters except controls; quotes must be doubled}
++        schar: ~["'"; Cc];
++               "'", -"'". {all characters except controls; quotes must be doubled}
+      -encoded: (tmark, s)?, -"#", hex, s.
+          @hex: ["0"-"9"; "a"-"f"; "A"-"F"]+.
+ 
+@@ -68,5 +69,5 @@
+        -class: code.
+         @code: capital, letter?.
+      -capital: ["A"-"Z"].
+-      -letter: ["a"-"z"].
++      -letter: ["A"-"Z"; "a"-"z"].
+     insertion: -"+", s, (string; -"#", hex), s.
+\ No newline at end of file
