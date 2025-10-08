@@ -113,17 +113,7 @@ fn run(suite_spec: Option<String>, console: &str, _console_filter: Option<&Strin
         }
         None => all_tests
     };
-    
-    // ========================================================================
-    // TEMPORARY EXCLUSION: Filter out all tests from the 'ambiguous' folder
-    // 
-    // These tests cause infinite loops/hangs in the Earley parser due to 
-    // complex grammar patterns (e.g., lf2 test with line++lf, lf? pattern).
-    // We'll revisit these at the end when most everything else is working.
-    // ========================================================================
-    let filtered_tests: Vec<_> = filtered_tests.into_iter()
-        .filter(|test| !test.name.contains("ambiguous"))
-        .collect();
+
     println!("Loaded {} test cases", filtered_tests.len());
 
     // Parse levels for internal use

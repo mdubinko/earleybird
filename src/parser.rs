@@ -26,6 +26,8 @@ pub struct ParseSession {
     pub max_queue_size: usize,
     /// Maximum operations allowed at any single position before detecting infinite loop
     pub infinite_loop_threshold: u32,
+    /// Count of tasks that were deduplicated (not created)
+    pub tasks_deduplicated: u32,
 }
 
 impl Default for ParseSession {
@@ -37,6 +39,7 @@ impl Default for ParseSession {
             farthest_pos: 0,
             max_queue_size: 0,
             infinite_loop_threshold: 1000,
+            tasks_deduplicated: 0,
         }
     }
 }
@@ -308,6 +311,9 @@ pub struct TraceArena {
 
     /// blockchain-style deduplication using binary hashes for fast lookups
     hashes: HashSet<u64>,
+
+    /// Count of tasks that were deduplicated
+    pub deduplicated_count: u32,
 }
 
 impl TraceArena {
@@ -316,7 +322,8 @@ impl TraceArena {
             arena: Vec::new(),
             queue: PositionBucketedQueue::new(),
             continuations: MultiMap::new(),
-            hashes: HashSet::new()
+            hashes: HashSet::new(),
+            deduplicated_count: 0,
         }
     }
 
@@ -368,8 +375,11 @@ impl TraceArena {
     /// Returns Some(TraceId) (unless this is a duplicate Task, in which case None is returned)
     fn task(&mut self, name: &str, alt_index: usize, mark: Mark, origin: usize, pos: usize, dot: DotNotation) -> Option<TraceId> {
         let id = TraceId(self.arena.len());
-        let task_content = format!("{}[{}] {}:{} {}", name, alt_index, origin, pos, dot);
-        let hash = utils::hash_to_u64(&task_content);
+
+        // Compute hash without string allocation - hash the tuple of key identity fields
+        // Use dot cursor position (matched_so_far.len()) instead of full DotNotation to avoid deep hashing
+        let dot_cursor = dot.matched_so_far.len();
+        let hash = utils::hash_to_u64(&(name, alt_index, origin, pos, dot_cursor));
 
         let task = Task{
             id,
@@ -399,8 +409,10 @@ impl TraceArena {
         let new_dot = from_task.dot.advance_dot(rec);
         let id = TraceId(self.arena.len());
 
-        let task_content = format!("{}[{}] {}:{} {}", from_task.name, from_task.alt_index, from_task.origin, new_pos, new_dot);
-        let hash = utils::hash_to_u64(&task_content);
+        // Compute hash without string allocation - hash the tuple of key identity fields
+        // Use dot cursor position (matched_so_far.len()) instead of full DotNotation to avoid deep hashing
+        let dot_cursor = new_dot.matched_so_far.len();
+        let hash = utils::hash_to_u64(&(&from_task.name, from_task.alt_index, from_task.origin, new_pos, dot_cursor));
 
         let task = Task {
             id,
@@ -429,6 +441,7 @@ impl TraceArena {
     fn have_we_seen(&mut self, task: &Task) -> bool {
         if self.hashes.contains(&task.hash) {
             debug!("🚫 DUPLICATE TASK DETECTED: Skipping {}[{}]", task.name, task.alt_index);
+            self.deduplicated_count += 1;
             true
         } else {
             debug!("...caching task {}[{}]", task.name, task.alt_index);
@@ -665,6 +678,14 @@ impl Parser {
 
         info!("🔚 QUEUE EMPTY: Parse loop exited with queue empty. Last position: {}, Input length: {}", session.farthest_pos, session.input_length);
         info!("Finished parse with {} items in trace, {} total operations", self.traces.arena.len(), session.total_operations);
+        let dedup_pct = if self.traces.deduplicated_count > 0 {
+            (self.traces.deduplicated_count as f64 / (self.traces.arena.len() as f64 + self.traces.deduplicated_count as f64) * 100.0) as u32
+        } else {
+            0
+        };
+        eprintln!("📊 Parse stats: {} tasks created, {} deduplicated ({}%), {} operations, max queue: {}",
+                  self.traces.arena.len(), self.traces.deduplicated_count, dedup_pct,
+                  session.total_operations, session.max_queue_size);
         self.unpack_parse_tree(session)
     }
 
