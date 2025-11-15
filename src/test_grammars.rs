@@ -69,6 +69,7 @@ pub fn all_builtin_tests() -> SmokeTests {
     tests.add(&SmokeAttr {});
     tests.add(&SmokeMute {});
     tests.add(&SmokeWiki {});
+    tests.add(&SmokeHexCodes {});
     tests
 }
 
@@ -438,4 +439,29 @@ impl ParserTestSet for SmokeWiki {
             ("0", ""), // TODO: better failure cases
             ]
     }
-}    
+}
+
+/// Test hex character codes in character ranges
+pub struct SmokeHexCodes {}
+
+impl ParserTestSet for SmokeHexCodes {
+    fn get_name(&self) -> &'static str { "SmokeHexCodes" }
+    fn get_ixml(&self) -> &'static str {
+        indoc!{r#"
+            doc = [#30-#39]+.
+        "#}
+    }
+    fn get_grammar(&self) -> Grammar {
+        let mut g = Grammar::new();
+        let ctx = RuleContext::new("doc");
+        g.define("doc", ctx.seq().repeat1( ctx.seq().ch_range('0', '9') ));
+        g
+    }
+    fn get_inputs_expected(&self) -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("123", "<doc>123</doc>"),
+            ("0", "<doc>0</doc>"),
+            ("999", "<doc>999</doc>")
+            ]
+    }
+}
