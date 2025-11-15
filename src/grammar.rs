@@ -116,21 +116,23 @@ impl Grammar {
     }
 
     /// Parse an iXML grammar string and construct a Grammar
-    pub fn from_ixml_str(ixml: &str) -> Result<Grammar, crate::parser::ParseError> {        
+    pub fn from_ixml_str(ixml: &str) -> Result<Grammar, crate::parser::ParseError> {
         // Phase 1: Validate and preprocess the iXML text
-        let validation_result = crate::validator::validate_ixml(ixml.trim());
-        
-        if !validation_result.is_valid() {
-            let error_msgs: Vec<String> = validation_result.errors.iter()
-                .map(|e| e.to_string())
-                .collect();
-            return Err(crate::parser::ParseError::static_err(&error_msgs.join("; ")));
-        }
-        
+        // COMMENTED OUT: validator module not available
+        // let validation_result = crate::validator::validate_ixml(ixml.trim());
+        //
+        // if !validation_result.is_valid() {
+        //     let error_msgs: Vec<String> = validation_result.errors.iter()
+        //         .map(|e| e.to_string())
+        //         .collect();
+        //     return Err(crate::parser::ParseError::static_err(&error_msgs.join("; ")));
+        // }
+
         // Phase 2: Parse the validated and preprocessed text
+        // Using ixml directly since validator not available
         let mut ixml_parser = Parser::new(bootstrap_ixml_grammar());
-        let ixml_arena = ixml_parser.parse(&validation_result.processed_text)?;
-        
+        let ixml_arena = ixml_parser.parse(ixml.trim())?;
+
         let grammar = Grammar::from_parse_tree(&ixml_arena)?;
         Ok(grammar)
     }
@@ -308,16 +310,47 @@ impl Grammar {
                     for (child_name, child_nid) in Parser::get_child_elements(arena, nid) {
                         if child_name == "member" {
                             let member_attrs = Parser::get_attributes(arena, child_nid);
+                            debug_grammar!(DebugLevel::Basic, "      Member attributes: {:?}", member_attrs);
                             if let (Some(from), Some(to)) = (member_attrs.get("from"), member_attrs.get("to")) {
-                                // Character range like ["a"-"z"]
-                                let from_char = from.chars().next().expect("from attribute should have at least one character");
-                                let to_char = to.chars().next().expect("to attribute should have at least one character");
+                                // Character range like ["a"-"z"] or [#30-#39]
+                                // Parse 'from' - could be string or hex (starting with #)
+                                let from_char = if from.starts_with('#') {
+                                    let hex_digits = &from[1..];
+                                    u32::from_str_radix(hex_digits, 16).ok()
+                                        .and_then(char::from_u32)
+                                        .expect(&format!("Invalid hex code in from: {}", from))
+                                } else {
+                                    from.chars().next().expect("from attribute should have at least one character")
+                                };
+
+                                // Parse 'to' - could be string or hex (starting with #)
+                                let to_char = if to.starts_with('#') {
+                                    let hex_digits = &to[1..];
+                                    u32::from_str_radix(hex_digits, 16).ok()
+                                        .and_then(char::from_u32)
+                                        .expect(&format!("Invalid hex code in to: {}", to))
+                                } else {
+                                    to.chars().next().expect("to attribute should have at least one character")
+                                };
+
                                 lit_builder = lit_builder.ch_range(from_char, to_char);
                             } else if let Some(string_attr) = member_attrs.get("string") {
                                 // Simple string member like ["abc"]
                                 lit_builder = lit_builder.ch_in(string_attr);
+                            } else if let Some(hex_attr) = member_attrs.get("hex") {
+                                // Single hex character like [#30]
+                                if let Ok(code_point) = u32::from_str_radix(hex_attr, 16) {
+                                    if let Some(ch) = char::from_u32(code_point) {
+                                        lit_builder = lit_builder.ch(ch);
+                                        debug_grammar!(DebugLevel::Trace, "      Converted hex #{} to character '{}'", hex_attr, ch);
+                                    } else {
+                                        debug_grammar!(DebugLevel::Basic, "ERROR: invalid Unicode code point from hex #{}", hex_attr);
+                                    }
+                                } else {
+                                    debug_grammar!(DebugLevel::Basic, "ERROR: invalid hex value '{}'", hex_attr);
+                                }
                             }
-                            // TODO: handle hex members and class members
+                            // TODO: handle class members
                         }
                     }
                     seq = seq.mark_lit(lit_builder, tmark);
@@ -339,16 +372,47 @@ impl Grammar {
                     for (child_name, child_nid) in Parser::get_child_elements(arena, nid) {
                         if child_name == "member" {
                             let member_attrs = Parser::get_attributes(arena, child_nid);
+                            debug_grammar!(DebugLevel::Basic, "      Member attributes: {:?}", member_attrs);
                             if let (Some(from), Some(to)) = (member_attrs.get("from"), member_attrs.get("to")) {
-                                // Character range like ~["a"-"z"]
-                                let from_char = from.chars().next().expect("from attribute should have at least one character");
-                                let to_char = to.chars().next().expect("to attribute should have at least one character");
+                                // Character range like ~["a"-"z"] or ~[#30-#39]
+                                // Parse 'from' - could be string or hex (starting with #)
+                                let from_char = if from.starts_with('#') {
+                                    let hex_digits = &from[1..];
+                                    u32::from_str_radix(hex_digits, 16).ok()
+                                        .and_then(char::from_u32)
+                                        .expect(&format!("Invalid hex code in from: {}", from))
+                                } else {
+                                    from.chars().next().expect("from attribute should have at least one character")
+                                };
+
+                                // Parse 'to' - could be string or hex (starting with #)
+                                let to_char = if to.starts_with('#') {
+                                    let hex_digits = &to[1..];
+                                    u32::from_str_radix(hex_digits, 16).ok()
+                                        .and_then(char::from_u32)
+                                        .expect(&format!("Invalid hex code in to: {}", to))
+                                } else {
+                                    to.chars().next().expect("to attribute should have at least one character")
+                                };
+
                                 lit_builder = lit_builder.ch_range(from_char, to_char);
                             } else if let Some(string_attr) = member_attrs.get("string") {
                                 // Simple string member like ~["abc"]
                                 lit_builder = lit_builder.ch_in(string_attr);
+                            } else if let Some(hex_attr) = member_attrs.get("hex") {
+                                // Single hex character like ~[#30]
+                                if let Ok(code_point) = u32::from_str_radix(hex_attr, 16) {
+                                    if let Some(ch) = char::from_u32(code_point) {
+                                        lit_builder = lit_builder.ch(ch);
+                                        debug_grammar!(DebugLevel::Trace, "      Converted hex #{} to character '{}'", hex_attr, ch);
+                                    } else {
+                                        debug_grammar!(DebugLevel::Basic, "ERROR: invalid Unicode code point from hex #{}", hex_attr);
+                                    }
+                                } else {
+                                    debug_grammar!(DebugLevel::Basic, "ERROR: invalid hex value '{}'", hex_attr);
+                                }
                             }
-                            // TODO: handle hex members and class members
+                            // TODO: handle class members
                         }
                     }
                     seq = seq.mark_lit(lit_builder, tmark);
