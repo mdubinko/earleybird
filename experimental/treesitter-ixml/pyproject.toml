@@ -1,0 +1,11 @@
+[project]
+name = "treesitter-ixml"
+version = "0.1.0"
+description = "Reference iXML parser for QA comparison against earleybird"
+requires-python = ">=3.11"
+dependencies = [
+    "tree-sitter>=0.22",
+]
+
+[project.scripts]
+ts-ixml = "parse:main"

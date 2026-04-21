@@ -11,3 +11,21 @@ Cargo.lock
 
 # This should be a symlink
 ixml
+
+# macOS metadata
+.DS_Store
+
+# Editor settings
+.vscode/
+
+# Debug log output
+log/
+
+# Ad-hoc test/scratch files in project root
+*.ixml
+*.txt
+*.xml
+debug_hand_coded_test.rs
+
+# Keep reference files in docs/archive regardless of extension
+!docs/archive/**
