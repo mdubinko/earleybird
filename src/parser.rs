@@ -9,6 +9,7 @@ use smol_str::SmolStr;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt,
+    hash::{Hash, Hasher},
 };
 use string_builder::Builder;
 
@@ -169,7 +170,7 @@ impl fmt::Display for DotNotation {
 
 /// The internal record of a fragment of a matching parse
 /// See also the Content enum for the stable, outward facing record of a similar nature
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum MatchRec {
     Term(char, usize, TMark),
     NonTerm(SmolStr, usize, Mark, Option<SmolStr>),
@@ -200,7 +201,9 @@ impl DerivationCount {
 }
 
 fn derivation_signature(dot: &DotNotation) -> u64 {
-    utils::hash_to_u64(&format!("{dot}"))
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    dot.matched_so_far.hash(&mut hasher);
+    hasher.finish()
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

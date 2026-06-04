@@ -1145,7 +1145,7 @@ impl BranchingRule {
 /// @ for attribute
 /// - for hidden
 /// ^ for visible (default)
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum Mark {
     Default,
     Unmute, // ^
@@ -1169,7 +1169,7 @@ impl fmt::Display for Mark {
 /// These get used often, so the varient names are kept short
 /// - for hidden
 /// ^ for visible (default)
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum TMark {
     Default,
     Unmute,
