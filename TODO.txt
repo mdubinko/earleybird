@@ -82,6 +82,10 @@
   - Fixed: Output generation includes inserted text (src/parser.rs:1087-1094)
   - Tests: 9/12 insertion tests passing (75%) - 3 failures are ambiguous parse cases (not yet supported)
   - Files: src/grammar.rs, src/parser.rs, src/ixml_bootstrap.rs
+- [x] Preserve nonterminal occurrence marks during output tree construction (src/parser.rs:1326) #HIGH
+  - Status: COMPLETED - `@b` references now serialize as attributes even when rule `b` is defined with the default mark
+  - Fixed: `grammar-misc/insert-multiple-attribute/iMultAtt-1` now passes
+  - Impact: Insertion tests now have only the known ambiguous cases failing
 
 ### Priority 4: Output Formatting & Test Infrastructure #HIGH
 - [x] XML self-closing tags for empty elements #HIGH

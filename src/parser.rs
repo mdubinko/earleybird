@@ -1323,14 +1323,20 @@ impl Parser {
             Some(task) => {
                 let match_name = &task.name;
 
-                if task.mark == Mark::Mute || match_name.starts_with('-') {
+                let effective_mark = if mark == Mark::Default {
+                    task.mark
+                } else {
+                    mark
+                };
+
+                if effective_mark == Mark::Mute || match_name.starts_with('-') {
                     // Skip
                     debug!("trace found {mark} {task} -- SKIPPING");
                 } else {
                     // Element or Attribute
                     debug!("trace found {} {task}", task.mark);
                     let name_str = match_name.to_string();
-                    let data = if task.mark == Mark::Attr {
+                    let data = if effective_mark == Mark::Attr {
                         Content::Attribute(name_str, "".to_string()) // 2nd pass will fill in the atttribute value
                     } else {
                         Content::Element(name_str)
