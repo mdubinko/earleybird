@@ -122,11 +122,57 @@
   - Remaining insertion failures are ambiguous parse cases
   - Core insertion, attributed insertion, and encoded insertion behavior are working
 - **Remaining feature buckets**:
-  - Ambiguous parse detection and `ixml:state="ambiguous"` output
+  - Ambiguous parse detection and `ixml:state="ambiguous"` output (all 13 remaining failures)
+
+## Ambiguous Parse Support (13 failing tests — all share this root cause)
+
+All 13 remaining failures require the parser to detect ambiguity and emit `ixml:state="ambiguous"` on the root element per the iXML 1.0 spec. They divide into three sub-groups:
+
+### Sub-group A: Correct parse, missing state attribute only (5 tests) #HIGH
+These tests produce the right XML tree but the root element lacks `ixml:state="ambiguous"`.
+Adding ambiguity detection to the output phase (src/parser.rs) should fix all five at once.
+- [ ] ambiguous/ambig3/ambig3 — `<a>a<spaces/><b>...</b></a>` content matches; root needs state attr
+- [ ] ambiguous/ambig6/ambig6 — `<block>{}</block>` content matches; root needs state attr
+- [ ] ambiguous/css/css — full CSS output matches; root needs state attr
+- [ ] ambiguous/date/date — full date output matches; root needs state attr
+- [ ] ambiguous/lf2/lf2 — multi-line input output matches; root needs state attr
+
+### Sub-group B: Wrong parse chosen from ambiguous alternatives (5 tests) #HIGH
+Parser picks one valid but wrong derivation; correct output requires either a different
+preferred derivation or true multi-tree output. `ixml:state="ambiguous"` also required.
+- [ ] ambiguous/ambig/ambig — parser chooses left-associative `(i+i)+i`; expected right-assoc `i+(i+i)` #MED
+- [ ] ambiguous/ambig4/ambig4 — greedy value match consumes second property line; expected two short values #MED
+- [ ] ambiguous/ambig5/ambig5 — parser merges two `<digit>` nodes into one `<number>`; expected split #MED
+- [ ] ambiguous/expr0/expr0 — left-assoc `(a÷b)÷c`; expected right-assoc `a÷(b÷c)` #MED
+- [ ] ambiguous/ambiguous-marks/Battr — mark conflict: parser makes `B` an attribute; expected element in ambiguous output #MED
+
+### Sub-group C: Ambiguous insertions (3 tests) #MED
+Grammar has two alternatives that each insert different literal text; parser picks one
+without detecting ambiguity. Output uses wrong inserted text and lacks state attribute.
+- [ ] grammar-misc/insert-ambiguous/iAmb-1 — two insertion alternatives (A vs B); parser outputs `B`, expected `A` with state #MED
+- [ ] grammar-misc/insert-alternate/iAlt-1 — same pattern as iAmb-1; parser outputs `B`, expected `A` with state #MED
+- [ ] grammar-misc/insert-separator-alternate/iSepAlt-1 — separator insertion alternatives (`:` vs `=`); parser outputs `=`, expected `:` with state #MED
+
+### Implementation path
+1. **Earley ambiguity signal**: After parsing completes, check whether the Earley chart
+   contains more than one completed parse for the root rule at the final position.
+   A simple count of completed `[S → α •, 0]` items at position N suffices.
+   Files: src/parser.rs (post-parse check)
+2. **State attribute emission**: When ambiguity detected, inject `ixml:state="ambiguous"`
+   on the root output element. Files: src/parser.rs (tree_to_xml / output phase)
+3. **Sub-group A** tests will pass after steps 1–2 alone.
+4. **Sub-group B** tests may require choosing a canonical derivation that matches the
+   spec's preferred reading (typically the first/leftmost); investigate whether changing
+   derivation-selection order in the chart walk resolves each case.
+5. **Sub-group C** tests also need steps 1–2; the correct inserted literal depends on
+   which derivation is chosen, so canonical ordering (step 4) likely fixes these too.
 - **Recent Major Fixes**:
   - [x] **VXML Grammar References**: COMPLETED - XML-form grammars load through the suite driver #HIGH
     - Files: src/testsuite_utils.rs
     - Tests: `cargo run -- suite syntax --console SUMMARY --file FAILURES -o log/syntax-after-vxml.txt` => 78 pass, 0 fail, 0 bootstrap
+  - [ ] Cache parsed VXML grammar references in the suite loader to avoid reparsing the same XML grammar for every test case #MED #performance
+    - Context: `../reference/ixml.xml` is reused across many syntax tests, and full-suite runs repeatedly rebuild the same `Grammar`
+    - Files: src/testsuite_utils.rs
   - [x] **Long Comment Bootstrap Guard**: COMPLETED - finite completion waves from long comments no longer trip the infinite-loop guard #HIGH
     - Files: src/parser.rs
     - Tests: `cargo run -- suite non-XML-char-in-input-output-clear --console SUMMARY --file FAILURES -o log/nonxml-clear-after.txt` => 2 pass, 0 fail, 0 bootstrap
