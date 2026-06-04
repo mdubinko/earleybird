@@ -92,6 +92,10 @@
   - Status: COMPLETED (2025-10-01) - Empty elements now use `<tag/>` format
   - Fixed: tree_to_test_format checks for content before choosing tag format (src/parser.rs:1165-1178)
   - Impact: Cleaner, standard-compliant XML output
+- [x] Preserve terminal marks on encoded literals (src/grammar.rs:665) #HIGH
+  - Status: COMPLETED - `-#NN` encoded terminals now retain their hidden tmark during grammar conversion
+  - Fixed: `error/non-XML-char-in-input-output-errors/SOH-RS-EOT` no longer serializes hidden control characters as text
+  - Remaining related work: dynamic errors for visible non-XML characters still require D04/D01 implementation
 - [x] Test catalog XML parsing bugs #CRITICAL
   - Status: COMPLETED (2025-10-01) - Fixed two critical bugs
   - Fixed: assert-xml accumulator not cleared between tests (src/testsuite_utils.rs:318)

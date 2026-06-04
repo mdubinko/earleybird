@@ -663,7 +663,11 @@ impl Grammar {
                 }
             }
             "literal" => {
-                let tmark = match attrs.get("mark").map(|s| s.as_str()) {
+                let tmark_attr = attrs
+                    .get("tmark")
+                    .or_else(|| attrs.get("mark"))
+                    .map(|s| s.as_str());
+                let tmark = match tmark_attr {
                     Some("^") => TMark::Unmute,
                     Some("-") => TMark::Mute,
                     _ => TMark::Default,
