@@ -12,6 +12,8 @@ use quick_xml::reader::Reader;
 use string_builder::Builder;
 
 use crate::grammar::Grammar;
+use crate::parser::Content;
+use indextree::{Arena, NodeId};
 
 type XmlString = String;
 
@@ -178,7 +180,7 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
 
     let mut buf = Vec::new();
     let mut test_set_nesting: Vec<String> = Vec::new();
-    let mut current_grammar = String::new();
+    let mut current_grammar = TestGrammar::Unparsed(String::new());
     let mut builder = TestCaseBuilder::new();
     let mut test_cases: Vec<TestCase> = Vec::new();
 
@@ -207,17 +209,26 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                         let grammar = reader.read_text(e.to_end().name());
                         let raw_grammar = grammar.expect("parse error reading inline grammar");
                         // quick-xml's read_text() doesn't decode entities, so we use unescape()
-                        current_grammar = unescape(&raw_grammar)
-                            .expect("Failed to unescape inline grammar")
-                            .to_string();
+                        current_grammar = TestGrammar::Unparsed(
+                            unescape(&raw_grammar)
+                                .expect("Failed to unescape inline grammar")
+                                .to_string(),
+                        );
                     }
                     b"ixml-grammar-ref" => {
                         let href = attr_by_name(&e.attributes(), "href");
                         let mut fullpath = basepath.to_path_buf();
                         fullpath.push(href);
                         //println!("ixml-grammar-ref {}", fullpath.to_string_lossy());
-                        current_grammar =
-                            fs::read_to_string(fullpath).expect("Error reading grammar file");
+                        current_grammar = TestGrammar::Unparsed(
+                            fs::read_to_string(fullpath).expect("Error reading grammar file"),
+                        );
+                    }
+                    b"vxml-grammar-ref" => {
+                        let href = attr_by_name(&e.attributes(), "href");
+                        let mut fullpath = basepath.to_path_buf();
+                        fullpath.push(href);
+                        current_grammar = TestGrammar::Parsed(read_vxml_grammar(fullpath));
                     }
                     b"test-case" => {
                         let name = attr_by_name(&e.attributes(), "name");
@@ -238,9 +249,7 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
 
                         fullname.push_str(&name);
                         builder.name = Some(fullname);
-                        builder
-                            .grammar
-                            .push(TestGrammar::Unparsed(current_grammar.clone()));
+                        builder.grammar.push(current_grammar.clone());
                     }
                     b"test-case-ref" => {
                         // TODO: maybe just note these somewhere...
@@ -385,6 +394,76 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
     }
     // println!("read {} cases", test_cases.len());
     test_cases
+}
+
+fn read_vxml_grammar(path: PathBuf) -> Grammar {
+    let xml = fs::read_to_string(&path).expect("Error reading VXML grammar file");
+    let arena = vxml_to_arena(&xml);
+    Grammar::from_parse_tree(&arena).expect("Error converting VXML grammar file")
+}
+
+fn vxml_to_arena(xml: &str) -> Arena<Content> {
+    let mut arena = Arena::new();
+    let root = arena.new_node(Content::Root);
+    let mut stack: Vec<NodeId> = vec![root];
+    let mut reader = Reader::from_str(xml);
+    reader.trim_text(true);
+
+    let mut buf = Vec::new();
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Err(e) => panic!(
+                "Error parsing VXML grammar at position {}: {:?}",
+                reader.buffer_position(),
+                e
+            ),
+            Ok(Event::Eof) => break,
+            Ok(Event::Start(e)) => {
+                let element = append_vxml_element(&mut arena, *stack.last().unwrap(), &e);
+                stack.push(element);
+            }
+            Ok(Event::Empty(e)) => {
+                append_vxml_element(&mut arena, *stack.last().unwrap(), &e);
+            }
+            Ok(Event::End(_)) => {
+                stack.pop();
+            }
+            Ok(Event::Text(t)) => {
+                if let Ok(text) = t.unescape() {
+                    if !text.trim().is_empty() {
+                        let text_node = arena.new_node(Content::Text(text.to_string()));
+                        stack.last().unwrap().append(text_node, &mut arena);
+                    }
+                }
+            }
+            Ok(Event::CData(_))
+            | Ok(Event::Comment(_))
+            | Ok(Event::PI(_))
+            | Ok(Event::Decl(_))
+            | Ok(Event::DocType(_)) => {}
+        }
+        buf.clear();
+    }
+    arena
+}
+
+fn append_vxml_element<'a>(
+    arena: &mut Arena<Content>,
+    parent: NodeId,
+    elem: &quick_xml::events::BytesStart<'a>,
+) -> NodeId {
+    let name = from_utf8(elem.name().as_ref())
+        .expect("UTF-8 error parsing VXML element name")
+        .to_string();
+    let elem_node = arena.new_node(Content::Element(name));
+    parent.append(elem_node, arena);
+
+    for (name, value) in all_attrs(elem.attributes()) {
+        let attr_node = arena.new_node(Content::Attribute(name, value));
+        elem_node.append(attr_node, arena);
+    }
+
+    elem_node
 }
 
 /// Not "Canonical XML" but close enough for our purposes here

@@ -107,25 +107,26 @@
   - Impact: Clear indication that ambiguous parse support is not yet implemented
 
 ## Current Test Suite Status (Updated 2026-06-04)
-- **Full catalog**: **179/231 passing (77.5% pass rate)**
-  - **179 PASS**
+- **Full catalog**: **218/231 passing (94.4% pass rate)**
+  - **218 PASS**
   - **13 FAIL** - all remaining concrete failures are ambiguous-output cases
-  - **39 Bootstrap Errors** - XML-form grammar fixtures and other remaining bootstrap cases in the latest full run
+  - **0 Bootstrap Errors**
   - **0 TODO** - `AssertDynamicError` is implemented in the suite driver
-  - Latest run: `cargo run -- suite --console SUMMARY --file FAILURES -o log/full-suite-naming-after.txt`
-- **Focused improvement since latest full baseline**:
-  - `error` subset now passes **20/20**: `cargo run -- suite error --console SUMMARY --file FAILURES -o log/error-after-nonxml-clear.txt`
-  - This fixes the two `error/non-XML-char-in-input-output-clear` bootstrap cases that were still blocked in the latest full run
+  - Latest run: `cargo run -- suite --console SUMMARY --file FAILURES -o log/full-suite-vxml-after.txt`
 - **Dynamic error tests**: **20/20 passing**
   - Implemented output-tree validation for D01-D07 conditions where applicable
   - Suite driver now accepts `assert-dynamic-error error-code="..."` and matches the produced D-code
+- **Syntax tests**: **78/78 passing**
+  - `vxml-grammar-ref` XML grammar references now load and convert to `Grammar`
 - **Insertion tests**: **10/13 passing**
   - Remaining insertion failures are ambiguous parse cases
   - Core insertion, attributed insertion, and encoded insertion behavior are working
 - **Remaining feature buckets**:
   - Ambiguous parse detection and `ixml:state="ambiguous"` output
-  - XML-form grammar input / syntax XML bootstrap support
 - **Recent Major Fixes**:
+  - [x] **VXML Grammar References**: COMPLETED - XML-form grammars load through the suite driver #HIGH
+    - Files: src/testsuite_utils.rs
+    - Tests: `cargo run -- suite syntax --console SUMMARY --file FAILURES -o log/syntax-after-vxml.txt` => 78 pass, 0 fail, 0 bootstrap
   - [x] **Long Comment Bootstrap Guard**: COMPLETED - finite completion waves from long comments no longer trip the infinite-loop guard #HIGH
     - Files: src/parser.rs
     - Tests: `cargo run -- suite non-XML-char-in-input-output-clear --console SUMMARY --file FAILURES -o log/nonxml-clear-after.txt` => 2 pass, 0 fail, 0 bootstrap
@@ -260,7 +261,7 @@ This draft incorporates all 1.0 errata plus the following new features:
 
 ## Summary: Path to 100% ixml Current Draft Conformance
 
-**Current Status**: Targeting ixml 1.0 + E001 plus draft renaming (77.5% full-catalog pass rate, 179/231 tests)
+**Current Status**: Targeting ixml 1.0 + E001 plus draft renaming (94.4% full-catalog pass rate, 218/231 tests)
 **Proposed Target**: ixml Draft 2025-09-01 (all 1.0 errata + renaming + Cc validation)
 
 **Required Changes**:
@@ -269,7 +270,7 @@ This draft incorporates all 1.0 errata plus the following new features:
 3. **Renaming**: Complete; alias syntax support is implemented
 4. **Prolog/RS**: Adjust spacing requirements around version declaration
 
-**Observed Impact**: 175/231 → 179/231 tests passing (adds 4 renaming tests)
+**Observed Impact**: 175/231 → 218/231 tests passing across dynamic errors, renaming, long-comment bootstrap handling, and VXML grammar references
 
 ## iXML Specification Error Codes (https://invisiblexml.org/1.0/)
 
