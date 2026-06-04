@@ -677,6 +677,11 @@ impl Parser {
     ) -> Result<Arena<Content>, ParseError> {
         let mut input = InputIter::new(input);
         session.input_length = input.tokens.len();
+        // Long comments can produce many finite completions at one position; keep
+        // the small-input floor but scale enough to avoid false loop reports.
+        session.infinite_loop_threshold = session
+            .infinite_loop_threshold
+            .max((session.input_length as u32).saturating_mul(4));
 
         // help avoid borrow-contention on *self
         let g = self.grammar.clone();

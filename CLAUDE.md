@@ -306,14 +306,16 @@ grep "FAIL" log/debug.log          # All failures
 3. **Focus on parse tree structure** - grammar parsing vs input parsing are different issues
 4. **Leverage test suite patterns** - find working examples to understand correct behavior
 
-## Current Status: Naming/Alias Implemented (Updated 2026-06-04)
+## Current Status: Non-XML Clear Cases Fixed (Updated 2026-06-04)
 
 **Full conformance catalog**
 - **Pass Rate**: 179/231 passing (77.5%)
 - **Remaining**: 13 concrete failures, 39 bootstrap errors, 0 TODO
 - **Latest baseline**: `cargo run -- suite --console SUMMARY --file FAILURES -o log/full-suite-naming-after.txt`
+- **Focused improvement since latest full baseline**: `error` subset is now 20/20 after fixing the long-comment bootstrap guard
 
 **Recent Fixes**
+- **Long Comment Bootstrap Guard**: The per-position infinite-loop guard now scales with input length, allowing finite completion waves from long comments while preserving the small-input floor.
 - **Draft Naming/Alias Syntax**: `B>X = ...` and `B>C` parse with the original rule name but serialize using the alias, including attribute references.
 - **Dynamic Errors**: `AssertDynamicError` is implemented in the suite driver; XML output validation detects duplicate attributes, invalid XML names, non-XML characters, root attributes, wrong root cardinality, and reserved `xmlns` attributes.
 - **Multiple Expected Results**: Multiple `<assert-xml>` entries are treated as acceptable alternatives.
@@ -329,6 +331,7 @@ grep "FAIL" log/debug.log          # All failures
 - ✅ **Dynamic Errors**: D01-D07 output validation implemented where applicable
 - ✅ **Comments**: Nested comment support
 - ✅ **Version Declarations**: Version mismatch detection and `ixml:state` attribute support
+- ✅ **Dynamic Error Suite**: `error` subset is 20/20 passing
 - ⚠️ **Ambiguous Parses**: Not yet supported; remaining `FAIL` cases are ambiguity-related
 - ⚠️ **XML-form Grammar Fixtures**: Still bootstrap-erroring
 

@@ -110,11 +110,13 @@
 - **Full catalog**: **179/231 passing (77.5% pass rate)**
   - **179 PASS**
   - **13 FAIL** - all remaining concrete failures are ambiguous-output cases
-  - **39 Bootstrap Errors** - XML-form grammar fixtures and non-XML clear fixtures
+  - **39 Bootstrap Errors** - XML-form grammar fixtures and other remaining bootstrap cases in the latest full run
   - **0 TODO** - `AssertDynamicError` is implemented in the suite driver
   - Latest run: `cargo run -- suite --console SUMMARY --file FAILURES -o log/full-suite-naming-after.txt`
-- **Dynamic error tests**: **18/20 passing**
-  - The two remaining cases are bootstrap failures in `error/non-XML-char-in-input-output-clear`
+- **Focused improvement since latest full baseline**:
+  - `error` subset now passes **20/20**: `cargo run -- suite error --console SUMMARY --file FAILURES -o log/error-after-nonxml-clear.txt`
+  - This fixes the two `error/non-XML-char-in-input-output-clear` bootstrap cases that were still blocked in the latest full run
+- **Dynamic error tests**: **20/20 passing**
   - Implemented output-tree validation for D01-D07 conditions where applicable
   - Suite driver now accepts `assert-dynamic-error error-code="..."` and matches the produced D-code
 - **Insertion tests**: **10/13 passing**
@@ -123,8 +125,10 @@
 - **Remaining feature buckets**:
   - Ambiguous parse detection and `ixml:state="ambiguous"` output
   - XML-form grammar input / syntax XML bootstrap support
-  - Non-XML clear fixture bootstrap loop
 - **Recent Major Fixes**:
+  - [x] **Long Comment Bootstrap Guard**: COMPLETED - finite completion waves from long comments no longer trip the infinite-loop guard #HIGH
+    - Files: src/parser.rs
+    - Tests: `cargo run -- suite non-XML-char-in-input-output-clear --console SUMMARY --file FAILURES -o log/nonxml-clear-after.txt` => 2 pass, 0 fail, 0 bootstrap
   - [x] **Draft Naming/Alias Syntax**: COMPLETED - `>` aliases preserve parse targets while renaming XML output #HIGH
     - Files: src/ixml_bootstrap.rs, src/grammar.rs, src/parser.rs
     - Tests: `cargo run -- suite naming --console SUMMARY --file FAILURES -o log/naming-after.txt` => 4 pass, 0 fail, 0 bootstrap
