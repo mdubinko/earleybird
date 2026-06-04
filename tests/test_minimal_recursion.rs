@@ -41,10 +41,11 @@ c: ["x"].
                         // Acceptable outcomes: parse error or trace limit hit
                         let error_str = e.to_string();
                         assert!(
-                            error_str.contains("Parse failed") ||
-                            error_str.contains("trace size") ||
-                            error_str.contains("infinite loop"),
-                            "Expected reasonable error, got: {}", e
+                            error_str.contains("Parse failed")
+                                || error_str.contains("trace size")
+                                || error_str.contains("infinite loop"),
+                            "Expected reasonable error, got: {}",
+                            e
                         );
                     }
                 }
@@ -53,10 +54,11 @@ c: ["x"].
                 println!("Bootstrap parsing failed: {}", e);
                 // This is what we expect to happen with the current issue
                 assert!(
-                    e.to_string().contains("trace size") ||
-                    e.to_string().contains("infinite loop") ||
-                    e.to_string().contains("Bootstrap parse error"),
-                    "Expected bootstrap or trace size error, got: {}", e
+                    e.to_string().contains("trace size")
+                        || e.to_string().contains("infinite loop")
+                        || e.to_string().contains("Bootstrap parse error"),
+                    "Expected bootstrap or trace size error, got: {}",
+                    e
                 );
             }
         }

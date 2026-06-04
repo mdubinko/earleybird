@@ -1,7 +1,7 @@
-use std::sync::OnceLock;
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::collections::HashSet;
+use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugLevel {
@@ -70,13 +70,16 @@ pub fn set_debug_with_trace_file(level: DebugLevel, trace_file: Option<String>) 
 }
 
 pub fn get_debug_level() -> DebugLevel {
-    DEBUG_CONFIG.get().unwrap_or(&DebugConfig {
-        level: DebugLevel::Off,
-        position_filter: None,
-        failure_only: false,
-        trace_file: None,
-        enabled_categories: None,
-    }).level
+    DEBUG_CONFIG
+        .get()
+        .unwrap_or(&DebugConfig {
+            level: DebugLevel::Off,
+            position_filter: None,
+            failure_only: false,
+            trace_file: None,
+            enabled_categories: None,
+        })
+        .level
 }
 
 pub fn get_debug_config() -> &'static DebugConfig {
@@ -97,7 +100,7 @@ fn write_debug_output(msg: &str) {
         if let Ok(mut file) = OpenOptions::new()
             .create(true)
             .append(true)
-            .open(trace_file) 
+            .open(trace_file)
         {
             writeln!(file, "{}", msg).ok();
         } else {
@@ -210,14 +213,14 @@ pub fn debug_earley_at_pos(level: DebugLevel, pos: usize, msg: &str) {
     if !config.level.includes(level) {
         return;
     }
-    
+
     // Apply position filter if set
     if let Some(filter_pos) = config.position_filter {
         if pos != filter_pos {
             return;
         }
     }
-    
+
     // Use structured format for easier grepping
     write_debug_output(&format!("EARLEY|S({})|{}", pos, msg));
 }
@@ -228,25 +231,52 @@ pub fn debug_earley_failure(pos: usize, expected: &str, actual: char, queue_snap
         return;
     }
 
-    write_debug_output(&format!("EARLEY-FAIL|S({})|expected={}|actual='{}'|queue=[{}]",
-        pos, expected, actual, queue_snapshot));
+    write_debug_output(&format!(
+        "EARLEY-FAIL|S({})|expected={}|actual='{}'|queue=[{}]",
+        pos, expected, actual, queue_snapshot
+    ));
 }
 
 // Specialized Earley operation functions for structured logging
 pub fn debug_earley_completer(pos: usize, task_info: &str) {
-    debug_earley_at_pos(DebugLevel::Trace, pos, &format!("op=COMPLETER|task={}", task_info));
+    debug_earley_at_pos(
+        DebugLevel::Trace,
+        pos,
+        &format!("op=COMPLETER|task={}", task_info),
+    );
 }
 
 pub fn debug_earley_predictor(pos: usize, task_info: &str, mark: &str, name: &str) {
-    debug_earley_at_pos(DebugLevel::Trace, pos, &format!("op=PREDICTOR|task={}|mark={}|name={}", task_info, mark, name));
+    debug_earley_at_pos(
+        DebugLevel::Trace,
+        pos,
+        &format!(
+            "op=PREDICTOR|task={}|mark={}|name={}",
+            task_info, mark, name
+        ),
+    );
 }
 
 pub fn debug_earley_scanner(pos: usize, task_info: &str, tmark: &str, matcher: &str) {
-    debug_earley_at_pos(DebugLevel::Trace, pos, &format!("op=SCANNER|task={}|tmark={}|matcher={}", task_info, tmark, matcher));
+    debug_earley_at_pos(
+        DebugLevel::Trace,
+        pos,
+        &format!(
+            "op=SCANNER|task={}|tmark={}|matcher={}",
+            task_info, tmark, matcher
+        ),
+    );
 }
 
 pub fn debug_earley_scanner_match(pos: usize, matched_char: char, new_pos: usize) {
-    debug_earley_at_pos(DebugLevel::Trace, pos, &format!("op=SCANNER-MATCH|char='{}'|new_pos={}", matched_char, new_pos));
+    debug_earley_at_pos(
+        DebugLevel::Trace,
+        pos,
+        &format!(
+            "op=SCANNER-MATCH|char='{}'|new_pos={}",
+            matched_char, new_pos
+        ),
+    );
 }
 
 // Convenience macros for formatted printing
@@ -365,17 +395,20 @@ pub fn debug_parse_failure(input: &str, position: usize, error: &str) {
     println!("=== PARSE FAILURE ===");
     println!("Error: {}", error);
     println!("Input: {}", input);
-    
+
     if position < input.len() {
-        println!("Failed at position {}: '{}'", position, 
-                 input.chars().nth(position).unwrap_or('?'));
-        
+        println!(
+            "Failed at position {}: '{}'",
+            position,
+            input.chars().nth(position).unwrap_or('?')
+        );
+
         // Show context around failure point
         let start = position.saturating_sub(10);
         let end = (position + 10).min(input.len());
         let context = &input[start..end];
         let pointer_pos = position - start;
-        
+
         println!("Context: {}", context);
         println!("         {}^", " ".repeat(pointer_pos));
     } else {

@@ -1,21 +1,49 @@
 use unicode_character_database::general_category::{
-    // Major categories
-    OTHER, LETTER, MARK, NUMBER, PUNCTUATION, SYMBOL, SEPARATOR,
     // Letter subcategories
-    CASED_LETTER, LOWERCASE_LETTER, MODIFIER_LETTER, OTHER_LETTER, TITLECASE_LETTER, UPPERCASE_LETTER,
-    // Mark subcategories
-    SPACING_MARK, ENCLOSING_MARK, NONSPACING_MARK,
-    // Number subcategories
-    DECIMAL_NUMBER, LETTER_NUMBER, OTHER_NUMBER,
+    CASED_LETTER,
+    CLOSE_PUNCTUATION,
     // Punctuation subcategories
-    CONNECTOR_PUNCTUATION, DASH_PUNCTUATION, CLOSE_PUNCTUATION, FINAL_PUNCTUATION,
-    INITIAL_PUNCTUATION, OTHER_PUNCTUATION, OPEN_PUNCTUATION,
-    // Symbol subcategories
-    CURRENCY_SYMBOL, MODIFIER_SYMBOL, MATH_SYMBOL, OTHER_SYMBOL,
-    // Separator subcategories
-    LINE_SEPARATOR, PARAGRAPH_SEPARATOR, SPACE_SEPARATOR,
+    CONNECTOR_PUNCTUATION,
     // Control/Other subcategories
-    CONTROL, FORMAT, UNASSIGNED, PRIVATE_USE,
+    CONTROL,
+    // Symbol subcategories
+    CURRENCY_SYMBOL,
+    DASH_PUNCTUATION,
+    // Number subcategories
+    DECIMAL_NUMBER,
+    ENCLOSING_MARK,
+    FINAL_PUNCTUATION,
+    FORMAT,
+    INITIAL_PUNCTUATION,
+    LETTER,
+    LETTER_NUMBER,
+    // Separator subcategories
+    LINE_SEPARATOR,
+    LOWERCASE_LETTER,
+    MARK,
+    MATH_SYMBOL,
+    MODIFIER_LETTER,
+    MODIFIER_SYMBOL,
+    NONSPACING_MARK,
+    NUMBER,
+    OPEN_PUNCTUATION,
+    // Major categories
+    OTHER,
+    OTHER_LETTER,
+    OTHER_NUMBER,
+    OTHER_PUNCTUATION,
+    OTHER_SYMBOL,
+    PARAGRAPH_SEPARATOR,
+    PRIVATE_USE,
+    PUNCTUATION,
+    SEPARATOR,
+    SPACE_SEPARATOR,
+    // Mark subcategories
+    SPACING_MARK,
+    SYMBOL,
+    TITLECASE_LETTER,
+    UNASSIGNED,
+    UPPERCASE_LETTER,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -24,58 +52,58 @@ use unicode_character_database::general_category::{
 /// See: https://invisiblexml.org/1.0/#class
 pub enum UnicodeRange {
     // Major categories (single letter)
-    C,   // Other
-    L,   // Letter
-    M,   // Mark
-    N,   // Number
-    P,   // Punctuation
-    S,   // Symbol
-    Z,   // Separator
+    C, // Other
+    L, // Letter
+    M, // Mark
+    N, // Number
+    P, // Punctuation
+    S, // Symbol
+    Z, // Separator
 
     // Letter subcategories
-    LC,  // Cased Letter
-    Ll,  // Lowercase Letter
-    Lm,  // Modifier Letter
-    Lo,  // Other Letter
-    Lt,  // Titlecase Letter
-    Lu,  // Uppercase Letter
+    LC, // Cased Letter
+    Ll, // Lowercase Letter
+    Lm, // Modifier Letter
+    Lo, // Other Letter
+    Lt, // Titlecase Letter
+    Lu, // Uppercase Letter
 
     // Mark subcategories
-    Mc,  // Spacing Mark
-    Me,  // Enclosing Mark
-    Mn,  // Nonspacing Mark
+    Mc, // Spacing Mark
+    Me, // Enclosing Mark
+    Mn, // Nonspacing Mark
 
     // Number subcategories
-    Nd,  // Decimal Number
-    Nl,  // Letter Number
-    No,  // Other Number
+    Nd, // Decimal Number
+    Nl, // Letter Number
+    No, // Other Number
 
     // Punctuation subcategories
-    Pc,  // Connector Punctuation
-    Pd,  // Dash Punctuation
-    Pe,  // Close Punctuation
-    Pf,  // Final Punctuation
-    Pi,  // Initial Punctuation
-    Po,  // Other Punctuation
-    Ps,  // Open Punctuation
+    Pc, // Connector Punctuation
+    Pd, // Dash Punctuation
+    Pe, // Close Punctuation
+    Pf, // Final Punctuation
+    Pi, // Initial Punctuation
+    Po, // Other Punctuation
+    Ps, // Open Punctuation
 
     // Symbol subcategories
-    Sc,  // Currency Symbol
-    Sk,  // Modifier Symbol
-    Sm,  // Math Symbol
-    So,  // Other Symbol
+    Sc, // Currency Symbol
+    Sk, // Modifier Symbol
+    Sm, // Math Symbol
+    So, // Other Symbol
 
     // Separator subcategories
-    Zl,  // Line Separator
-    Zp,  // Paragraph Separator
-    Zs,  // Space Separator
+    Zl, // Line Separator
+    Zp, // Paragraph Separator
+    Zs, // Space Separator
 
     // Control/Other subcategories
-    Cc,  // Control
-    Cf,  // Format
-    Cn,  // Unassigned
-    Co,  // Private Use
-    Cs,  // Surrogate (not supported - excluded from unicode_character_database)
+    Cc, // Control
+    Cf, // Format
+    Cn, // Unassigned
+    Co, // Private Use
+    Cs, // Surrogate (not supported - excluded from unicode_character_database)
 }
 
 impl UnicodeRange {
@@ -135,7 +163,7 @@ impl UnicodeRange {
             "Co" => Self::Co,
             "Cs" => Self::Cs,
 
-            _ => panic!("Referenced unknown Unicode Category {name}")
+            _ => panic!("Referenced unknown Unicode Category {name}"),
         }
     }
 
@@ -198,7 +226,8 @@ impl UnicodeRange {
     }
 }
 
-fn member_of_category(ch: char, spec: &'static [(u32,u32)]) -> bool {
+fn member_of_category(ch: char, spec: &'static [(u32, u32)]) -> bool {
     let codepoint = ch as u32;
-    spec.iter().any(|(bot, top)| *bot <= codepoint && codepoint <= *top)
+    spec.iter()
+        .any(|(bot, top)| *bot <= codepoint && codepoint <= *top)
 }

@@ -1,13 +1,16 @@
-use crate::grammar::{Factor, Grammar, TerminalDefn, Mark, Rule, TMark};
 use crate::debug::DebugLevel;
-use crate::{debug_earley_pos, debug_earley_fail};
-use std::{collections::{VecDeque, HashSet, HashMap}, fmt};
+use crate::grammar::{Factor, Grammar, Mark, Rule, TMark, TerminalDefn};
+use crate::utils;
+use crate::{debug_earley_fail, debug_earley_pos};
+use indextree::{Arena, NodeId};
+use log::{debug, info, trace};
 use multimap::MultiMap;
 use smol_str::SmolStr;
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    fmt,
+};
 use string_builder::Builder;
-use indextree::{Arena, NodeId};
-use log::{info, debug, trace};
-use crate::utils;
 
 const DOTSEP: &str = "•";
 
@@ -66,12 +69,15 @@ impl ParseSession {
 
 impl fmt::Display for ParseSession {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "ParseSession {{ ops: {}, pos: {}/{}, max_queue: {}, hotspots: [{}] }}",
+        write!(
+            f,
+            "ParseSession {{ ops: {}, pos: {}/{}, max_queue: {}, hotspots: [{}] }}",
             self.total_operations,
             self.farthest_pos,
             self.input_length,
             self.max_queue_size,
-            self.position_repeat_count.iter()
+            self.position_repeat_count
+                .iter()
                 .filter(|(_, &count)| count > 10) // Show positions with many operations
                 .map(|(pos, count)| format!("{}:{}", pos, count))
                 .collect::<Vec<_>>()
@@ -91,7 +97,10 @@ pub struct DotNotation {
 
 impl DotNotation {
     pub fn new(rule: &Rule) -> Self {
-        Self { iteratee: rule.clone(), matched_so_far: Vec::new() }
+        Self {
+            iteratee: rule.clone(),
+            matched_so_far: Vec::new(),
+        }
     }
 
     /// record a new match. Intnded for literal character data
@@ -101,7 +110,6 @@ impl DotNotation {
         clo.matched_so_far.push(rec);
         clo
     }
-
 
     fn is_completed(&self) -> bool {
         self.iteratee.len() == self.matched_so_far.len()
@@ -127,20 +135,24 @@ impl DotNotation {
 impl fmt::Display for DotNotation {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let cursor = self.matched_so_far.len();
-        
+
         // handled rules
-        let done: String = self.matched_so_far.iter()
-            .map(| i |
-                match i {
-                    MatchRec::Term(ch, pos, tmark) => format!("{tmark}'{ch}'@{pos}"),
-                    MatchRec::NonTerm(name, pos, mark) => format!("{mark}{name}@{pos}"),
-                    MatchRec::Insertion(pos, text, tmark) => format!("{tmark}+\"{text}\"@{pos}"),
+        let done: String = self
+            .matched_so_far
+            .iter()
+            .map(|i| match i {
+                MatchRec::Term(ch, pos, tmark) => format!("{tmark}'{ch}'@{pos}"),
+                MatchRec::NonTerm(name, pos, mark) => format!("{mark}{name}@{pos}"),
+                MatchRec::Insertion(pos, text, tmark) => format!("{tmark}+\"{text}\"@{pos}"),
             })
             .collect::<Vec<_>>()
             .join(", ");
 
         // remaining rules
-        let remain = self.iteratee.factors.iter()
+        let remain = self
+            .iteratee
+            .factors
+            .iter()
             .skip(cursor)
             .map(std::string::ToString::to_string)
             .collect::<Vec<String>>()
@@ -171,14 +183,14 @@ impl MatchRec {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Task {
-    id: TraceId,              // unique id, as handled by TraceArena
-    name: SmolStr,            // BranchingRule name
-    alt_index: usize,         // which alt of this BranchingRule (0-based)
-    mark: Mark,               // effective mark for this task
-    origin: usize,            // starting position in the input
-    pos: usize,               // current position in the input
-    dot: DotNotation,         // progress
-    hash: u64,                // identity hash based on name, alt_index, origin, pos, dot
+    id: TraceId,      // unique id, as handled by TraceArena
+    name: SmolStr,    // BranchingRule name
+    alt_index: usize, // which alt of this BranchingRule (0-based)
+    mark: Mark,       // effective mark for this task
+    origin: usize,    // starting position in the input
+    pos: usize,       // current position in the input
+    dot: DotNotation, // progress
+    hash: u64,        // identity hash based on name, alt_index, origin, pos, dot
 }
 
 impl Task {
@@ -190,7 +202,11 @@ impl Task {
 /// Display task content for debugging
 impl fmt::Display for Task {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}{}[{}] {}:{} {}", self.mark, self.name, self.alt_index, self.origin, self.pos, self.dot)
+        write!(
+            f,
+            "{}{}[{}] {}:{} {}",
+            self.mark, self.name, self.alt_index, self.origin, self.pos, self.dot
+        )
     }
 }
 
@@ -218,12 +234,18 @@ impl PositionBucketedQueue {
 
     /// Add task to front of its position bucket (high priority - predictions)
     pub fn push_front(&mut self, task_id: TraceId, position: usize) {
-        self.buckets.entry(position).or_insert_with(VecDeque::new).push_front(task_id);
+        self.buckets
+            .entry(position)
+            .or_insert_with(VecDeque::new)
+            .push_front(task_id);
     }
 
     /// Add task to back of its position bucket (normal priority - completions, scanning)
     pub fn push_back(&mut self, task_id: TraceId, position: usize) {
-        self.buckets.entry(position).or_insert_with(VecDeque::new).push_back(task_id);
+        self.buckets
+            .entry(position)
+            .or_insert_with(VecDeque::new)
+            .push_back(task_id);
     }
 
     /// Get next task, advancing position when current bucket is empty
@@ -275,12 +297,21 @@ impl std::fmt::Display for PositionBucketedQueue {
         if self.buckets.is_empty() {
             write!(f, "empty")
         } else {
-            let bucket_strs: Vec<String> = self.buckets.iter()
-                .map(|(pos, bucket)| format!("S({}):{}{}",
-                    pos,
-                    bucket.len(),
-                    if *pos == self.current_position { "*" } else { "" }
-                ))
+            let bucket_strs: Vec<String> = self
+                .buckets
+                .iter()
+                .map(|(pos, bucket)| {
+                    format!(
+                        "S({}):{}{}",
+                        pos,
+                        bucket.len(),
+                        if *pos == self.current_position {
+                            "*"
+                        } else {
+                            ""
+                        }
+                    )
+                })
                 .collect();
             write!(f, "{}", bucket_strs.join(" "))
         }
@@ -344,10 +375,20 @@ impl TraceArena {
     }
 
     /// Register a parent task that's waiting for a specific nonterminal alternative to complete
-    fn register_waiting_parent_task(&mut self, target_nt: &str, alt_index: usize, waiting_parent_tid: TraceId) {
+    fn register_waiting_parent_task(
+        &mut self,
+        target_nt: &str,
+        alt_index: usize,
+        waiting_parent_tid: TraceId,
+    ) {
         let alt_specific_name = Self::format_alt_specific_name(target_nt, alt_index);
-        debug!("..⏸️ registering parent {} waiting for {}", self.format_task(waiting_parent_tid), alt_specific_name);
-        self.continuations.insert(SmolStr::from(alt_specific_name), waiting_parent_tid);
+        debug!(
+            "..⏸️ registering parent {} waiting for {}",
+            self.format_task(waiting_parent_tid),
+            alt_specific_name
+        );
+        self.continuations
+            .insert(SmolStr::from(alt_specific_name), waiting_parent_tid);
     }
 
     /// Get all parent tasks waiting for ANY alternative of a nonterminal to complete
@@ -358,7 +399,10 @@ impl TraceArena {
         // Try consecutive alternative indices until we get a miss
         loop {
             let alt_specific_name = Self::format_alt_specific_name(rule_name, alt_index);
-            if let Some(task_ids) = self.continuations.get_vec(&SmolStr::from(&alt_specific_name)) {
+            if let Some(task_ids) = self
+                .continuations
+                .get_vec(&SmolStr::from(&alt_specific_name))
+            {
                 result.extend(task_ids);
                 alt_index += 1;
             } else {
@@ -367,13 +411,25 @@ impl TraceArena {
             }
         }
 
-        debug!("..🔁 found {} parent tasks waiting for any alternative of {}", result.len(), rule_name);
+        debug!(
+            "..🔁 found {} parent tasks waiting for any alternative of {}",
+            result.len(),
+            rule_name
+        );
         result
     }
 
     /// originate a completely new task (root level)
     /// Returns Some(TraceId) (unless this is a duplicate Task, in which case None is returned)
-    fn task(&mut self, name: &str, alt_index: usize, mark: Mark, origin: usize, pos: usize, dot: DotNotation) -> Option<TraceId> {
+    fn task(
+        &mut self,
+        name: &str,
+        alt_index: usize,
+        mark: Mark,
+        origin: usize,
+        pos: usize,
+        dot: DotNotation,
+    ) -> Option<TraceId> {
         let id = TraceId(self.arena.len());
 
         // Compute hash without string allocation - hash the tuple of key identity fields
@@ -381,7 +437,7 @@ impl TraceArena {
         let dot_cursor = dot.matched_so_far.len();
         let hash = utils::hash_to_u64(&(name, alt_index, origin, pos, dot_cursor));
 
-        let task = Task{
+        let task = Task {
             id,
             name: SmolStr::new(name),
             alt_index,
@@ -399,7 +455,7 @@ impl TraceArena {
             Some(id)
         }
     }
-    
+
     /// clone a task, except advancing the cursor (storing given `MatchRec` for the piece just advanced-over)
     /// Maintains the same parentage, and position
     fn task_advance_cursor(&mut self, from: TraceId, rec: MatchRec) -> Option<TraceId> {
@@ -412,12 +468,18 @@ impl TraceArena {
         // Compute hash without string allocation - hash the tuple of key identity fields
         // Use dot cursor position (matched_so_far.len()) instead of full DotNotation to avoid deep hashing
         let dot_cursor = new_dot.matched_so_far.len();
-        let hash = utils::hash_to_u64(&(&from_task.name, from_task.alt_index, from_task.origin, new_pos, dot_cursor));
+        let hash = utils::hash_to_u64(&(
+            &from_task.name,
+            from_task.alt_index,
+            from_task.origin,
+            new_pos,
+            dot_cursor,
+        ));
 
         let task = Task {
             id,
             name: from_task.name.clone(),
-            alt_index: from_task.alt_index,  // Preserve alt_index from source task
+            alt_index: from_task.alt_index, // Preserve alt_index from source task
             mark: from_task.mark.clone(),
             origin: from_task.origin,
             pos: new_pos,
@@ -440,7 +502,10 @@ impl TraceArena {
     /// Use task identity hash based on name, alt_index, origin, pos, and dot
     fn have_we_seen(&mut self, task: &Task) -> bool {
         if self.hashes.contains(&task.hash) {
-            debug!("🚫 DUPLICATE TASK DETECTED: Skipping {}[{}]", task.name, task.alt_index);
+            debug!(
+                "🚫 DUPLICATE TASK DETECTED: Skipping {}[{}]",
+                task.name, task.alt_index
+            );
             self.deduplicated_count += 1;
             true
         } else {
@@ -450,11 +515,13 @@ impl TraceArena {
         }
     }
 
-
     fn format_task(&self, id: TraceId) -> String {
         let task = self.get(id);
         let printable_id: String = id.0.to_string();
-        format!(" {}) {}:{}👉 {}[{}]=( {} ) ", printable_id, task.origin, task.pos, task.name, task.alt_index, task.dot)
+        format!(
+            " {}) {}:{}👉 {}[{}]=( {} ) ",
+            printable_id, task.origin, task.pos, task.name, task.alt_index, task.dot
+        )
     }
 }
 
@@ -465,7 +532,9 @@ struct InputIter {
 
 impl InputIter {
     fn new(input: &str) -> Self {
-        Self { tokens: input.chars().collect::<Vec<_>>() }
+        Self {
+            tokens: input.chars().collect::<Vec<_>>(),
+        }
     }
 
     /// Get the character immediately after the given cursor position
@@ -475,7 +544,11 @@ impl InputIter {
     /// Panics if cursor position is beyond input length
     pub fn get_at(&mut self, cursor: usize) -> char {
         if cursor >= self.tokens.len() {
-            panic!("Parser attempted to read beyond input at cursor {}, input length is {}", cursor, self.tokens.len());
+            panic!(
+                "Parser attempted to read beyond input at cursor {}, input length is {}",
+                cursor,
+                self.tokens.len()
+            );
         } else {
             self.tokens[cursor]
         }
@@ -487,14 +560,14 @@ impl InputIter {
 /// in the intermediate parse indextree, tree nodes are provided thusly
 pub enum Content {
     Root,
-    Element(String),            // name
-    Attribute(String, String),  // name, value
-    Text(String)                // value
+    Element(String),           // name
+    Attribute(String, String), // name, value
+    Text(String),              // value
 }
 
 impl Content {
     pub fn is_attr(&self) -> bool {
-        matches!(self, Self::Attribute(_,_))
+        matches!(self, Self::Attribute(_, _))
     }
     pub fn is_elem(&self) -> bool {
         matches!(self, Self::Element(_))
@@ -503,14 +576,14 @@ impl Content {
         match self {
             Self::Element(name) => Some(name.clone()),
             Self::Attribute(name, _) => Some(name.clone()),
-            _ => None
+            _ => None,
         }
     }
     pub fn get_value(&self) -> Option<String> {
         match self {
             Self::Attribute(_, value) => Some(value.clone()),
             Self::Text(value) => Some(value.clone()),
-            _ => None
+            _ => None,
         }
     }
     pub fn set_value(&mut self, value: String) {
@@ -572,7 +645,6 @@ pub struct Parser {
 /// 2. New predictions are explored immediately (depth-first-like)
 /// 3. Terminal scanning and continuations happen in input order
 impl Parser {
-
     pub fn new(grammar: Grammar) -> Self {
         Self {
             grammar,
@@ -588,7 +660,11 @@ impl Parser {
     }
 
     /// Parse with explicit session for statistics tracking and infinite loop detection
-    fn parse_with_session(&mut self, input: &str, session: &mut ParseSession) -> Result<Arena<Content>, ParseError> {
+    fn parse_with_session(
+        &mut self,
+        input: &str,
+        session: &mut ParseSession,
+    ) -> Result<Arena<Content>, ParseError> {
         let mut input = InputIter::new(input);
         session.input_length = input.tokens.len();
 
@@ -599,12 +675,20 @@ impl Parser {
 
         // INITIALISE
         // START grammar FOR start.symbol grammar AT start.pos
-        let top_rule = g.get_root_definition()?
+        let top_rule = g
+            .get_root_definition()?
             .ok_or(ParseError::static_err("No top grammar rule"))?;
 
         for (alt_index, alt) in top_rule.iter().enumerate() {
-            let maybe_id = self.traces.task(&g.get_root_definition_name()
-                .ok_or(ParseError::static_err("No top grammar rule name"))?, alt_index, top_rule.mark(), 0, 0, alt.dot_notator());
+            let maybe_id = self.traces.task(
+                &g.get_root_definition_name()
+                    .ok_or(ParseError::static_err("No top grammar rule name"))?,
+                alt_index,
+                top_rule.mark(),
+                0,
+                0,
+                alt.dot_notator(),
+            );
             self.queue_front(maybe_id);
         }
 
@@ -628,17 +712,25 @@ impl Parser {
             // Track progress and reset position tracking when advancing
             if current_pos > session.farthest_pos {
                 if current_pos < session.input_length {
-                    debug!("⏭ Advanced input to position {} (next char: '{}')", current_pos, input.get_at(current_pos));
+                    debug!(
+                        "⏭ Advanced input to position {} (next char: '{}')",
+                        current_pos,
+                        input.get_at(current_pos)
+                    );
                 } else {
                     debug!("⏭ Advanced input to position {} (at end)", current_pos);
                 }
                 session.farthest_pos = current_pos;
                 session.reset_position_tracking(); // Clear position repeat counts when advancing
             }
-            debug!("🔄 PROCESSING: Pulled from queue {} at {} | Queue size: {} -> {} | Queue: [{}]",
-                   self.traces.format_task(tid), current_pos,
-                   self.traces.queue.len() + 1, self.traces.queue.len(),
-                   self.queue_snapshot());
+            debug!(
+                "🔄 PROCESSING: Pulled from queue {} at {} | Queue size: {} -> {} | Queue: [{}]",
+                self.traces.format_task(tid),
+                current_pos,
+                self.traces.queue.len() + 1,
+                self.traces.queue.len(),
+                self.queue_snapshot()
+            );
 
             // SELECT:
             //    finished task:
@@ -677,15 +769,26 @@ impl Parser {
         }
 
         info!("🔚 QUEUE EMPTY: Parse loop exited with queue empty. Last position: {}, Input length: {}", session.farthest_pos, session.input_length);
-        info!("Finished parse with {} items in trace, {} total operations", self.traces.arena.len(), session.total_operations);
+        info!(
+            "Finished parse with {} items in trace, {} total operations",
+            self.traces.arena.len(),
+            session.total_operations
+        );
         let dedup_pct = if self.traces.deduplicated_count > 0 {
-            (self.traces.deduplicated_count as f64 / (self.traces.arena.len() as f64 + self.traces.deduplicated_count as f64) * 100.0) as u32
+            (self.traces.deduplicated_count as f64
+                / (self.traces.arena.len() as f64 + self.traces.deduplicated_count as f64)
+                * 100.0) as u32
         } else {
             0
         };
-        eprintln!("📊 Parse stats: {} tasks created, {} deduplicated ({}%), {} operations, max queue: {}",
-                  self.traces.arena.len(), self.traces.deduplicated_count, dedup_pct,
-                  session.total_operations, session.max_queue_size);
+        eprintln!(
+            "📊 Parse stats: {} tasks created, {} deduplicated ({}%), {} operations, max queue: {}",
+            self.traces.arena.len(),
+            self.traces.deduplicated_count,
+            dedup_pct,
+            session.total_operations,
+            session.max_queue_size
+        );
         self.unpack_parse_tree(session)
     }
 
@@ -694,23 +797,35 @@ impl Parser {
     fn complete(&mut self, tid: TraceId, _input: &mut InputIter) -> Result<(), ParseError> {
         let current_pos = self.traces.get(tid).pos;
         debug!("COMPLETER pos={}", current_pos);
-        debug_earley_pos!(DebugLevel::Trace, current_pos, "COMPLETER: {} completed", self.traces.format_task(tid));
+        debug_earley_pos!(
+            DebugLevel::Trace,
+            current_pos,
+            "COMPLETER: {} completed",
+            self.traces.format_task(tid)
+        );
         self.completed_trace.push(tid);
 
         // Find "parent" states at same origin that can produce this expression
         let completed_task = self.traces.get(tid);
-        let waiting_parents = self.traces.get_waiting_parent_tasks_by_name(&completed_task.name);
+        let waiting_parents = self
+            .traces
+            .get_waiting_parent_tasks_by_name(&completed_task.name);
 
         for continue_id in waiting_parents {
             // Make sure we only continue from a compatible position
             if self.traces.get(continue_id).pos != self.traces.get(tid).origin {
                 continue;
             }
-            debug!("...deferring continuation Task... {}", self.traces.format_task(continue_id));
+            debug!(
+                "...deferring continuation Task... {}",
+                self.traces.format_task(continue_id)
+            );
 
             let now_finished_via_child = self.traces.get(continue_id).dot.next_unparsed();
             let match_rec = match now_finished_via_child {
-                Factor::Nonterm(mark, name) => MatchRec::NonTerm(name, self.traces.get(tid).pos, mark),
+                Factor::Nonterm(mark, name) => {
+                    MatchRec::NonTerm(name, self.traces.get(tid).pos, mark)
+                }
                 Factor::Terminal(tmark, _ch) => {
                     // This should never happen - terminals are handled by Scanner
                     panic!("INTERNAL ERROR: Complete() called on task waiting for terminal {:?}. This indicates a logic bug in the parser.", tmark);
@@ -739,16 +854,30 @@ impl Parser {
     /// B: • "x".  { <-- queue up this alternative }
     /// B: • "y".  { <-- and this alternative }
     /// Implements: grammar nonterminal sym: START grammar FOR sym AT pos
-    fn predict(&mut self, g: &Grammar, tid: TraceId, mark: Mark, name: SmolStr) -> Result<(), ParseError> {
+    fn predict(
+        &mut self,
+        g: &Grammar,
+        tid: TraceId,
+        mark: Mark,
+        name: SmolStr,
+    ) -> Result<(), ParseError> {
         let current_pos = self.traces.get(tid).pos;
         debug!("PREDICTOR: Nonterm {mark}{name}");
-        debug_earley_pos!(DebugLevel::Trace, current_pos, "PREDICTOR: {} predicting {}{}", self.traces.format_task(tid), mark, name);
+        debug_earley_pos!(
+            DebugLevel::Trace,
+            current_pos,
+            "PREDICTOR: {} predicting {}{}",
+            self.traces.format_task(tid),
+            mark,
+            name
+        );
 
         // Register this parent task as waiting for ALL alternatives of the child rule
         // We need to register for each possible alternative since we don't know which one will complete
         let child_rule = g.get_definition(&name)?;
         for child_alt_index in 0..child_rule.iter().count() {
-            self.traces.register_waiting_parent_task(&name, child_alt_index, tid);
+            self.traces
+                .register_waiting_parent_task(&name, child_alt_index, tid);
         }
 
         // We can have a Mark at the point of definition,
@@ -775,7 +904,14 @@ impl Parser {
         };
 
         for (alt_index, alt) in g.get_definition(&name)?.iter().enumerate() {
-            let maybe_id = self.traces.task(&name, alt_index, effective_mark, current_pos, current_pos, alt.dot_notator());
+            let maybe_id = self.traces.task(
+                &name,
+                alt_index,
+                effective_mark,
+                current_pos,
+                current_pos,
+                alt.dot_notator(),
+            );
 
             // CRITICAL FIX: Handle nullable alternatives immediately whether new or deduplicated
             // Check if this alternative is nullable (can produce epsilon) - use efficient cached method
@@ -802,7 +938,10 @@ impl Parser {
                     if self.traces.get(continue_id).pos != current_pos {
                         continue;
                     }
-                    debug!("...immediately continuing parent Task for empty rule... {}", self.traces.format_task(continue_id));
+                    debug!(
+                        "...immediately continuing parent Task for empty rule... {}",
+                        self.traces.format_task(continue_id)
+                    );
 
                     let now_finished_via_child = self.traces.get(continue_id).dot.next_unparsed();
                     let match_rec = match now_finished_via_child {
@@ -840,15 +979,37 @@ impl Parser {
     /// Implements: sym starts (input, pos): RECORD TERMINAL input FOR task
     ///                                      CONTINUE task AT (pos incremented (input, sym))
     ///             ELSE: PASS \Terminal, doesn't match
-    fn scan(&mut self, tid: TraceId, tmark: TMark, matcher: TerminalDefn, input: &mut InputIter, session: &ParseSession) -> Result<(), ParseError> {
+    fn scan(
+        &mut self,
+        tid: TraceId,
+        tmark: TMark,
+        matcher: TerminalDefn,
+        input: &mut InputIter,
+        session: &ParseSession,
+    ) -> Result<(), ParseError> {
         let current_pos = self.traces.get(tid).pos;
         debug!("SCANNER: Terminal {tmark}{matcher} at pos={current_pos}");
-        debug_earley_pos!(DebugLevel::Trace, current_pos, "SCANNER: {} scanning {}{}", self.traces.format_task(tid), tmark, matcher);
+        debug_earley_pos!(
+            DebugLevel::Trace,
+            current_pos,
+            "SCANNER: {} scanning {}{}",
+            self.traces.format_task(tid),
+            tmark,
+            matcher
+        );
 
         // Bounds check: don't scan beyond input length
         if current_pos >= session.input_length {
-            debug!("Position {} >= input length {}; 🛑", current_pos, session.input_length);
-            debug_earley_fail!(current_pos, &format!("{}", matcher), '∅', &self.queue_snapshot());
+            debug!(
+                "Position {} >= input length {}; 🛑",
+                current_pos, session.input_length
+            );
+            debug_earley_fail!(
+                current_pos,
+                &format!("{}", matcher),
+                '∅',
+                &self.queue_snapshot()
+            );
             return Ok(());
         }
 
@@ -857,13 +1018,22 @@ impl Parser {
             let new_pos = current_pos + 1;
             let rec = MatchRec::Term(input.get_at(current_pos), new_pos, tmark);
             debug!("advance cursor SCAN");
-            debug_earley_pos!(DebugLevel::Trace, current_pos, "SCANNER: MATCH '{}' -> advance to {}", input.get_at(current_pos), new_pos);
+            debug_earley_pos!(
+                DebugLevel::Trace,
+                current_pos,
+                "SCANNER: MATCH '{}' -> advance to {}",
+                input.get_at(current_pos),
+                new_pos
+            );
             let maybe_id = self.traces.task_advance_cursor(tid, rec);
             self.queue_back(maybe_id);
         } else {
             // Terminal doesn't match - silently drop this task (no requeue)
             // Per Earley algorithm: non-matching terminals should PASS (terminate quietly)
-            debug!("non-matched char '{}' (expecting {matcher}); 🛑", input.get_at(current_pos));
+            debug!(
+                "non-matched char '{}' (expecting {matcher}); 🛑",
+                input.get_at(current_pos)
+            );
         }
         Ok(())
     }
@@ -871,9 +1041,13 @@ impl Parser {
     fn queue_back(&mut self, maybe_id: Option<TraceId>) {
         if let Some(id) = maybe_id {
             let task = self.traces.get(id);
-            debug!("QUEUE: Adding to back S({}) (normal priority): {} | Queue: {} -> {}",
-                   task.pos, self.traces.format_task(id), self.traces.queue,
-                   format!("{} +1", self.traces.queue));
+            debug!(
+                "QUEUE: Adding to back S({}) (normal priority): {} | Queue: {} -> {}",
+                task.pos,
+                self.traces.format_task(id),
+                self.traces.queue,
+                format!("{} +1", self.traces.queue)
+            );
             self.traces.queue.push_back(id, task.pos);
         }
     }
@@ -881,14 +1055,16 @@ impl Parser {
     fn queue_front(&mut self, maybe_id: Option<TraceId>) {
         if let Some(id) = maybe_id {
             let task = self.traces.get(id);
-            debug!("QUEUE: Adding to front S({}) (high priority): {} | Queue: {} -> {}",
-                   task.pos, self.traces.format_task(id), self.traces.queue,
-                   format!("{} +1", self.traces.queue));
+            debug!(
+                "QUEUE: Adding to front S({}) (high priority): {} | Queue: {} -> {}",
+                task.pos,
+                self.traces.format_task(id),
+                self.traces.queue,
+                format!("{} +1", self.traces.queue)
+            );
             self.traces.queue.push_front(id, task.pos);
         }
     }
-
-
 
     /// Generate a compact snapshot of the current queue state for debugging
     /// Shows entries from both front (LIFO) and back (FIFO) since deque has both aspects
@@ -900,7 +1076,10 @@ impl Parser {
         let queue_len = self.traces.queue.len();
         if queue_len <= 6 {
             // Small queue - show everything
-            let snapshot: Vec<String> = self.traces.queue.iter()
+            let snapshot: Vec<String> = self
+                .traces
+                .queue
+                .iter()
                 .map(|&tid| {
                     let task = self.traces.get(tid);
                     format!("{}@{}", task.name, task.pos)
@@ -910,7 +1089,10 @@ impl Parser {
         }
 
         // Large queue - show front 3, middle indicator, back 3
-        let front: Vec<String> = self.traces.queue.iter()
+        let front: Vec<String> = self
+            .traces
+            .queue
+            .iter()
             .take(3)
             .map(|&tid| {
                 let task = self.traces.get(tid);
@@ -918,7 +1100,10 @@ impl Parser {
             })
             .collect();
 
-        let back: Vec<String> = self.traces.queue.iter()
+        let back: Vec<String> = self
+            .traces
+            .queue
+            .iter()
             .skip(queue_len.saturating_sub(3))
             .map(|&tid| {
                 let task = self.traces.get(tid);
@@ -945,11 +1130,13 @@ impl Parser {
     /// Only for use in test sutes. Not guaranteed to be stable...
     pub fn test_inspect_trace(&self, filter: Option<SmolStr>) -> Vec<Task> {
         match filter {
-            Some(str) => self.traces.arena
-               .clone()
-               .into_iter()
-               .filter(|task| task.name==str)
-               .collect(),
+            Some(str) => self
+                .traces
+                .arena
+                .clone()
+                .into_iter()
+                .filter(|task| task.name == str)
+                .collect(),
             None => self.traces.arena.clone(),
         }
     }
@@ -959,92 +1146,150 @@ impl Parser {
         debug!("COMPLETED TASKS ({} total):", self.completed_trace.len());
         for tid in &self.completed_trace {
             let task = self.traces.get(*tid);
-            debug!("  {} (origin={}, pos={})", self.traces.format_task(*tid), task.origin, task.pos);
+            debug!(
+                "  {} (origin={}, pos={})",
+                self.traces.format_task(*tid),
+                task.origin,
+                task.pos
+            );
         }
-        
+
         // Check if we have a completed parse of our grammar's root rule that spans the entire input
         let name = self.grammar.get_root_definition_name().unwrap();
-        debug!("🔍 LOOKING FOR: completed parse of rule '{}' spanning (0 to {})", name, session.input_length);
+        debug!(
+            "🔍 LOOKING FOR: completed parse of rule '{}' spanning (0 to {})",
+            name, session.input_length
+        );
         let root_completion = self.filter_completed_trace(&name, 0, session.input_length);
 
         if root_completion.is_none() {
-            debug!("❌ NO ROOT COMPLETION FOUND for '{}' spanning entire input", name);
+            debug!(
+                "❌ NO ROOT COMPLETION FOUND for '{}' spanning entire input",
+                name
+            );
             // Generate enhanced diagnostics for parse failures
             let mut diagnostic = format!(
                 "Parse failed: no completed parse of rule '{}' spanning entire input (0 to {})\n",
-                name,
-                session.input_length
+                name, session.input_length
             );
 
             // Find the furthest position we reached
-            diagnostic.push_str(&format!("Furthest position reached: {}\n", session.farthest_pos));
+            diagnostic.push_str(&format!(
+                "Furthest position reached: {}\n",
+                session.farthest_pos
+            ));
 
             // Show partial completions of the root rule
-            let partial_completions: Vec<_> = self.completed_trace.iter()
+            let partial_completions: Vec<_> = self
+                .completed_trace
+                .iter()
                 .filter_map(|&tid| {
                     let task = self.traces.get(tid);
-                    if task.name == name { Some((tid, task)) } else { None }
+                    if task.name == name {
+                        Some((tid, task))
+                    } else {
+                        None
+                    }
                 })
                 .collect();
 
             if !partial_completions.is_empty() {
                 diagnostic.push_str("Partial completions of root rule found:\n");
                 for (tid, task) in partial_completions {
-                    diagnostic.push_str(&format!("  {} (origin={}, pos={})\n",
-                        self.traces.format_task(tid), task.origin, task.pos));
+                    diagnostic.push_str(&format!(
+                        "  {} (origin={}, pos={})\n",
+                        self.traces.format_task(tid),
+                        task.origin,
+                        task.pos
+                    ));
                 }
             }
 
             // Show what completions we do have near the furthest position
-            let nearby_completions: Vec<_> = self.completed_trace.iter()
+            let nearby_completions: Vec<_> = self
+                .completed_trace
+                .iter()
                 .filter_map(|&tid| {
                     let task = self.traces.get(tid);
-                    if task.pos >= session.farthest_pos.saturating_sub(5) && task.pos <= session.farthest_pos + 5 {
+                    if task.pos >= session.farthest_pos.saturating_sub(5)
+                        && task.pos <= session.farthest_pos + 5
+                    {
                         Some((tid, task))
-                    } else { None }
+                    } else {
+                        None
+                    }
                 })
                 .take(10)
                 .collect();
 
             if !nearby_completions.is_empty() {
-                diagnostic.push_str(&format!("Completions near furthest position ({}±5):\n", session.farthest_pos));
+                diagnostic.push_str(&format!(
+                    "Completions near furthest position ({}±5):\n",
+                    session.farthest_pos
+                ));
                 for (tid, task) in nearby_completions {
-                    diagnostic.push_str(&format!("  {} (origin={}, pos={})\n",
-                        self.traces.format_task(tid), task.origin, task.pos));
+                    diagnostic.push_str(&format!(
+                        "  {} (origin={}, pos={})\n",
+                        self.traces.format_task(tid),
+                        task.origin,
+                        task.pos
+                    ));
                 }
             }
 
             // Show active tasks in queue
             if !self.traces.queue.is_empty() {
-                diagnostic.push_str(&format!("Active tasks remaining in queue: {}\n", self.traces.queue.len()));
+                diagnostic.push_str(&format!(
+                    "Active tasks remaining in queue: {}\n",
+                    self.traces.queue.len()
+                ));
                 for &tid in self.traces.queue.iter().take(5) {
                     let task = self.traces.get(tid);
-                    diagnostic.push_str(&format!("  {} (pos={})\n",
-                        self.traces.format_task(tid), task.pos));
+                    diagnostic.push_str(&format!(
+                        "  {} (pos={})\n",
+                        self.traces.format_task(tid),
+                        task.pos
+                    ));
                 }
                 if self.traces.queue.len() > 5 {
-                    diagnostic.push_str(&format!("  ... and {} more\n", self.traces.queue.len() - 5));
+                    diagnostic
+                        .push_str(&format!("  ... and {} more\n", self.traces.queue.len() - 5));
                 }
             }
 
             return Err(ParseError::static_err(&diagnostic));
         }
-        
+
         let mut arena = Arena::new();
         let root = arena.new_node(Content::Root);
-        debug!("Found completed parse of '{}' from 0 to {}", name, session.input_length);
-        self.unpack_parse_tree_internal(&mut arena, &name, Mark::Default, 0, session.input_length, root);
+        debug!(
+            "Found completed parse of '{}' from 0 to {}",
+            name, session.input_length
+        );
+        self.unpack_parse_tree_internal(
+            &mut arena,
+            &name,
+            Mark::Default,
+            0,
+            session.input_length,
+            root,
+        );
 
         // the standard algorithm above leaves attribute nodes in an inconvenient state.
         // with a bare Content::Attribute node, for which one needs to plumb all descendants to find text nodes
         // below, we do that once-and-for-all for each Content::Attribute node
-        let attr_node_ids = arena.iter()
-            .filter(|n| matches!(n.get(), Content::Attribute(..) ))
+        let attr_node_ids = arena
+            .iter()
+            .filter(|n| matches!(n.get(), Content::Attribute(..)))
             .map(|n| arena.get_node_id(n).unwrap())
             .collect::<Vec<_>>();
         for attr_nid in attr_node_ids {
             let attr_val = self.unpack_attr_value(attr_nid, &mut arena);
-            arena.get_mut(attr_nid).unwrap().get_mut().set_value(attr_val);
+            arena
+                .get_mut(attr_nid)
+                .unwrap()
+                .get_mut()
+                .set_value(attr_val);
         }
         // n.b. this doesn't actually delete these original descendent text nodes...
         // but you should never need to even look for them
@@ -1063,88 +1308,102 @@ impl Parser {
         attr_value.string().unwrap()
     }
 
-    fn unpack_parse_tree_internal(&self, arena: &mut Arena<Content>, name: &str, mark: Mark, origin: usize, end: usize, root: NodeId) {
+    fn unpack_parse_tree_internal(
+        &self,
+        arena: &mut Arena<Content>,
+        name: &str,
+        mark: Mark,
+        origin: usize,
+        end: usize,
+        root: NodeId,
+    ) {
         let matching_trace = self.filter_completed_trace(name, origin, end);
         let mut new_root = root;
-            match matching_trace {
-                Some(task) => {
-                    let match_name = &task.name;
+        match matching_trace {
+            Some(task) => {
+                let match_name = &task.name;
 
-                    if task.mark==Mark::Mute || match_name.starts_with('-') {
-                        // Skip
-                        debug!("trace found {mark} {task} -- SKIPPING");
+                if task.mark == Mark::Mute || match_name.starts_with('-') {
+                    // Skip
+                    debug!("trace found {mark} {task} -- SKIPPING");
+                } else {
+                    // Element or Attribute
+                    debug!("trace found {} {task}", task.mark);
+                    let name_str = match_name.to_string();
+                    let data = if task.mark == Mark::Attr {
+                        Content::Attribute(name_str, "".to_string()) // 2nd pass will fill in the atttribute value
                     } else {
-                        // Element or Attribute
-                        debug!("trace found {} {task}", task.mark);
-                        let name_str = match_name.to_string();
-                        let data = if task.mark==Mark::Attr {
-                            Content::Attribute(name_str, "".to_string()) // 2nd pass will fill in the atttribute value
-                        } else {
-                            Content::Element(name_str)
-                        };
-                        let temp_root = arena.new_node(data);
-                        root.append(temp_root, arena);
-                        new_root = temp_root;
-                    }
-            
-                    // CHILDREN
-                    let mut new_origin = origin;
-                    let dot = &task.dot;
-                    for match_rec in dot.matches_iter() {
-                        match match_rec {
-                            MatchRec::Term(ch, pos, tmark) => {
-                                if *tmark != TMark::Mute {
-                                    let new_child = arena.new_node(Content::Text(ch.to_string()) );
-                                   new_root.append(new_child, arena);
-                                }
-                                new_origin = *pos;
+                        Content::Element(name_str)
+                    };
+                    let temp_root = arena.new_node(data);
+                    root.append(temp_root, arena);
+                    new_root = temp_root;
+                }
+
+                // CHILDREN
+                let mut new_origin = origin;
+                let dot = &task.dot;
+                for match_rec in dot.matches_iter() {
+                    match match_rec {
+                        MatchRec::Term(ch, pos, tmark) => {
+                            if *tmark != TMark::Mute {
+                                let new_child = arena.new_node(Content::Text(ch.to_string()));
+                                new_root.append(new_child, arena);
                             }
-                            MatchRec::NonTerm(nt_name, pos, mark) => {
-                                // guard against infinite recursion
-                                assert!( (nt_name!=name || new_origin!=origin || *pos!=end));
-                                self.unpack_parse_tree_internal(arena, nt_name, mark.clone(), new_origin, *pos, new_root);
-                                new_origin = *pos;
+                            new_origin = *pos;
+                        }
+                        MatchRec::NonTerm(nt_name, pos, mark) => {
+                            // guard against infinite recursion
+                            assert!((nt_name != name || new_origin != origin || *pos != end));
+                            self.unpack_parse_tree_internal(
+                                arena,
+                                nt_name,
+                                mark.clone(),
+                                new_origin,
+                                *pos,
+                                new_root,
+                            );
+                            new_origin = *pos;
+                        }
+                        MatchRec::Insertion(_pos, text, tmark) => {
+                            // Insertions add text to output without consuming input
+                            if *tmark != TMark::Mute {
+                                let new_child = arena.new_node(Content::Text(text.to_string()));
+                                new_root.append(new_child, arena);
                             }
-                            MatchRec::Insertion(_pos, text, tmark) => {
-                                // Insertions add text to output without consuming input
-                                if *tmark != TMark::Mute {
-                                    let new_child = arena.new_node(Content::Text(text.to_string()));
-                                    new_root.append(new_child, arena);
-                                }
-                                // Note: pos doesn't change since insertion doesn't consume input
-                            }
+                            // Note: pos doesn't change since insertion doesn't consume input
                         }
                     }
-            
-                }
-                None => {
-                    info!("  No matching traces for {}@{}:{}", name, origin, end);
                 }
             }
+            None => {
+                info!("  No matching traces for {}@{}:{}", name, origin, end);
+            }
+        }
 
-        //HOW TO SERIALISE name FROM start TO end: 
-        //    IF SOME task IN trace[end] HAS (symbol task = name AND finished task AND start.position task = start): 
+        //HOW TO SERIALISE name FROM start TO end:
+        //    IF SOME task IN trace[end] HAS (symbol task = name AND finished task AND start.position task = start):
         //        WRITE "<", name, ">"
         //        CHILDREN
         //        WRITE "</", name, ">"
-        //CHILDREN: 
+        //CHILDREN:
         //    PUT start IN newstart
-        //    FOR (sym, pos) IN done task: 
-        //        SELECT: 
+        //    FOR (sym, pos) IN done task:
+        //        SELECT:
         //            terminal sym: WRITE sym
-        //            ELSE: 
+        //            ELSE:
         //                SERIALISE sym FROM newstart TO pos
         //        PUT pos IN newstart
-
     }
-
-
 
     pub fn tree_to_test_format(arena: &Arena<Content>) -> String {
         Self::tree_to_test_format_with_version(arena, false)
     }
 
-    pub fn tree_to_test_format_with_version(arena: &Arena<Content>, version_mismatch: bool) -> String {
+    pub fn tree_to_test_format_with_version(
+        arena: &Arena<Content>,
+        version_mismatch: bool,
+    ) -> String {
         let mut builder = Builder::default();
         let root = arena.iter().next().unwrap(); // first item == root
         let root_id = arena.get_node_id(root).unwrap();
@@ -1166,13 +1425,18 @@ impl Parser {
         builder.string().unwrap()
     }
 
-    fn tree_to_test_format_recurse(arena: &Arena<Content>, builder: &mut Builder, nid: NodeId, extra_attrs: Option<&[(&str, &str)]>) {
+    fn tree_to_test_format_recurse(
+        arena: &Arena<Content>,
+        builder: &mut Builder,
+        nid: NodeId,
+        extra_attrs: Option<&[(&str, &str)]>,
+    ) {
         let maybe_node = arena.get(nid);
         if maybe_node.is_none() {
             return;
         }
         match arena.get(nid).unwrap().get() {
-            Content::Root => {},
+            Content::Root => {}
             Content::Element(name) => {
                 builder.append("<");
                 builder.append(name.to_string());
@@ -1181,7 +1445,10 @@ impl Parser {
                 // TODO: Add dynamic error detection for duplicate attribute names (D02 error code)
                 // This should check for duplicate attr_name values and report appropriate errors
                 // for AssertDynamicError test cases like expr1
-                for attr_child in nid.children(arena).filter(|n| arena.get(*n).unwrap().get().is_attr() ) {
+                for attr_child in nid
+                    .children(arena)
+                    .filter(|n| arena.get(*n).unwrap().get().is_attr())
+                {
                     builder.append(" ");
                     let attr_desc = arena.get(attr_child).unwrap().get();
                     let (attr_name, attr_value) = match attr_desc {
@@ -1191,10 +1458,12 @@ impl Parser {
                     builder.append(attr_name.to_string());
                     builder.append("=\"");
                     // Escape XML entities in attribute values - order matters! & must be first
-                    builder.append(attr_value
-                        .replace('&', "&amp;")
-                        .replace('<', "&lt;")
-                        .replace('"', "&quot;"));
+                    builder.append(
+                        attr_value
+                            .replace('&', "&amp;")
+                            .replace('<', "&lt;")
+                            .replace('"', "&quot;"),
+                    );
                     builder.append("\"");
                 }
 
@@ -1210,7 +1479,9 @@ impl Parser {
                 }
 
                 // Check if element has any non-attribute children for self-closing tag
-                let has_content = nid.children(arena).any(|n| !arena.get(n).unwrap().get().is_attr());
+                let has_content = nid
+                    .children(arena)
+                    .any(|n| !arena.get(n).unwrap().get().is_attr());
 
                 if has_content {
                     builder.append(">");
@@ -1224,8 +1495,8 @@ impl Parser {
                     // Self-closing tag for empty elements
                     builder.append("/>");
                 }
-            },
-            Content::Attribute(..) => {}, // handled above
+            }
+            Content::Attribute(..) => {} // handled above
             Content::Text(utf8) => builder.append(utf8.replace('&', "&amp;").replace('<', "&lt;")),
         }
     }
@@ -1251,23 +1522,27 @@ impl Parser {
     pub fn get_child_elements(arena: &Arena<Content>, nid: NodeId) -> Vec<(String, NodeId)> {
         nid.children(arena)
             // fist pair up as (&Content, NodeId)
-            .map(|nid| (arena.get(nid).unwrap().get(), nid) )
-            // and keep only elements 
-            .filter(|(c,_)| matches!(c, Content::Element(_)))
+            .map(|nid| (arena.get(nid).unwrap().get(), nid))
+            // and keep only elements
+            .filter(|(c, _)| matches!(c, Content::Element(_)))
             // then pair up as (ElementName, NodeId)
-            .map(|(c,nid)| (c.get_name().unwrap(), nid))
+            .map(|(c, nid)| (c.get_name().unwrap(), nid))
             .collect()
     }
 
     /// Helper function for working with indextree
     /// get all immediate element children matching a given name
     /// Returns a Vec of `NodeId`
-    pub fn get_child_elements_named(arena: &Arena<Content>, nid: NodeId, name: &str) -> Vec<NodeId> {
+    pub fn get_child_elements_named(
+        arena: &Arena<Content>,
+        nid: NodeId,
+        name: &str,
+    ) -> Vec<NodeId> {
         nid.children(arena)
             .filter(|n| {
                 let content = arena.get(*n).unwrap().get();
                 if let Content::Element(nam) = content {
-                    nam==name
+                    nam == name
                 } else {
                     false
                 }
@@ -1354,7 +1629,11 @@ mod tests {
         // Verify no positions exceed 0 (the length of empty input)
         let trace = parser.test_inspect_trace(None);
         for task in trace {
-            assert!(task.pos <= 0, "Task position {} exceeds empty input length", task.pos);
+            assert!(
+                task.pos <= 0,
+                "Task position {} exceeds empty input length",
+                task.pos
+            );
         }
     }
 
@@ -1371,7 +1650,11 @@ mod tests {
         // Verify no positions exceed 1
         let trace = parser.test_inspect_trace(None);
         for task in trace {
-            assert!(task.pos <= 1, "Task position {} exceeds input length 1", task.pos);
+            assert!(
+                task.pos <= 1,
+                "Task position {} exceeds input length 1",
+                task.pos
+            );
         }
     }
 
@@ -1446,15 +1729,18 @@ mod tests {
             Err(e) => {
                 println!("❌ Grammar parsing failed as expected: {}", e);
                 // This demonstrates the bug - the repeat construct ambiguity prevents successful parsing
-                assert!(e.to_string().contains("no completed parse"),
-                    "Expected bootstrap parsing failure, got: {}", e);
+                assert!(
+                    e.to_string().contains("no completed parse"),
+                    "Expected bootstrap parsing failure, got: {}",
+                    e
+                );
             }
         }
 
         // Test workaround: simpler patterns that should work
         let simple_patterns = vec![
-            r#"test: [#30-#39]."#,  // Hex range for digits
-            r#"test: ["a"]."#,      // Single string member
+            r#"test: [#30-#39]."#, // Hex range for digits
+            r#"test: ["a"]."#,     // Single string member
         ];
 
         for pattern in simple_patterns {
@@ -1478,16 +1764,13 @@ mod tests {
             // Single char string vs range ambiguity
             (r#"test: ["A"]."#, "A", true),
             (r#"test: ["A"]."#, "B", false),
-
             // Mixed character set with ambiguity
             (r#"test: ["A"; "B"]."#, "A", true),
             (r#"test: ["A"; "B"]."#, "B", true),
             (r#"test: ["A"; "B"]."#, "C", false),
-
             // Hex vs string ambiguity
-            (r#"test: [#41]."#, "A", true),  // #41 = 'A'
+            (r#"test: [#41]."#, "A", true), // #41 = 'A'
             (r#"test: [#41]."#, "B", false),
-
             // Range vs single member ambiguity
             (r#"test: ["A"-"C"]."#, "B", true),
             (r#"test: ["A"-"C"]."#, "D", false),
@@ -1501,11 +1784,19 @@ mod tests {
             let parse_result = parser.parse(input);
 
             if should_match {
-                assert!(parse_result.is_ok(),
-                    "Should match: '{}' with grammar {}", input, grammar_str);
+                assert!(
+                    parse_result.is_ok(),
+                    "Should match: '{}' with grammar {}",
+                    input,
+                    grammar_str
+                );
             } else {
-                assert!(parse_result.is_err(),
-                    "Should NOT match: '{}' with grammar {}", input, grammar_str);
+                assert!(
+                    parse_result.is_err(),
+                    "Should NOT match: '{}' with grammar {}",
+                    input,
+                    grammar_str
+                );
             }
         }
     }
@@ -1520,7 +1811,10 @@ mod tests {
         let result = Grammar::from_ixml_str(grammar_str);
 
         // Multi-character strings should work
-        assert!(result.is_ok(), "Multi-character string grammar should parse correctly");
+        assert!(
+            result.is_ok(),
+            "Multi-character string grammar should parse correctly"
+        );
 
         if let Ok(grammar) = result {
             let mut parser = Parser::new(grammar);
@@ -1554,27 +1848,31 @@ mod tests {
 
         // data: range1, range2, -".".
         let ctx = RuleContext::new("data");
-        hand_built.define("data", ctx.seq()
-            .nt("range1")
-            .nt("range2")
-            .mark_ch('.', crate::grammar::TMark::Mute));
+        hand_built.define(
+            "data",
+            ctx.seq()
+                .nt("range1")
+                .nt("range2")
+                .mark_ch('.', crate::grammar::TMark::Mute),
+        );
 
         // range1: ["0"-"9"].
         let ctx = RuleContext::new("range1");
-        hand_built.define("range1", ctx.seq()
-            .ch_range('0', '9'));
+        hand_built.define("range1", ctx.seq().ch_range('0', '9'));
 
         // range2: [#0-#9].
         let ctx = RuleContext::new("range2");
-        hand_built.define("range2", ctx.seq()
-            .ch_range('\u{0000}', '\u{0009}'));  // hex 0 to hex 9
+        hand_built.define("range2", ctx.seq().ch_range('\u{0000}', '\u{0009}')); // hex 0 to hex 9
 
         println!("Hand-built grammar:\n{}", hand_built);
 
         // Test with input "5\t."
         let mut parser = Parser::new(hand_built);
         let result = parser.parse("5\t.");
-        assert!(result.is_ok(), "Hand-built range grammar should parse '5\\t.'");
+        assert!(
+            result.is_ok(),
+            "Hand-built range grammar should parse '5\\t.'"
+        );
     }
 
     #[cfg(test)]
@@ -1584,7 +1882,7 @@ mod tests {
         // Based on: ixml: s, rule++RS, s.
         // This should help isolate the exact bootstrap parsing failure
 
-        use crate::grammar::{Grammar, RuleContext, Mark, TMark};
+        use crate::grammar::{Grammar, Mark, RuleContext, TMark};
 
         println!("=== Building minimal ixml subset grammar ===");
 
@@ -1592,26 +1890,36 @@ mod tests {
 
         // ixml: s, rule++RS, s.
         let ctx = RuleContext::new("ixml");
-        mini_ixml.define("ixml", ctx.seq()
-            .nt("s")
-            .repeat1_sep(ctx.seq().nt("rule"), ctx.seq().nt("RS"))
-            .nt("s"));
+        mini_ixml.define(
+            "ixml",
+            ctx.seq()
+                .nt("s")
+                .repeat1_sep(ctx.seq().nt("rule"), ctx.seq().nt("RS"))
+                .nt("s"),
+        );
 
         // rule: name, s, -":", s, -".", s.  (simplified - no alts for now)
         let ctx = RuleContext::new("rule");
-        mini_ixml.define("rule", ctx.seq()
-            .nt("name")
-            .nt("s")
-            .mark_ch(':', TMark::Mute)
-            .nt("s")
-            .mark_ch('.', TMark::Mute)
-            .nt("s"));
+        mini_ixml.define(
+            "rule",
+            ctx.seq()
+                .nt("name")
+                .nt("s")
+                .mark_ch(':', TMark::Mute)
+                .nt("s")
+                .mark_ch('.', TMark::Mute)
+                .nt("s"),
+        );
 
         // name: namestart, namefollower*.  (this is the problematic one!)
         let ctx = RuleContext::new("name");
-        mini_ixml.mark_define(Mark::Attr, "name", ctx.seq()
-            .nt("namestart")
-            .repeat0(ctx.seq().nt("namefollower")));
+        mini_ixml.mark_define(
+            Mark::Attr,
+            "name",
+            ctx.seq()
+                .nt("namestart")
+                .repeat0(ctx.seq().nt("namefollower")),
+        );
 
         // namestart: ["a"-"z"; "A"-"Z"].  (simplified)
         let ctx = RuleContext::new("namestart");
@@ -1624,11 +1932,19 @@ mod tests {
 
         // s: whitespace*.  (optional spacing)
         let ctx = RuleContext::new("s");
-        mini_ixml.mark_define(Mark::Mute, "s", ctx.seq().repeat0(ctx.seq().nt("whitespace")));
+        mini_ixml.mark_define(
+            Mark::Mute,
+            "s",
+            ctx.seq().repeat0(ctx.seq().nt("whitespace")),
+        );
 
         // RS: whitespace+.  (required spacing)
         let ctx = RuleContext::new("RS");
-        mini_ixml.mark_define(Mark::Mute, "RS", ctx.seq().repeat1(ctx.seq().nt("whitespace")));
+        mini_ixml.mark_define(
+            Mark::Mute,
+            "RS",
+            ctx.seq().repeat1(ctx.seq().nt("whitespace")),
+        );
 
         // whitespace: " "; "\n".  (simplified)
         let ctx = RuleContext::new("whitespace");
@@ -1691,16 +2007,36 @@ mod tests {
 
                 println!("Found {} alternatives for rule S", alts.len());
                 for (i, alt) in alts.iter().enumerate() {
-                    println!("  Alt {}: {} factors: {:?}", i, alt.factors.len(), alt.factors);
+                    println!(
+                        "  Alt {}: {} factors: {:?}",
+                        i,
+                        alt.factors.len(),
+                        alt.factors
+                    );
                 }
 
-                assert_eq!(alts.len(), 2, "Rule S should have 2 alternatives, got {}", alts.len());
+                assert_eq!(
+                    alts.len(),
+                    2,
+                    "Rule S should have 2 alternatives, got {}",
+                    alts.len()
+                );
 
                 // First alternative should be empty (0 factors)
-                assert_eq!(alts[0].factors.len(), 0, "First alternative should be empty, got {} factors", alts[0].factors.len());
+                assert_eq!(
+                    alts[0].factors.len(),
+                    0,
+                    "First alternative should be empty, got {} factors",
+                    alts[0].factors.len()
+                );
 
                 // Second alternative should have 4 factors (string "done" gets expanded to chars)
-                assert_eq!(alts[1].factors.len(), 4, "Second alternative should have 4 factors (d,o,n,e), got {}", alts[1].factors.len());
+                assert_eq!(
+                    alts[1].factors.len(),
+                    4,
+                    "Second alternative should have 4 factors (d,o,n,e), got {}",
+                    alts[1].factors.len()
+                );
 
                 // Now test that we can actually USE the grammar to parse input
                 // The empty alternative should match empty input
@@ -1710,7 +2046,10 @@ mod tests {
                         println!("✓ Successfully parsed empty input with empty alternative");
                     }
                     Err(e) => {
-                        panic!("Failed to parse empty input with empty alternative: {:?}", e);
+                        panic!(
+                            "Failed to parse empty input with empty alternative: {:?}",
+                            e
+                        );
                     }
                 }
 
@@ -1738,8 +2077,8 @@ mod tests {
         // Input: "x x"
         // Should parse as: <doc><item>x</item> <item>x</item></doc>
 
-        use crate::grammar::{Grammar, RuleContext};
         use crate::debug::{DebugConfig, DebugLevel};
+        use crate::grammar::{Grammar, RuleContext};
 
         // Set up trace debugging
         let debug_config = DebugConfig {
@@ -1756,10 +2095,13 @@ mod tests {
         let ctx = RuleContext::new("doc");
 
         // doc: item++space (equivalent to repeat1_sep)
-        g.define("doc", ctx.seq().repeat1_sep(
-            ctx.seq().nt("item"),     // repeated element
-            ctx.seq().nt("space")     // separator
-        ));
+        g.define(
+            "doc",
+            ctx.seq().repeat1_sep(
+                ctx.seq().nt("item"),  // repeated element
+                ctx.seq().nt("space"), // separator
+            ),
+        );
 
         // item: "x"
         g.define("item", ctx.seq().ch('x'));
@@ -1789,6 +2131,4 @@ mod tests {
             }
         }
     }
-
-
 }

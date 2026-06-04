@@ -51,4 +51,3 @@ fn main() {
 
     argh::from_env::<Args>().subcommand.run();
 }
-

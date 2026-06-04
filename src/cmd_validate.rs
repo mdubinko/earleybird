@@ -1,8 +1,8 @@
+use argh::FromArgs;
+use earleybird::{debug::DebugLevel, grammar::Grammar};
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
-use std::collections::HashSet;
-use argh::FromArgs;
-use earleybird::{grammar::Grammar, debug::DebugLevel};
 
 // Helper functions for parsing case-insensitive CLI options
 fn parse_level(level_str: &str) -> Result<DebugLevel, String> {
@@ -67,7 +67,12 @@ pub struct Validate {
     file_filter: Option<String>,
 
     /// output filename for debug/trace information
-    #[argh(option, short = 'o', long = "output", default = "default_output_file()")]
+    #[argh(
+        option,
+        short = 'o',
+        long = "output",
+        default = "default_output_file()"
+    )]
     output: String,
 }
 
@@ -124,21 +129,23 @@ impl Validate {
             level: console_level,
             position_filter: None,
             failure_only: false,
-            trace_file: if file_level != DebugLevel::Off { Some(self.output.clone()) } else { None },
+            trace_file: if file_level != DebugLevel::Off {
+                Some(self.output.clone())
+            } else {
+                None
+            },
             enabled_categories: _console_categories.clone(),
         };
         earleybird::debug::set_debug_config(debug_config);
         // Get grammar content from either file or string
         let grammar_content = match (self.grammar_file, self.grammar_str) {
-            (Some(file), None) => {
-                match fs::read_to_string(&file) {
-                    Ok(content) => content,
-                    Err(e) => {
-                        eprintln!("Error reading grammar file {:?}: {}", file, e);
-                        std::process::exit(1);
-                    }
+            (Some(file), None) => match fs::read_to_string(&file) {
+                Ok(content) => content,
+                Err(e) => {
+                    eprintln!("Error reading grammar file {:?}: {}", file, e);
+                    std::process::exit(1);
                 }
-            }
+            },
             (None, Some(string)) => string,
             (Some(_), Some(_)) => {
                 eprintln!("Error: Cannot specify both --grammar-file and --grammar-str");

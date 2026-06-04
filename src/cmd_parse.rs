@@ -1,9 +1,9 @@
+use argh::FromArgs;
+use earleybird::{debug::DebugLevel, grammar::Grammar, parser::Parser};
+use earleybird::{debug_basic, debug_detailed};
+use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
-use std::collections::HashSet;
-use argh::FromArgs;
-use earleybird::{grammar::Grammar, parser::Parser, debug::DebugLevel};
-use earleybird::{debug_basic, debug_detailed};
 
 // Helper functions for parsing case-insensitive CLI options
 fn parse_level(level_str: &str) -> Result<DebugLevel, String> {
@@ -80,7 +80,12 @@ pub struct Parse {
     file_filter: Option<String>,
 
     /// output filename for debug/trace information
-    #[argh(option, short = 'o', long = "output", default = "default_output_file()")]
+    #[argh(
+        option,
+        short = 'o',
+        long = "output",
+        default = "default_output_file()"
+    )]
     output: String,
 
     /// debug only at specific input position (for trace mode)
@@ -129,13 +134,21 @@ impl Parse {
             level: console_level,
             position_filter: self.debug_pos,
             failure_only: false,
-            trace_file: if file_level != DebugLevel::Off { Some(self.output.clone()) } else { None },
+            trace_file: if file_level != DebugLevel::Off {
+                Some(self.output.clone())
+            } else {
+                None
+            },
             enabled_categories: console_categories.clone(),
         };
         earleybird::debug::set_debug_config(debug_config);
 
         if console_level != DebugLevel::Off {
-            debug_basic!("=== CONSOLE: {} | FILE: {} ===", self.console.to_uppercase(), self.file.to_uppercase());
+            debug_basic!(
+                "=== CONSOLE: {} | FILE: {} ===",
+                self.console.to_uppercase(),
+                self.file.to_uppercase()
+            );
             if let Some(ref cats) = console_categories {
                 debug_basic!("Console categories: {:?}", cats);
             }
@@ -248,7 +261,8 @@ impl Parse {
         // 5. Format and output results
         match self.out_format.as_str() {
             "XML" => {
-                let xml_output = Parser::tree_to_test_format_with_version(&parse_tree, version_mismatch);
+                let xml_output =
+                    Parser::tree_to_test_format_with_version(&parse_tree, version_mismatch);
                 println!("{}", xml_output);
             }
             _ => {

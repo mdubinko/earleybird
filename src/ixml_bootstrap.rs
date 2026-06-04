@@ -1,4 +1,4 @@
-use crate::grammar::{Grammar, Mark, TMark, TerminalDefn, RuleContext};
+use crate::grammar::{Grammar, Mark, RuleContext, TMark, TerminalDefn};
 
 /// Bootstrap ixml grammar; hand-coded definition
 pub fn bootstrap_ixml_grammar() -> Grammar {
@@ -6,26 +6,57 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
 
     // ixml: s, prolog?, rule++RS, s.
     let ctx = RuleContext::new("ixml");
-    g.define("ixml", ctx.seq().nt("s").opt(ctx.seq().nt("prolog")).repeat1_sep(ctx.seq().nt("rule"), ctx.seq().nt("RS")).nt("s"));
+    g.define(
+        "ixml",
+        ctx.seq()
+            .nt("s")
+            .opt(ctx.seq().nt("prolog"))
+            .repeat1_sep(ctx.seq().nt("rule"), ctx.seq().nt("RS"))
+            .nt("s"),
+    );
 
     // -s: (whitespace; comment)*. {Optional spacing}
     let ctx = RuleContext::new("s");
     g.mark_define(Mark::Mute, "__eb_opt_space", ctx.seq().nt("whitespace"));
     g.mark_define(Mark::Mute, "__eb_opt_space", ctx.seq().nt("comment"));
-    g.mark_define(Mark::Mute, "s", ctx.seq().repeat0(ctx.seq().nt("__eb_opt_space")));
+    g.mark_define(
+        Mark::Mute,
+        "s",
+        ctx.seq().repeat0(ctx.seq().nt("__eb_opt_space")),
+    );
 
     // -RS: (whitespace; comment)+. {Required spacing}
     let ctx = RuleContext::new("RS");
     g.mark_define(Mark::Mute, "__eb_req_space", ctx.seq().nt("whitespace"));
     g.mark_define(Mark::Mute, "__eb_req_space", ctx.seq().nt("comment"));
-    g.mark_define(Mark::Mute, "RS", ctx.seq().repeat1(ctx.seq().nt("__eb_req_space")));
+    g.mark_define(
+        Mark::Mute,
+        "RS",
+        ctx.seq().repeat1(ctx.seq().nt("__eb_req_space")),
+    );
 
     // -whitespace: -[Zs]; tab; lf; cr.
     let ctx = RuleContext::new("whitespace");
-    g.mark_define(Mark::Mute, "whitespace", ctx.seq().mark_ch_unicode("Zs", TMark::Mute));
-    g.mark_define(Mark::Mute, "whitespace", ctx.seq().mark_ch('\u{0009}', TMark::Mute)); // tab
-    g.mark_define(Mark::Mute, "whitespace", ctx.seq().mark_ch('\u{000a}', TMark::Mute)); // lf
-    g.mark_define(Mark::Mute, "whitespace", ctx.seq().mark_ch('\u{000d}', TMark::Mute)); // cr
+    g.mark_define(
+        Mark::Mute,
+        "whitespace",
+        ctx.seq().mark_ch_unicode("Zs", TMark::Mute),
+    );
+    g.mark_define(
+        Mark::Mute,
+        "whitespace",
+        ctx.seq().mark_ch('\u{0009}', TMark::Mute),
+    ); // tab
+    g.mark_define(
+        Mark::Mute,
+        "whitespace",
+        ctx.seq().mark_ch('\u{000a}', TMark::Mute),
+    ); // lf
+    g.mark_define(
+        Mark::Mute,
+        "whitespace",
+        ctx.seq().mark_ch('\u{000d}', TMark::Mute),
+    ); // cr
 
     // -tab: -#9.
     // DNO = Deliberately Not Implemented
@@ -38,19 +69,27 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
 
     // comment: -"{", (cchar; comment)*, -"}".
     let ctx = RuleContext::new("comment");
-    g.define("comment", ctx.seq()
-        .mark_ch('{', TMark::Mute)
-        .repeat0(ctx.seq().nt("comment_content"))
-        .mark_ch('}', TMark::Mute));
+    g.define(
+        "comment",
+        ctx.seq()
+            .mark_ch('{', TMark::Mute)
+            .repeat0(ctx.seq().nt("comment_content"))
+            .mark_ch('}', TMark::Mute),
+    );
 
     // comment_content: cchar; comment. (the alternation inside comment)
     let ctx = RuleContext::new("comment_content");
     g.mark_define(Mark::Mute, "comment_content", ctx.seq().nt("cchar"));
-    g.mark_define(Mark::Mute, "comment_content", ctx.seq().nt("comment"));  // Nested comments
+    g.mark_define(Mark::Mute, "comment_content", ctx.seq().nt("comment")); // Nested comments
 
     // -cchar: ~["{}"].
     let ctx = RuleContext::new("cchar");
-    g.mark_define(Mark::Mute, "cchar", ctx.seq().lit(TerminalDefn::union().exclude().ch('{').ch('}')));
+    g.mark_define(
+        Mark::Mute,
+        "cchar",
+        ctx.seq()
+            .lit(TerminalDefn::union().exclude().ch('{').ch('}')),
+    );
 
     // prolog: version, s.
     let ctx = RuleContext::new("prolog");
@@ -58,25 +97,32 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
 
     // version: -"ixml", RS, -"version", RS, string, s, -'.' .
     let ctx = RuleContext::new("version");
-    g.mark_define(Mark::Default, "version", ctx.seq()
-        .mark_str("ixml", TMark::Mute)
-        .nt("RS")
-        .mark_str("version", TMark::Mute)
-        .nt("RS")
-        .nt("string")
-        .nt("s")
-        .mark_ch('.', TMark::Mute));
+    g.mark_define(
+        Mark::Default,
+        "version",
+        ctx.seq()
+            .mark_str("ixml", TMark::Mute)
+            .nt("RS")
+            .mark_str("version", TMark::Mute)
+            .nt("RS")
+            .nt("string")
+            .nt("s")
+            .mark_ch('.', TMark::Mute),
+    );
 
     // rule: (mark, s)?, name, s, -["=:"], s, -alts, -".".
     let ctx = RuleContext::new("rule");
-    g.define("rule", ctx.seq()
-        .opt(ctx.seq().nt("mark").nt("s"))
-        .nt("name")
-        .nt("s")
-        .mark_ch_in("=:", TMark::Mute)
-        .nt("s")
-        .mark_nt("alts", Mark::Mute)
-        .mark_ch('.', TMark::Mute) );
+    g.define(
+        "rule",
+        ctx.seq()
+            .opt(ctx.seq().nt("mark").nt("s"))
+            .nt("name")
+            .nt("s")
+            .mark_ch_in("=:", TMark::Mute)
+            .nt("s")
+            .mark_nt("alts", Mark::Mute)
+            .mark_ch('.', TMark::Mute),
+    );
 
     // @mark: ["@^-"].
     let ctx = RuleContext::new("mark");
@@ -84,15 +130,23 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
 
     // alts: alt++(-[";|"], s).
     let ctx = RuleContext::new("alts");
-    g.define("alts", ctx.seq().repeat1_sep(
-        ctx.seq().nt("alt"),
-        ctx.seq().mark_ch_in(";|", TMark::Mute).nt("s") ));
+    g.define(
+        "alts",
+        ctx.seq().repeat1_sep(
+            ctx.seq().nt("alt"),
+            ctx.seq().mark_ch_in(";|", TMark::Mute).nt("s"),
+        ),
+    );
 
     // alt: term**(-",", s)
     let ctx = RuleContext::new("alt");
-    g.define("alt", ctx.seq().repeat0_sep(
-        ctx.seq().nt("term"),
-        ctx.seq().mark_ch(',', TMark::Mute).nt("s") ));
+    g.define(
+        "alt",
+        ctx.seq().repeat0_sep(
+            ctx.seq().nt("term"),
+            ctx.seq().mark_ch(',', TMark::Mute).nt("s"),
+        ),
+    );
 
     // -term: factor; option; repeat0; repeat1.
     let ctx = RuleContext::new("term");
@@ -106,24 +160,53 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     g.mark_define(Mark::Mute, "factor", ctx.seq().nt("terminal"));
     g.mark_define(Mark::Mute, "factor", ctx.seq().nt("nonterminal"));
     g.mark_define(Mark::Mute, "factor", ctx.seq().nt("insertion"));
-    g.mark_define(Mark::Mute, "factor", ctx.seq()
-        .mark_ch('(', TMark::Mute).nt("s").nt("alts").mark_ch(')', TMark::Mute).nt("s"));
+    g.mark_define(
+        Mark::Mute,
+        "factor",
+        ctx.seq()
+            .mark_ch('(', TMark::Mute)
+            .nt("s")
+            .nt("alts")
+            .mark_ch(')', TMark::Mute)
+            .nt("s"),
+    );
 
     // repeat0: factor, (-"*", s; -"**", s, sep).
     let ctx = RuleContext::new("repeat0");
-    g.define("repeat0", ctx.seq().nt("factor").mark_ch('*', TMark::Mute).nt("s"));
-    g.define("repeat0", ctx.seq()
-        .nt("factor").mark_str("**", TMark::Mute).nt("s").nt("sep"));
+    g.define(
+        "repeat0",
+        ctx.seq().nt("factor").mark_ch('*', TMark::Mute).nt("s"),
+    );
+    g.define(
+        "repeat0",
+        ctx.seq()
+            .nt("factor")
+            .mark_str("**", TMark::Mute)
+            .nt("s")
+            .nt("sep"),
+    );
 
     // repeat1: factor, (-"+", s; -"++", s, sep).
     let ctx = RuleContext::new("repeat1");
-    g.define("repeat1", ctx.seq().nt("factor").mark_ch('+', TMark::Mute).nt("s"));
-    g.define("repeat1", ctx.seq()
-        .nt("factor").mark_str("++", TMark::Mute).nt("s").nt("sep"));
+    g.define(
+        "repeat1",
+        ctx.seq().nt("factor").mark_ch('+', TMark::Mute).nt("s"),
+    );
+    g.define(
+        "repeat1",
+        ctx.seq()
+            .nt("factor")
+            .mark_str("++", TMark::Mute)
+            .nt("s")
+            .nt("sep"),
+    );
 
     // option: factor, -"?", s.
     let ctx = RuleContext::new("option");
-    g.define("option", ctx.seq().nt("factor").mark_ch('?', TMark::Mute).nt("s"));
+    g.define(
+        "option",
+        ctx.seq().nt("factor").mark_ch('?', TMark::Mute).nt("s"),
+    );
 
     // sep: factor.
     let ctx = RuleContext::new("sep");
@@ -131,14 +214,24 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
 
     // nonterminal: (mark, s)?, name, s.
     let ctx = RuleContext::new("nonterminal");
-    g.define("nonterminal", ctx.seq()
-        .opt( ctx.seq().nt("mark").nt("s") )
-        .nt("name").nt("s") );
+    g.define(
+        "nonterminal",
+        ctx.seq()
+            .opt(ctx.seq().nt("mark").nt("s"))
+            .nt("name")
+            .nt("s"),
+    );
 
     // @name: namestart, namefollower*.
     let ctx = RuleContext::new("name");
-    g.mark_define(Mark::Attr, "name", ctx.seq().nt("namestart").repeat0(ctx.seq().nt("namefollower")));
-    
+    g.mark_define(
+        Mark::Attr,
+        "name",
+        ctx.seq()
+            .nt("namestart")
+            .repeat0(ctx.seq().nt("namefollower")),
+    );
+
     // -namestart: ["_"; L].
     let ctx = RuleContext::new("namestart");
     g.mark_define(Mark::Mute, "namestart", ctx.seq().ch('_'));
@@ -155,7 +248,7 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     let ctx = RuleContext::new("terminal");
     g.mark_define(Mark::Mute, "terminal", ctx.seq().nt("literal"));
     g.mark_define(Mark::Mute, "terminal", ctx.seq().nt("charset"));
-    
+
     // literal: quoted; encoded.
     let ctx = RuleContext::new("literal");
     g.define("literal", ctx.seq().nt("quoted"));
@@ -163,9 +256,14 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
 
     // -quoted: (tmark, s)?, string, s.
     let ctx = RuleContext::new("quoted");
-    g.mark_define(Mark::Mute, "quoted", ctx.seq()
-        .opt( ctx.seq().nt("mark").nt("s") )
-        .nt("string").nt("s"));
+    g.mark_define(
+        Mark::Mute,
+        "quoted",
+        ctx.seq()
+            .opt(ctx.seq().nt("mark").nt("s"))
+            .nt("string")
+            .nt("s"),
+    );
 
     // @tmark: ["^-"].
     let ctx = RuleContext::new("tmark");
@@ -173,36 +271,67 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
 
     // @string: -'"', dchar+, -'"'; -"'", schar+, -"'".
     let ctx = RuleContext::new("string");
-    g.mark_define(Mark::Attr, "string", ctx.seq()
-        .mark_ch('"', TMark::Mute)
-        .repeat1( ctx.seq().nt("dchar"))
-        .mark_ch('"', TMark::Mute) );
-    g.mark_define(Mark::Attr, "string", ctx.seq()
-        .mark_ch('\'', TMark::Mute)
-        .repeat1( ctx.seq().nt("schar"))
-        .mark_ch('\'', TMark::Mute) );
+    g.mark_define(
+        Mark::Attr,
+        "string",
+        ctx.seq()
+            .mark_ch('"', TMark::Mute)
+            .repeat1(ctx.seq().nt("dchar"))
+            .mark_ch('"', TMark::Mute),
+    );
+    g.mark_define(
+        Mark::Attr,
+        "string",
+        ctx.seq()
+            .mark_ch('\'', TMark::Mute)
+            .repeat1(ctx.seq().nt("schar"))
+            .mark_ch('\'', TMark::Mute),
+    );
 
     // dchar: ~['"'; #a; #d]; '"', -'"'. {all characters except line breaks; quotes must be doubled}
     let ctx = RuleContext::new("dchar");
-    g.define("dchar", ctx.seq().lit(TerminalDefn::union().exclude().ch('"').ch('\n').ch('\r')));
+    g.define(
+        "dchar",
+        ctx.seq()
+            .lit(TerminalDefn::union().exclude().ch('"').ch('\n').ch('\r')),
+    );
     g.define("dchar", ctx.seq().ch('"').mark_ch('"', TMark::Mute));
-  
+
     // schar: ~["'"; #a; #d]; "'", -"'". {all characters except line breaks; quotes must be doubled}
     let ctx = RuleContext::new("schar");
-    g.define("schar", ctx.seq().lit(TerminalDefn::union().exclude().ch('\'').ch('\n').ch('\r')));
+    g.define(
+        "schar",
+        ctx.seq()
+            .lit(TerminalDefn::union().exclude().ch('\'').ch('\n').ch('\r')),
+    );
     g.define("schar", ctx.seq().ch('\'').mark_ch('\'', TMark::Mute));
 
     // -encoded: (tmark, s)?, -"#", hex, s.
     let ctx = RuleContext::new("encoded");
-    g.mark_define(Mark::Mute, "encoded", ctx.seq()
-        .opt(ctx.seq().nt("tmark").nt("s"))
-        .mark_ch('#', TMark::Mute).nt("hex").nt("s"));
+    g.mark_define(
+        Mark::Mute,
+        "encoded",
+        ctx.seq()
+            .opt(ctx.seq().nt("tmark").nt("s"))
+            .mark_ch('#', TMark::Mute)
+            .nt("hex")
+            .nt("s"),
+    );
 
     // @hex: ["0"-"9"; "a"-"f"; "A"-"F"]+.
     let ctx = RuleContext::new("hex");
-    g.mark_define(Mark::Attr, "hex", ctx.seq()
-        .repeat1(ctx.seq().lit(TerminalDefn::union()
-            .ch_range('0', '9').ch_range('a', 'f').ch_range('A', 'F'))));
+    g.mark_define(
+        Mark::Attr,
+        "hex",
+        ctx.seq().repeat1(
+            ctx.seq().lit(
+                TerminalDefn::union()
+                    .ch_range('0', '9')
+                    .ch_range('a', 'f')
+                    .ch_range('A', 'F'),
+            ),
+        ),
+    );
 
     // -charset: inclusion; exclusion.
     let ctx = RuleContext::new("charset");
@@ -211,25 +340,37 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
 
     // inclusion: (tmark, s)?,          set.
     let ctx = RuleContext::new("inclusion");
-    g.define("inclusion", ctx.seq()
-        .opt( ctx.seq().nt("tmark").nt("s"))
-        .nt("set"));
+    g.define(
+        "inclusion",
+        ctx.seq().opt(ctx.seq().nt("tmark").nt("s")).nt("set"),
+    );
 
     // exclusion: (tmark, s)?, -"~", s, set.
     let ctx = RuleContext::new("exclusion");
-    g.define("exclusion", ctx.seq()
-        .opt( ctx.seq().nt("tmark").nt("s"))
-        .mark_ch('~', TMark::Mute).nt("s")
-        .nt("set"));
+    g.define(
+        "exclusion",
+        ctx.seq()
+            .opt(ctx.seq().nt("tmark").nt("s"))
+            .mark_ch('~', TMark::Mute)
+            .nt("s")
+            .nt("set"),
+    );
 
     // -set: -"[", s,  (member, s)**(-[";|"], s), -"]", s.
     let ctx = RuleContext::new("set");
-    g.mark_define(Mark::Mute, "set", ctx.seq()
-        .mark_ch('[', TMark::Mute).nt("s")
-        .repeat0_sep(
-            ctx.seq().nt("member").nt("s"),
-            ctx.seq().mark_ch_in(";|", TMark::Mute).nt("s"))
-        .mark_ch(']', TMark::Mute).nt("s"));
+    g.mark_define(
+        Mark::Mute,
+        "set",
+        ctx.seq()
+            .mark_ch('[', TMark::Mute)
+            .nt("s")
+            .repeat0_sep(
+                ctx.seq().nt("member").nt("s"),
+                ctx.seq().mark_ch_in(";|", TMark::Mute).nt("s"),
+            )
+            .mark_ch(']', TMark::Mute)
+            .nt("s"),
+    );
 
     // member: string; -"#", hex; range; class.
     let ctx = RuleContext::new("member");
@@ -240,8 +381,16 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
 
     // -range: from, s, -"-", s, to.
     let ctx = RuleContext::new("range");
-    g.mark_define(Mark::Mute, "range", ctx.seq().nt("from").nt("s").mark_ch('-', TMark::Mute)
-        .nt("s").nt("to"));
+    g.mark_define(
+        Mark::Mute,
+        "range",
+        ctx.seq()
+            .nt("from")
+            .nt("s")
+            .mark_ch('-', TMark::Mute)
+            .nt("s")
+            .nt("to"),
+    );
 
     // @from: character.
     let ctx = RuleContext::new("from");
@@ -253,10 +402,22 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
 
     // -character: -'"', dchar, -'"'; -"'", schar, -"'"; "#", hex.
     let ctx = RuleContext::new("character");
-    g.mark_define(Mark::Mute, "character", ctx.seq()
-        .mark_ch('"', TMark::Mute).nt("dchar").mark_ch('"', TMark::Mute));
-    g.mark_define(Mark::Mute, "character", ctx.seq()
-        .mark_ch('\'', TMark::Mute).nt("schar").mark_ch('\'', TMark::Mute));
+    g.mark_define(
+        Mark::Mute,
+        "character",
+        ctx.seq()
+            .mark_ch('"', TMark::Mute)
+            .nt("dchar")
+            .mark_ch('"', TMark::Mute),
+    );
+    g.mark_define(
+        Mark::Mute,
+        "character",
+        ctx.seq()
+            .mark_ch('\'', TMark::Mute)
+            .nt("schar")
+            .mark_ch('\'', TMark::Mute),
+    );
     g.mark_define(Mark::Mute, "character", ctx.seq().ch('#').nt("hex"));
 
     // -class: code.
@@ -265,7 +426,11 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
 
     // @code: capital, letter?.
     let ctx = RuleContext::new("code");
-    g.mark_define(Mark::Attr, "code", ctx.seq().nt("capital").opt(ctx.seq().nt("letter")));
+    g.mark_define(
+        Mark::Attr,
+        "code",
+        ctx.seq().nt("capital").opt(ctx.seq().nt("letter")),
+    );
 
     // -capital: ["A"-"Z"].
     let ctx = RuleContext::new("capital");
@@ -278,10 +443,23 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
 
     // insertion: -"+", s, (string; -"#", hex), s.
     let ctx = RuleContext::new("insertion");
-    g.define("insertion", ctx.seq()
-        .mark_ch('+', TMark::Mute).nt("s").nt("string").nt("s"));
-    g.define("insertion", ctx.seq()
-        .mark_ch('+', TMark::Mute).nt("s").mark_ch('#', TMark::Mute).nt("hex").nt("s"));
+    g.define(
+        "insertion",
+        ctx.seq()
+            .mark_ch('+', TMark::Mute)
+            .nt("s")
+            .nt("string")
+            .nt("s"),
+    );
+    g.define(
+        "insertion",
+        ctx.seq()
+            .mark_ch('+', TMark::Mute)
+            .nt("s")
+            .mark_ch('#', TMark::Mute)
+            .nt("hex")
+            .nt("s"),
+    );
 
     g
 }
@@ -323,7 +501,7 @@ nonterminal: (mark, s)?, name, s.
 -namestart: ["_"; L].
 -namefollower: namestart; ["-.·‿⁀"; Nd; Mn].
 
--terminal: literal; 
+-terminal: literal;
         charset.
 literal: quoted;
         encoded.
@@ -339,7 +517,7 @@ literal: quoted;
 -encoded: (tmark, s)?, -"#", hex, s.
     @hex: ["0"-"9"; "a"-"f"; "A"-"F"]+.
 
--charset: inclusion; 
+-charset: inclusion;
         exclusion.
 inclusion: (tmark, s)?,          set.
 exclusion: (tmark, s)?, -"~", s, set.

@@ -1,5 +1,5 @@
 //! iXML grammar validation and preprocessing
-//! 
+//!
 //! This module handles validation and preprocessing of iXML grammar text before parsing.
 //! It includes comment stripping, syntax validation, and error reporting.
 
@@ -16,7 +16,7 @@ impl ValidationResult {
     pub fn is_valid(&self) -> bool {
         self.errors.is_empty()
     }
-    
+
     pub fn new(processed_text: String) -> Self {
         Self {
             processed_text,
@@ -24,12 +24,12 @@ impl ValidationResult {
             errors: Vec::new(),
         }
     }
-    
+
     pub fn with_error(mut self, error: ValidationError) -> Self {
         self.errors.push(error);
         self
     }
-    
+
     pub fn with_warning(mut self, warning: ValidationWarning) -> Self {
         self.warnings.push(warning);
         self
@@ -79,13 +79,13 @@ pub fn validate_ixml(input: &str) -> ValidationResult {
 fn strip_comments(input: &str) -> Result<String, ValidationError> {
     let mut result = String::new();
     let mut chars = input.char_indices().peekable();
-    
+
     while let Some((pos, ch)) = chars.next() {
         if ch == '{' {
             // Start of comment - skip until matching }
             let mut depth = 1;
             let start_pos = pos;
-            
+
             while let Some((_, inner_ch)) = chars.next() {
                 if inner_ch == '{' {
                     depth += 1;
@@ -96,7 +96,7 @@ fn strip_comments(input: &str) -> Result<String, ValidationError> {
                     }
                 }
             }
-            
+
             // Check if we found the matching close brace
             if depth > 0 {
                 return Err(ValidationError {
@@ -105,20 +105,20 @@ fn strip_comments(input: &str) -> Result<String, ValidationError> {
                     message: format!("Unclosed comment starting at position {}", start_pos),
                 });
             }
-            
+
             // Comment successfully stripped - don't add anything to result
         } else {
             result.push(ch);
         }
     }
-    
+
     Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_no_comments() {
         let input = "rule: \"a\".";
@@ -126,7 +126,7 @@ mod tests {
         assert!(result.is_valid());
         assert_eq!(result.processed_text, "rule: \"a\".");
     }
-    
+
     // TODO: Comment processing tests removed - current pre-stripping approach is flawed.
     // Comments should be parsed context-aware within the Earley parser, not pre-stripped,
     // since { and } can appear in quoted strings and other contexts.
