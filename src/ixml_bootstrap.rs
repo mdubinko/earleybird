@@ -110,14 +110,12 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
             .mark_ch('.', TMark::Mute),
     );
 
-    // rule: (mark, s)?, name, s, -["=:"], s, -alts, -".".
+    // rule: naming, -["=:"], s, -alts, -".".
     let ctx = RuleContext::new("rule");
     g.define(
         "rule",
         ctx.seq()
-            .opt(ctx.seq().nt("mark").nt("s"))
-            .nt("name")
-            .nt("s")
+            .nt("naming")
             .mark_ch_in("=:", TMark::Mute)
             .nt("s")
             .mark_nt("alts", Mark::Mute)
@@ -127,6 +125,27 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     // @mark: ["@^-"].
     let ctx = RuleContext::new("mark");
     g.mark_define(Mark::Attr, "mark", ctx.seq().ch_in("@^-"));
+
+    // naming: (mark, s)?, name, s, (-">", s, alias, s)?.
+    let ctx = RuleContext::new("naming");
+    g.define(
+        "naming",
+        ctx.seq()
+            .opt(ctx.seq().nt("mark").nt("s"))
+            .nt("name")
+            .nt("s")
+            .opt(
+                ctx.seq()
+                    .mark_ch('>', TMark::Mute)
+                    .nt("s")
+                    .nt("alias")
+                    .nt("s"),
+            ),
+    );
+
+    // @alias: name.
+    let ctx = RuleContext::new("alias");
+    g.mark_define(Mark::Attr, "alias", ctx.seq().nt("name"));
 
     // alts: alt++(-[";|"], s).
     let ctx = RuleContext::new("alts");
@@ -212,15 +231,9 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     let ctx = RuleContext::new("sep");
     g.define("sep", ctx.seq().nt("factor"));
 
-    // nonterminal: (mark, s)?, name, s.
+    // nonterminal: naming.
     let ctx = RuleContext::new("nonterminal");
-    g.define(
-        "nonterminal",
-        ctx.seq()
-            .opt(ctx.seq().nt("mark").nt("s"))
-            .nt("name")
-            .nt("s"),
-    );
+    g.define("nonterminal", ctx.seq().nt("naming"));
 
     // @name: namestart, namefollower*.
     let ctx = RuleContext::new("name");

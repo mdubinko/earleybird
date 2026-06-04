@@ -107,12 +107,12 @@
   - Impact: Clear indication that ambiguous parse support is not yet implemented
 
 ## Current Test Suite Status (Updated 2026-06-04)
-- **Full catalog**: **175/231 passing (75.8% pass rate)**
-  - **175 PASS**
+- **Full catalog**: **179/231 passing (77.5% pass rate)**
+  - **179 PASS**
   - **13 FAIL** - all remaining concrete failures are ambiguous-output cases
-  - **43 Bootstrap Errors** - XML-form grammar fixtures, draft naming/alias syntax, and non-XML clear fixtures
+  - **39 Bootstrap Errors** - XML-form grammar fixtures and non-XML clear fixtures
   - **0 TODO** - `AssertDynamicError` is implemented in the suite driver
-  - Latest run: `cargo run -- suite --console SUMMARY --file FAILURES -o log/full-suite-dynamic-errors.txt`
+  - Latest run: `cargo run -- suite --console SUMMARY --file FAILURES -o log/full-suite-naming-after.txt`
 - **Dynamic error tests**: **18/20 passing**
   - The two remaining cases are bootstrap failures in `error/non-XML-char-in-input-output-clear`
   - Implemented output-tree validation for D01-D07 conditions where applicable
@@ -123,9 +123,11 @@
 - **Remaining feature buckets**:
   - Ambiguous parse detection and `ixml:state="ambiguous"` output
   - XML-form grammar input / syntax XML bootstrap support
-  - Draft naming/alias syntax (`>` operator)
   - Non-XML clear fixture bootstrap loop
 - **Recent Major Fixes**:
+  - [x] **Draft Naming/Alias Syntax**: COMPLETED - `>` aliases preserve parse targets while renaming XML output #HIGH
+    - Files: src/ixml_bootstrap.rs, src/grammar.rs, src/parser.rs
+    - Tests: `cargo run -- suite naming --console SUMMARY --file FAILURES -o log/naming-after.txt` => 4 pass, 0 fail, 0 bootstrap
   - [x] **Dynamic Errors**: COMPLETED - output validation detects D02-D07 and suite accepts expected dynamic codes #HIGH
     - Files: src/parser.rs, src/cmd_suite.rs, src/cmd_parse.rs, src/testsuite_utils.rs
     - Tests: `cargo run -- suite error --console SUMMARY --file FAILURES -o log/error-dynamic-after.txt` => 18 pass, 0 fail, 2 bootstrap
@@ -216,7 +218,8 @@
 This draft incorporates all 1.0 errata plus the following new features:
 
 ### Renaming/Aliasing Syntax (4 test cases affected)
-- [ ] Implement renaming/aliasing with `>` operator #HIGH
+- [x] Implement renaming/aliasing with `>` operator #HIGH
+  - Status: COMPLETED (2026-06-04) - all four `correct/naming-*` tests pass
   - Grammar changes:
     - `naming: (mark, s)?, name, s, (-">", s, alias, s)?.` (NEW production)
     - `alias: name.` (NEW production)
@@ -225,11 +228,11 @@ This draft incorporates all 1.0 errata plus the following new features:
   - Syntax: `B>X = "b".` means "match B but serialize as <X>"
   - Syntax: `S = A, B>C.` means "reference B but serialize as <C>"
   - Implementation:
-    - Add `alias: Option<SmolStr>` to grammar structures
-    - Update bootstrap grammar with naming/alias productions
-    - Modify output generation to use alias when present
+    - Added aliases to grammar definitions and nonterminal references
+    - Updated bootstrap grammar with naming/alias productions
+    - Modified output generation to use aliases while preserving original parse targets
   - Files: src/ixml_bootstrap.rs, src/grammar.rs, src/parser.rs
-  - Test impact: Enables 4 currently failing tests (naming-elements, naming-elements-rhs, naming-attributes, naming-attributes-rhs)
+  - Test impact: Fixed naming-elements, naming-elements-rhs, naming-attributes, naming-attributes-rhs
 
 ### Grammar Structure Refinements
 - [ ] Update prolog handling #LOW
@@ -253,16 +256,16 @@ This draft incorporates all 1.0 errata plus the following new features:
 
 ## Summary: Path to 100% ixml Current Draft Conformance
 
-**Current Status**: Targeting ixml 1.0 + E001 (75.8% full-catalog pass rate, 175/231 tests)
+**Current Status**: Targeting ixml 1.0 + E001 plus draft renaming (77.5% full-catalog pass rate, 179/231 tests)
 **Proposed Target**: ixml Draft 2025-09-01 (all 1.0 errata + renaming + Cc validation)
 
 **Required Changes**:
 1. **E002 (Cc category)**: Replace line-break checks with full Unicode control character exclusion
 2. **E003 (BOM)**: Strip UTF-8 BOM from inputs
-3. **Renaming**: Add alias syntax support (biggest feature addition)
+3. **Renaming**: Complete; alias syntax support is implemented
 4. **Prolog/RS**: Adjust spacing requirements around version declaration
 
-**Estimated Impact**: 81/93 → 85+/93 tests passing (adds 4 renaming tests)
+**Observed Impact**: 175/231 → 179/231 tests passing (adds 4 renaming tests)
 
 ## iXML Specification Error Codes (https://invisiblexml.org/1.0/)
 

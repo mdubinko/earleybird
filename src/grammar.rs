@@ -18,7 +18,7 @@
 //! A Factor is an enum of either
 //! `Terminal`(TMark, Lit)  (a `TMark` is like a Mark, except there is no @ prefix)
 //! or
-//! `Nonterm`(Mark, `SmolStr`) which is a reference to a different definition (which must exist elsewhere in the grammar)
+//! `Nonterm`(Mark, `SmolStr`, alias) which is a reference to a different definition (which must exist elsewhere in the grammar)
 //!
 //! More complicated structures like x? or x+ or x* or x++y or x**y
 //! are built from the existing primitives and recursive definitions
@@ -72,6 +72,12 @@ impl fmt::Display for GrammarConstructionError {
 }
 // TODO: Optimization: add CharMatchers at the Grammar level
 
+struct NamingAttributes {
+    mark: Option<String>,
+    name: Option<String>,
+    alias: Option<String>,
+}
+
 /// the primary owner of all grammar data structures
 #[derive(Debug, Clone)]
 pub struct Grammar {
@@ -100,11 +106,11 @@ impl Grammar {
         self.definitions.len()
     }
 
-    /// Check if the declared version (if any) differs from our implementation version "1.0"
+    /// Check if the declared version (if any) names a version we do not support.
     pub fn has_version_mismatch(&self) -> bool {
         self.declared_version
             .as_ref()
-            .map(|v| v.as_str() != "1.0")
+            .map(|v| !matches!(v.as_str(), "1.0" | "1.1"))
             .unwrap_or(false)
     }
 
@@ -124,6 +130,16 @@ impl Grammar {
     /// merge contents of `RuleBuilder` (which might include entire synthesized named rules) into Grammar
     /// Consumes the `RuleBuilder`
     pub fn mark_define(&mut self, mark: Mark, name: &str, sb: SeqBuilder) {
+        self.mark_define_alias(mark, name, None, sb);
+    }
+
+    pub fn mark_define_alias(
+        &mut self,
+        mark: Mark,
+        name: &str,
+        alias: Option<&str>,
+        sb: SeqBuilder,
+    ) {
         // Note: OnceCell nullable cache will be computed on first access
 
         // 1) the main rule
@@ -136,6 +152,9 @@ impl Grammar {
                 self.defn_order.push(name_smol.clone());
                 BranchingRule::new(mark)
             });
+        if let Some(alias) = alias {
+            branching_rule.alias = Some(SmolStr::new(alias));
+        }
         branching_rule.add_alt_branch(main_rule);
 
         // 2) synthesized rules
@@ -171,6 +190,18 @@ impl Grammar {
             )));
         }
         Ok(self.definitions[name].mark)
+    }
+
+    pub fn get_definition_alias(
+        &self,
+        name: &str,
+    ) -> Result<Option<SmolStr>, crate::parser::ParseError> {
+        if !self.definitions.contains_key(name) {
+            return Err(crate::parser::ParseError::static_err(&format!(
+                "missing rule named {name}"
+            )));
+        }
+        Ok(self.definitions[name].alias.clone())
     }
 
     pub fn get_definition(&self, name: &str) -> Result<&BranchingRule, crate::parser::ParseError> {
@@ -319,7 +350,7 @@ impl Grammar {
                     // Terminals are never nullable
                     return Ok(false);
                 }
-                Factor::Nonterm(_, name) => {
+                Factor::Nonterm(_, name, _) => {
                     // Check if this nonterminal is nullable using the cache
                     let key = NullabilityKey::BranchingRule(name.clone());
                     if !cache.get(&key).copied().unwrap_or(false) {
@@ -354,7 +385,7 @@ impl Grammar {
                     // Terminals are never nullable
                     return Ok(false);
                 }
-                Factor::Nonterm(_, name) => {
+                Factor::Nonterm(_, name, _) => {
                     // Check if this nonterminal is nullable using the cache
                     let key = NullabilityKey::BranchingRule(name.clone());
                     if !cache.get(&key).copied().unwrap_or(false) {
@@ -464,7 +495,12 @@ impl Grammar {
                     if name == "rule" {
                         all_rules.push(nid);
                         let attrs = Parser::get_attributes(arena, nid);
-                        let rule_name = attrs.get("name").map(|s| s.as_str()).unwrap_or("UNNAMED");
+                        let naming = Grammar::naming_from_node(arena, nid);
+                        let rule_name = attrs
+                            .get("name")
+                            .or(naming.name.as_ref())
+                            .map(|s| s.as_str())
+                            .unwrap_or("UNNAMED");
                         debug_grammar!(
                             DebugLevel::Detailed,
                             "GRAMMAR|phase=rule_found|name={}|node_id={:?}",
@@ -526,7 +562,8 @@ impl Grammar {
         }
         for rule in all_rules {
             let rule_attrs = Parser::get_attributes(arena, rule);
-            let rule_name = match rule_attrs.get("name") {
+            let naming = Grammar::naming_from_node(arena, rule);
+            let rule_name = match rule_attrs.get("name").or(naming.name.as_ref()) {
                 Some(name) => name,
                 None => {
                     debug_grammar!(DebugLevel::Basic, "ERROR: Rule is missing a name attribute");
@@ -535,22 +572,47 @@ impl Grammar {
                     ));
                 }
             };
-            let rule_mark = rule_attrs.get("mark");
+            let rule_mark = rule_attrs.get("mark").or(naming.mark.as_ref());
             let mark = match rule_mark.map(|s| s.as_str()) {
                 Some("@") => Mark::Attr,
                 Some("-") => Mark::Mute,
                 Some("^") => Mark::Unmute,
                 _ => Mark::Default,
             };
-            Grammar::construct_rule_from_tree(rule, mark, arena, rule_name, &mut g);
+            Grammar::construct_rule_from_tree(
+                rule,
+                mark,
+                naming.alias.as_deref(),
+                arena,
+                rule_name,
+                &mut g,
+            );
         }
         Ok(g)
+    }
+
+    fn naming_from_node(arena: &Arena<crate::parser::Content>, node: NodeId) -> NamingAttributes {
+        use crate::parser::Parser;
+
+        let mut attrs = Parser::get_attributes(arena, node);
+        if let Some(naming_node) = Parser::get_child_elements_named(arena, node, "naming").first() {
+            for (key, value) in Parser::get_attributes(arena, *naming_node) {
+                attrs.entry(key).or_insert(value);
+            }
+        }
+
+        NamingAttributes {
+            mark: attrs.remove("mark"),
+            name: attrs.remove("name"),
+            alias: attrs.remove("alias"),
+        }
     }
 
     /// Helper function: Fully construct one rule from parse tree
     fn construct_rule_from_tree(
         rule: NodeId,
         mark: Mark,
+        alias: Option<&str>,
         arena: &Arena<crate::parser::Content>,
         rule_name: &str,
         g: &mut Grammar,
@@ -577,7 +639,7 @@ impl Grammar {
                     rule_name
                 );
                 let rb = Grammar::build_sequence_from_tree(eid, arena, &ctx);
-                g.mark_define(mark, rule_name, rb);
+                g.mark_define_alias(mark, rule_name, alias, rb);
             }
         }
         debug_grammar!(
@@ -787,13 +849,22 @@ impl Grammar {
                 }
             }
             "nonterminal" => {
-                let mark = match attrs.get("mark").map(|s| s.as_str()) {
+                let naming = Grammar::naming_from_node(arena, nid);
+                let mark = match attrs
+                    .get("mark")
+                    .or(naming.mark.as_ref())
+                    .map(|s| s.as_str())
+                {
                     Some("@") => Mark::Attr,
                     Some("-") => Mark::Mute,
                     Some("^") => Mark::Unmute,
                     _ => Mark::Default,
                 };
-                seq = seq.mark_nt(&attrs["name"], mark);
+                let nt_name = attrs
+                    .get("name")
+                    .or(naming.name.as_ref())
+                    .expect("nonterminal must have a name");
+                seq = seq.mark_nt_alias(nt_name, mark, naming.alias.as_deref());
             }
             "option" => {
                 let subexpr = Grammar::build_sequence_from_tree(nid, arena, ctx);
@@ -993,6 +1064,10 @@ impl fmt::Display for Grammar {
             let branching_rule = &self.definitions[name];
             builder.append(branching_rule.mark.to_string());
             builder.append(name.to_string());
+            if let Some(alias) = &branching_rule.alias {
+                builder.append(">");
+                builder.append(alias.to_string());
+            }
             builder.append("= ");
             let rules: Vec<String> = branching_rule
                 .alts
@@ -1037,6 +1112,7 @@ impl<'a> Iterator for TermIter<'a> {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct BranchingRule {
     mark: Mark,
+    alias: Option<SmolStr>,
     alts: Vec<Rule>,
     is_internal: bool,
 }
@@ -1045,6 +1121,7 @@ impl BranchingRule {
     pub fn new(mark: Mark) -> Self {
         Self {
             mark,
+            alias: None,
             alts: Vec::new(),
             is_internal: false,
         }
@@ -1159,7 +1236,7 @@ impl fmt::Display for Rule {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Factor {
     Terminal(TMark, TerminalDefn),
-    Nonterm(Mark, SmolStr),
+    Nonterm(Mark, SmolStr, Option<SmolStr>),
     /// Insertion: text to insert in output without consuming input
     /// Can be marked with TMark for exclusion or hex representation
     Insertion(TMark, SmolStr),
@@ -1180,7 +1257,13 @@ impl fmt::Display for Factor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Terminal(tmark, lit) => write!(f, "{tmark}{lit}"),
-            Self::Nonterm(mark, str) => write!(f, "{mark}{str}"),
+            Self::Nonterm(mark, name, alias) => {
+                if let Some(alias) = alias {
+                    write!(f, "{mark}{name}>{alias}")
+                } else {
+                    write!(f, "{mark}{name}")
+                }
+            }
             Self::Insertion(tmark, text) => write!(f, "{tmark}+\"{text}\""),
         }
     }
@@ -1450,7 +1533,14 @@ impl SeqBuilder {
 
     /// nonterminal, with specified Mark
     pub fn mark_nt(mut self, name: &str, mark: Mark) -> Self {
-        let term = Factor::Nonterm(mark, SmolStr::new(name));
+        let term = Factor::Nonterm(mark, SmolStr::new(name), None);
+        self.factors.push(term);
+        self
+    }
+
+    /// nonterminal, with specified Mark and output alias
+    pub fn mark_nt_alias(mut self, name: &str, mark: Mark, alias: Option<&str>) -> Self {
+        let term = Factor::Nonterm(mark, SmolStr::new(name), alias.map(SmolStr::new));
         self.factors.push(term);
         self
     }
@@ -1625,7 +1715,7 @@ mod tests {
         let mut parser = Parser::new(g);
         let arena = parser.parse(ixml)?;
         let result = Parser::tree_to_test_format(&arena);
-        let expected = r#"<ixml><rule name="doc"><alt><literal string="A"/><literal string="B"/></alt></rule></ixml>"#;
+        let expected = r#"<ixml><rule><naming name="doc"/><alt><literal string="A"/><literal string="B"/></alt></rule></ixml>"#;
         assert_eq!(result, expected);
 
         println!("=============");

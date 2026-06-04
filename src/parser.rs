@@ -142,7 +142,13 @@ impl fmt::Display for DotNotation {
             .iter()
             .map(|i| match i {
                 MatchRec::Term(ch, pos, tmark) => format!("{tmark}'{ch}'@{pos}"),
-                MatchRec::NonTerm(name, pos, mark) => format!("{mark}{name}@{pos}"),
+                MatchRec::NonTerm(name, pos, mark, alias) => {
+                    if let Some(alias) = alias {
+                        format!("{mark}{name}>{alias}@{pos}")
+                    } else {
+                        format!("{mark}{name}@{pos}")
+                    }
+                }
                 MatchRec::Insertion(pos, text, tmark) => format!("{tmark}+\"{text}\"@{pos}"),
             })
             .collect::<Vec<_>>()
@@ -166,7 +172,7 @@ impl fmt::Display for DotNotation {
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum MatchRec {
     Term(char, usize, TMark),
-    NonTerm(SmolStr, usize, Mark),
+    NonTerm(SmolStr, usize, Mark, Option<SmolStr>),
     /// Insertion: text inserted without consuming input (position, text, mark)
     Insertion(usize, SmolStr, TMark),
 }
@@ -175,7 +181,7 @@ impl MatchRec {
     fn pos(&self) -> usize {
         match self {
             Self::Term(_, pos, _) => *pos,
-            Self::NonTerm(_, pos, _) => *pos,
+            Self::NonTerm(_, pos, _, _) => *pos,
             Self::Insertion(pos, _, _) => *pos,
         }
     }
@@ -187,6 +193,7 @@ pub struct Task {
     name: SmolStr,    // BranchingRule name
     alt_index: usize, // which alt of this BranchingRule (0-based)
     mark: Mark,       // effective mark for this task
+    alias: Option<SmolStr>,
     origin: usize,    // starting position in the input
     pos: usize,       // current position in the input
     dot: DotNotation, // progress
@@ -426,6 +433,7 @@ impl TraceArena {
         name: &str,
         alt_index: usize,
         mark: Mark,
+        alias: Option<SmolStr>,
         origin: usize,
         pos: usize,
         dot: DotNotation,
@@ -442,6 +450,7 @@ impl TraceArena {
             name: SmolStr::new(name),
             alt_index,
             mark,
+            alias,
             origin,
             pos,
             dot,
@@ -481,6 +490,7 @@ impl TraceArena {
             name: from_task.name.clone(),
             alt_index: from_task.alt_index, // Preserve alt_index from source task
             mark: from_task.mark.clone(),
+            alias: from_task.alias.clone(),
             origin: from_task.origin,
             pos: new_pos,
             dot: new_dot,
@@ -680,11 +690,14 @@ impl Parser {
             .ok_or(ParseError::static_err("No top grammar rule"))?;
 
         for (alt_index, alt) in top_rule.iter().enumerate() {
+            let root_name = g
+                .get_root_definition_name()
+                .ok_or(ParseError::static_err("No top grammar rule name"))?;
             let maybe_id = self.traces.task(
-                &g.get_root_definition_name()
-                    .ok_or(ParseError::static_err("No top grammar rule name"))?,
+                &root_name,
                 alt_index,
                 top_rule.mark(),
+                g.get_definition_alias(&root_name)?,
                 0,
                 0,
                 alt.dot_notator(),
@@ -745,7 +758,7 @@ impl Parser {
                 match factor {
                     // grammar nonterminal sym:
                     //    START grammar FOR sym AT pos
-                    Factor::Nonterm(mark, name) => {
+                    Factor::Nonterm(mark, name, _alias) => {
                         self.predict(&g, tid, mark, name)?;
                     }
                     // sym starts (input, pos): \Terminal, matches
@@ -823,8 +836,8 @@ impl Parser {
 
             let now_finished_via_child = self.traces.get(continue_id).dot.next_unparsed();
             let match_rec = match now_finished_via_child {
-                Factor::Nonterm(mark, name) => {
-                    MatchRec::NonTerm(name, self.traces.get(tid).pos, mark)
+                Factor::Nonterm(mark, name, alias) => {
+                    MatchRec::NonTerm(name, self.traces.get(tid).pos, mark, alias)
                 }
                 Factor::Terminal(tmark, _ch) => {
                     // This should never happen - terminals are handled by Scanner
@@ -884,6 +897,7 @@ impl Parser {
         // as well as at the point of reference...
         // Figure out what to do with all possible combinations
         let defn_mark = g.get_definition_mark(&name)?;
+        let defn_alias = g.get_definition_alias(&name)?;
         let effective_mark = match (defn_mark, mark) {
             (Mark::Default, Mark::Default) => Mark::Default,
             (Mark::Default, Mark::Mute) => Mark::Mute,
@@ -908,6 +922,7 @@ impl Parser {
                 &name,
                 alt_index,
                 effective_mark,
+                defn_alias.clone(),
                 current_pos,
                 current_pos,
                 alt.dot_notator(),
@@ -945,7 +960,9 @@ impl Parser {
 
                     let now_finished_via_child = self.traces.get(continue_id).dot.next_unparsed();
                     let match_rec = match now_finished_via_child {
-                        Factor::Nonterm(mark, name) => MatchRec::NonTerm(name, current_pos, mark),
+                        Factor::Nonterm(mark, name, alias) => {
+                            MatchRec::NonTerm(name, current_pos, mark, alias)
+                        }
                         Factor::Terminal(tmark, _ch) => {
                             panic!("INTERNAL ERROR: Complete() called on task waiting for terminal {:?}. This indicates a logic bug in the parser.", tmark);
                         }
@@ -1270,6 +1287,7 @@ impl Parser {
             &mut arena,
             &name,
             Mark::Default,
+            None,
             0,
             session.input_length,
             root,
@@ -1313,6 +1331,7 @@ impl Parser {
         arena: &mut Arena<Content>,
         name: &str,
         mark: Mark,
+        alias: Option<&SmolStr>,
         origin: usize,
         end: usize,
         root: NodeId,
@@ -1335,7 +1354,10 @@ impl Parser {
                 } else {
                     // Element or Attribute
                     debug!("trace found {} {task}", task.mark);
-                    let name_str = match_name.to_string();
+                    let name_str = alias
+                        .or(task.alias.as_ref())
+                        .unwrap_or(match_name)
+                        .to_string();
                     let data = if effective_mark == Mark::Attr {
                         Content::Attribute(name_str, "".to_string()) // 2nd pass will fill in the atttribute value
                     } else {
@@ -1358,13 +1380,14 @@ impl Parser {
                             }
                             new_origin = *pos;
                         }
-                        MatchRec::NonTerm(nt_name, pos, mark) => {
+                        MatchRec::NonTerm(nt_name, pos, mark, alias) => {
                             // guard against infinite recursion
                             assert!((nt_name != name || new_origin != origin || *pos != end));
                             self.unpack_parse_tree_internal(
                                 arena,
                                 nt_name,
                                 mark.clone(),
+                                alias.as_ref(),
                                 new_origin,
                                 *pos,
                                 new_root,

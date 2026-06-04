@@ -32,8 +32,10 @@ Bad:   // NEW algorithm...
        prolog: version, s.
       version: -"ixml", RS, -"version", RS, string, s, -'.' .
 
-         rule: (mark, s)?, name, s, -["=:"], s, -alts, -".".
+         rule: naming, -["=:"], s, -alts, -".".
         @mark: ["@^-"].
+       naming: (mark, s)?, name, s, (-">", s, alias, s)?.
+        @alias: name.
          alts: alt++(-[";|"], s).
           alt: term**(-",", s).
         -term: factor;
@@ -48,7 +50,7 @@ Bad:   // NEW algorithm...
       repeat1: factor, (-"+", s; -"++", s, sep).
        option: factor, -"?", s.
           sep: factor.
-  nonterminal: (mark, s)?, name, s.
+  nonterminal: naming.
 
         @name: namestart, namefollower*.
    -namestart: ["_"; L].
@@ -304,14 +306,15 @@ grep "FAIL" log/debug.log          # All failures
 3. **Focus on parse tree structure** - grammar parsing vs input parsing are different issues
 4. **Leverage test suite patterns** - find working examples to understand correct behavior
 
-## Current Status: Dynamic Errors Implemented (Updated 2026-06-04)
+## Current Status: Naming/Alias Implemented (Updated 2026-06-04)
 
 **Full conformance catalog**
-- **Pass Rate**: 175/231 passing (75.8%)
-- **Remaining**: 13 concrete failures, 43 bootstrap errors, 0 TODO
-- **Latest baseline**: `cargo run -- suite --console SUMMARY --file FAILURES -o log/full-suite-dynamic-errors.txt`
+- **Pass Rate**: 179/231 passing (77.5%)
+- **Remaining**: 13 concrete failures, 39 bootstrap errors, 0 TODO
+- **Latest baseline**: `cargo run -- suite --console SUMMARY --file FAILURES -o log/full-suite-naming-after.txt`
 
 **Recent Fixes**
+- **Draft Naming/Alias Syntax**: `B>X = ...` and `B>C` parse with the original rule name but serialize using the alias, including attribute references.
 - **Dynamic Errors**: `AssertDynamicError` is implemented in the suite driver; XML output validation detects duplicate attributes, invalid XML names, non-XML characters, root attributes, wrong root cardinality, and reserved `xmlns` attributes.
 - **Multiple Expected Results**: Multiple `<assert-xml>` entries are treated as acceptable alternatives.
 - **Occurrence Marks**: A marked nonterminal reference such as `@b` now overrides the rule definition mark during output tree construction.
@@ -322,12 +325,12 @@ grep "FAIL" log/debug.log          # All failures
 - ✅ **Left Recursion**: Supported
 - ✅ **Character Sets**: Core patterns working (`["A"]`, `[#20]`, `["0"-"9"]`, `[L]`, Unicode classes)
 - ✅ **Insertion Syntax**: Core functionality complete; remaining insertion failures are ambiguous cases
+- ✅ **Draft Naming/Alias Syntax**: Rule-definition and nonterminal-reference aliases are implemented
 - ✅ **Dynamic Errors**: D01-D07 output validation implemented where applicable
 - ✅ **Comments**: Nested comment support
 - ✅ **Version Declarations**: Version mismatch detection and `ixml:state` attribute support
 - ⚠️ **Ambiguous Parses**: Not yet supported; remaining `FAIL` cases are ambiguity-related
 - ⚠️ **XML-form Grammar Fixtures**: Still bootstrap-erroring
-- ⚠️ **Draft Naming/Alias Syntax**: Not yet implemented
 
 # TODO File Management
 
