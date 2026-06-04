@@ -107,47 +107,46 @@
   - Impact: Clear indication that ambiguous parse support is not yet implemented
 
 ## Current Test Suite Status (Updated 2026-06-04)
-- **Full catalog**: **222/231 passing (96.1% pass rate)**
-  - **222 PASS**
-  - **9 FAIL** - all remaining failures are structural ambiguity cases (same root alt, multiple derivations)
+- **Full catalog**: **227/231 passing (98.3% pass rate)**
+  - **227 PASS**
+  - **4 FAIL** - all remaining failures are structural ambiguity cases not detected by the first saturated counting pass
   - **0 Bootstrap Errors**
   - **0 TODO**
-  - Latest run: `cargo run -- suite --console SUMMARY --file FAILURES -o log/ambiguous-fix4.txt`
+  - Latest run: `cargo run -- suite --console SUMMARY --file FAILURES -o log/counting-full.txt`
 - **Dynamic error tests**: **20/20 passing**
   - Implemented output-tree validation for D01-D07 conditions where applicable
   - Suite driver now accepts `assert-dynamic-error error-code="..."` and matches the produced D-code
 - **Syntax tests**: **78/78 passing**
   - `vxml-grammar-ref` XML grammar references now load and convert to `Grammar`
-- **Insertion tests**: **10/13 passing**
+- **Insertion tests**: **12/13 passing**
   - Remaining insertion failures are ambiguous parse cases
   - Core insertion, attributed insertion, and encoded insertion behavior are working
 - **Remaining feature buckets**:
-  - Structural ambiguous parse detection and `ixml:state="ambiguous"` output (all 9 remaining failures)
+  - Structural ambiguous parse detection and `ixml:state="ambiguous"` output (all 4 remaining failures)
 
-## Ambiguous Parse Support (9 failing tests — all share this root cause)
+## Ambiguous Parse Support (4 failing tests — all share this root cause)
 
-The 9 remaining failures require the parser to detect structural ambiguity and emit
+The 4 remaining failures require the parser to detect structural ambiguity and emit
 `ixml:state="ambiguous"` on the root element per the iXML 1.0 spec. They divide into
 three sub-groups:
 
 ### Sub-group A: Correct parse, missing state attribute only (5 tests) #HIGH
 These tests produce the right XML tree but the root element lacks `ixml:state="ambiguous"`.
-Counting Earley should fix the remaining four state-only cases at once.
-- [ ] ambiguous/ambig3/ambig3 — `<a>a<spaces/><b>...</b></a>` content matches; root needs state attr
+- [x] ambiguous/ambig3/ambig3 — fixed by saturated derivation-signature counting
 - [ ] ambiguous/ambig6/ambig6 — `<block>{}</block>` content matches; root needs state attr
 - [ ] ambiguous/css/css — full CSS output matches; root needs state attr
 - [x] ambiguous/date/date — root alternatives detected by root counting
-- [ ] ambiguous/lf2/lf2 — multi-line input output matches; root needs state attr
+- [x] ambiguous/lf2/lf2 — fixed by saturated derivation-signature counting
 
 ### Sub-group B: Wrong parse chosen from ambiguous alternatives (5 tests) #HIGH
 Parser picks one valid but wrong derivation; correct output requires either a different
 preferred derivation or true multi-tree output. `ixml:state="ambiguous"` also required.
 Each test has an `.alt.output.xml` file whose content matches our current parse tree —
 so adding the state attribute alone would pass the test if the alt is accepted.
-- [ ] ambiguous/ambig/ambig — parser chooses left-associative `(i+i)+i`; alt matches our tree #MED
+- [x] ambiguous/ambig/ambig — fixed by saturated derivation-signature counting #MED
 - [ ] ambiguous/ambig4/ambig4 — alt output matches our greedy parse tree #MED
-- [ ] ambiguous/ambig5/ambig5 — alt output matches our parse tree #MED
-- [ ] ambiguous/expr0/expr0 — alt output matches our left-assoc parse tree #MED
+- [x] ambiguous/ambig5/ambig5 — fixed by saturated derivation-signature counting #MED
+- [x] ambiguous/expr0/expr0 — fixed by saturated derivation-signature counting #MED
 - [x] ambiguous/ambiguous-marks/Battr — `S B="b"` form is second expected alt; FIXED by root counting #MED
 
 ### Sub-group C: Ambiguous insertions (3 tests) #MED
@@ -162,6 +161,13 @@ without detecting ambiguity. Output uses wrong inserted text and lacks state att
 If two or more distinct alt_indices complete, the grammar is ambiguous. Fixes 4 tests:
 date, Battr, iAmb-1, iAlt-1. Wired into `tree_to_test_format_with_state()` in
 cmd_parse.rs and cmd_suite.rs.
+
+### Implemented: saturated derivation-signature counting (src/parser.rs)
+Each `Task` stores one derivation signature plus a capped `One`/`Many` count. When a
+duplicate Earley item arrives with a different signature, or from an already-`Many`
+child derivation, the stored item becomes `Many`. `Parser::is_ambiguous()` then marks
+completed root items with `Many` as ambiguous. Fixes 5 more tests: ambig, ambig3,
+ambig5, expr0, and lf2.
 
 ### Attempted: Earley chart structural deduplication (ABANDONED — too many false positives)
 The intuition: when a completed task is blocked by deduplication inside `complete()`,
@@ -182,12 +188,11 @@ full input" improves the ambiguous subset (11/15 passing) but incorrectly marks 
 ordinary `correct` fixtures ambiguous. `log/root-dup-correct.txt` showed 16 false
 failures including address, expr*, ranges, and whitespace/delimiter cases.
 
-### Remaining approach for sub-groups A, B, undetected C (9 tests)
-Structural ambiguity (same root alternative, multiple derivations) requires one of:
-- "Counting Earley" algorithm: track derivation count per chart item, flag when > 1
-- Per-item derivation DAG: record all parents per completion, flag shared parents
-Both require significant parser architecture changes (new field per Task, O(n) overhead).
-Files: src/parser.rs (Task struct, complete() function)
+### Remaining approach for undetected structural ambiguity (4 tests)
+The first counting pass still misses ambig4, ambig6, css, and insert-separator-alternate.
+Likely next step: propagate `Many` upgrades after an item has already been processed, or
+record a compact parent/child derivation edge when signatures collapse to the same output
+shape. Files: src/parser.rs (TraceArena duplicate handling, completion propagation)
 - **Recent Major Fixes**:
   - [x] **VXML Grammar References**: COMPLETED - XML-form grammars load through the suite driver #HIGH
     - Files: src/testsuite_utils.rs
