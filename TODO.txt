@@ -176,6 +176,12 @@ the optional `nonpunct?` can complete at many different end positions, each crea
 same parent task hash via a different path. Reverting this approach; root counting is
 the only safe ambiguity signal available without deeper Earley chart bookkeeping.
 
+### Attempted: duplicate completed root item (ABANDONED — false positives)
+Narrowing the dedup signal to "a duplicate task would complete the root rule over the
+full input" improves the ambiguous subset (11/15 passing) but incorrectly marks many
+ordinary `correct` fixtures ambiguous. `log/root-dup-correct.txt` showed 16 false
+failures including address, expr*, ranges, and whitespace/delimiter cases.
+
 ### Remaining approach for sub-groups A, B, undetected C (9 tests)
 Structural ambiguity (same root alternative, multiple derivations) requires one of:
 - "Counting Earley" algorithm: track derivation count per chart item, flag when > 1
