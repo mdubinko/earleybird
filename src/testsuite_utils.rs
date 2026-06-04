@@ -287,11 +287,16 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                         builder.expected.push(TestResult::AssertNotASentence);
                     }
                     b"assert-dynamic-error" => {
-                        let codes = attr_by_name(&e.attributes(), "code");
+                        let mut codes = attr_by_name(&e.attributes(), "error-code");
+                        if codes.is_empty() {
+                            codes = attr_by_name(&e.attributes(), "code");
+                        }
                         for code in codes.split(' ') {
-                            builder
-                                .expected
-                                .push(TestResult::AssertDynamicError(String::from(code)));
+                            if !code.is_empty() {
+                                builder
+                                    .expected
+                                    .push(TestResult::AssertDynamicError(String::from(code)));
+                            }
                         }
                     }
                     b"assert-xml" => {

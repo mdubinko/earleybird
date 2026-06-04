@@ -457,26 +457,47 @@ fn run_single_test(test: testsuite_utils::TestCase) -> TestOutcome {
                     Err(_) => TestOutcome::Pass,
                 }
             }
-            AssertDynamicError(expected_code) => TestOutcome::Todo(format!(
-                "AssertDynamicError({}) not yet implemented",
-                expected_code
-            )),
+            AssertDynamicError(expected_code) => {
+                let mut parser = Parser::new(target_grammar.clone());
+                match parse_with_trace_limit(&mut parser, &test.input) {
+                    Ok(tree) => match Parser::validate_xml_output(&tree) {
+                        Ok(()) => TestOutcome::Fail {
+                            expected: format!("dynamic error {expected_code}"),
+                            actual: "parse and XML serialization succeeded".to_string(),
+                        },
+                        Err(e) if dynamic_error_matches(&e.to_string(), &expected_code) => {
+                            TestOutcome::Pass
+                        }
+                        Err(e) => TestOutcome::Fail {
+                            expected: format!("dynamic error {expected_code}"),
+                            actual: e.to_string(),
+                        },
+                    },
+                    Err(e) => TestOutcome::InputParseError(e.to_string()),
+                }
+            }
             AssertXml(expected_xml) => {
                 let version_mismatch = target_grammar.has_version_mismatch();
                 let mut parser = Parser::new(target_grammar.clone());
                 match parse_with_trace_limit(&mut parser, &test.input) {
-                    Ok(tree) => {
-                        let actual_xml =
-                            Parser::tree_to_test_format_with_version(&tree, version_mismatch);
-                        if xml_canonicalize(&actual_xml) == xml_canonicalize(&expected_xml) {
-                            TestOutcome::Pass
-                        } else {
-                            TestOutcome::Fail {
-                                expected: xml_canonicalize(&expected_xml),
-                                actual: xml_canonicalize(&actual_xml),
+                    Ok(tree) => match Parser::validate_xml_output(&tree) {
+                        Ok(()) => {
+                            let actual_xml =
+                                Parser::tree_to_test_format_with_version(&tree, version_mismatch);
+                            if xml_canonicalize(&actual_xml) == xml_canonicalize(&expected_xml) {
+                                TestOutcome::Pass
+                            } else {
+                                TestOutcome::Fail {
+                                    expected: xml_canonicalize(&expected_xml),
+                                    actual: xml_canonicalize(&actual_xml),
+                                }
                             }
                         }
-                    }
+                        Err(e) => TestOutcome::Fail {
+                            expected: xml_canonicalize(&expected_xml),
+                            actual: e.to_string(),
+                        },
+                    },
                     Err(e) => TestOutcome::InputParseError(e.to_string()),
                 }
             }
@@ -491,6 +512,10 @@ fn run_single_test(test: testsuite_utils::TestCase) -> TestOutcome {
     }
 
     first_failure.unwrap_or(TestOutcome::Pass)
+}
+
+fn dynamic_error_matches(actual: &str, expected_code: &str) -> bool {
+    actual.contains(&format!("{expected_code}:"))
 }
 
 impl RunSuite {

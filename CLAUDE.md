@@ -304,46 +304,30 @@ grep "FAIL" log/debug.log          # All failures
 3. **Focus on parse tree structure** - grammar parsing vs input parsing are different issues
 4. **Leverage test suite patterns** - find working examples to understand correct behavior
 
-## Current Status: Phase 3 - Insertion & Output Formatting (Updated 2025-10-01)
+## Current Status: Dynamic Errors Implemented (Updated 2026-06-04)
 
-### 🎉 BREAKTHROUGH: 87% Test Pass Rate!
+**Full conformance catalog**
+- **Pass Rate**: 175/231 passing (75.8%)
+- **Remaining**: 13 concrete failures, 43 bootstrap errors, 0 TODO
+- **Latest baseline**: `cargo run -- suite --console SUMMARY --file FAILURES -o log/full-suite-dynamic-errors.txt`
 
-**✅ PHASE 3 COMPLETE: Insertion Implementation + Test Infrastructure Fixes**
-- **Pass Rate**: 87.1% (81/93 tests) - Up from 62.4% (58/93 tests)
-- **+23 additional passing tests** in one session!
-- **Key Achievements**:
-  - Full insertion syntax support (`+` for text insertion)
-  - Self-closing XML tags (`<tag/>` for empty elements)
-  - Critical test catalog parsing bugs fixed
+**Recent Fixes**
+- **Dynamic Errors**: `AssertDynamicError` is implemented in the suite driver; XML output validation detects duplicate attributes, invalid XML names, non-XML characters, root attributes, wrong root cardinality, and reserved `xmlns` attributes.
+- **Multiple Expected Results**: Multiple `<assert-xml>` entries are treated as acceptable alternatives.
+- **Occurrence Marks**: A marked nonterminal reference such as `@b` now overrides the rule definition mark during output tree construction.
+- **Encoded Terminal Marks**: Hidden encoded terminals such as `-#01` retain their hidden tmark during grammar conversion.
 
-**✅ Insertion Implementation**
-- **Grammar Support**: Added `Factor::Insertion(TMark, SmolStr)` variant
-- **Parser Integration**: Insertions advance without consuming input (nullable)
-- **Output Generation**: Inserted text properly included in parse trees
-- **Test Results**: 9/12 insertion tests passing (75%)
-  - 3 failures are ambiguous parse cases (multiple parse trees not yet supported)
-  - All non-ambiguous insertion patterns working correctly
-
-**✅ Output Format Improvements**
-- **Self-Closing Tags**: Empty elements use `<tag/>` instead of `<tag></tag>`
-- **Entity Escaping**: Proper handling of `&`, `<`, `"` in attributes and text
-- **xmlns Attributes**: Automatically stripped by canonicalization (already working)
-
-**✅ Test Infrastructure Fixes**
-- **XML Accumulator Bug**: Fixed concatenation of test expectations (src/testsuite_utils.rs:318)
-- **Entity Unescaping**: Fixed test-string parsing to unescape XML entities (src/testsuite_utils.rs:244-250)
-- **Ambiguity Detection**: Added 🫥 warning for tests expecting ambiguous parses
-- **Failure Output**: Improved readability of FAILURES log format
-
-### Feature Status Summary
-- ✅ **Position-Bucketed Queue**: Working perfectly
-- ✅ **Left Recursion**: Fully supported
-- ✅ **Character Sets**: All patterns working (`["A"]`, `[#20]`, `["0"-"9"]`, `[L]`, Unicode classes)
-- ✅ **Insertion Syntax**: Complete implementation
+**Feature Status Summary**
+- ✅ **Position-Bucketed Queue**: Working
+- ✅ **Left Recursion**: Supported
+- ✅ **Character Sets**: Core patterns working (`["A"]`, `[#20]`, `["0"-"9"]`, `[L]`, Unicode classes)
+- ✅ **Insertion Syntax**: Core functionality complete; remaining insertion failures are ambiguous cases
+- ✅ **Dynamic Errors**: D01-D07 output validation implemented where applicable
 - ✅ **Comments**: Nested comment support
-- ✅ **Version Declarations**: Full support for version mismatch detection and ixml:state attribute
-- ⚠️ **Ambiguous Parses**: Not yet supported (affects ~3 tests)
-- 📝 **Dynamic Errors**: AssertDynamicError not yet implemented (affects 1 test)
+- ✅ **Version Declarations**: Version mismatch detection and `ixml:state` attribute support
+- ⚠️ **Ambiguous Parses**: Not yet supported; remaining `FAIL` cases are ambiguity-related
+- ⚠️ **XML-form Grammar Fixtures**: Still bootstrap-erroring
+- ⚠️ **Draft Naming/Alias Syntax**: Not yet implemented
 
 # TODO File Management
 

@@ -106,29 +106,35 @@
   - Added: 🫥 emoji warning when loading tests with ixml:state="ambiguous" (src/testsuite_utils.rs:310-314)
   - Impact: Clear indication that ambiguous parse support is not yet implemented
 
-## Current Test Suite Status (Updated 2025-10-01)
-- **Correct Tests**: **81/93 passing (87.1% pass rate)** - Excellent progress!
-  - **81 PASS** (87.1%) - Up from 60/93 (64.5%)
-  - **2 FAIL** (2.2%) - Minor output issues remaining
-  - **8 Bootstrap Errors** (8.6%) - Remaining bootstrap grammar parsing failures
-  - **1 Parse Error** (1.1%) - Edge case
-  - **1 TODO** (1.1%) - AssertDynamicError not yet implemented
-- **Insertion Tests**: **9/12 passing (75%)**
-  - 3 failures are ambiguous parse cases (require multiple parse tree support)
-  - Core insertion functionality fully working
-- **Recent Major Fixes (2025-10-01)**:
-  - [x] **Insertion Implementation**: COMPLETED - Full insertion syntax support #HIGH
-    - Added complete insertion implementation throughout grammar and parser
-    - Insertions work as separators, in attributes, with hex codes, and in all positions
-    - Only ambiguous insertion tests fail (not yet supported)
-  - [x] **XML Output Format**: FIXED - Self-closing tags and entity escaping #HIGH
-    - Fixed: Empty elements use `<tag/>` instead of `<tag></tag>`
-    - Fixed: Proper XML entity escaping in attributes and text
-    - Files: src/parser.rs, src/testsuite_utils.rs
-  - [x] **Test Catalog Parsing**: FIXED - Critical bugs in test loading #CRITICAL
-    - Fixed: XML accumulator buffer not cleared between assert-xml blocks
-    - Fixed: test-string XML entities not being unescaped
-    - Impact: Eliminated many false test failures
+## Current Test Suite Status (Updated 2026-06-04)
+- **Full catalog**: **175/231 passing (75.8% pass rate)**
+  - **175 PASS**
+  - **13 FAIL** - all remaining concrete failures are ambiguous-output cases
+  - **43 Bootstrap Errors** - XML-form grammar fixtures, draft naming/alias syntax, and non-XML clear fixtures
+  - **0 TODO** - `AssertDynamicError` is implemented in the suite driver
+  - Latest run: `cargo run -- suite --console SUMMARY --file FAILURES -o log/full-suite-dynamic-errors.txt`
+- **Dynamic error tests**: **18/20 passing**
+  - The two remaining cases are bootstrap failures in `error/non-XML-char-in-input-output-clear`
+  - Implemented output-tree validation for D01-D07 conditions where applicable
+  - Suite driver now accepts `assert-dynamic-error error-code="..."` and matches the produced D-code
+- **Insertion tests**: **10/13 passing**
+  - Remaining insertion failures are ambiguous parse cases
+  - Core insertion, attributed insertion, and encoded insertion behavior are working
+- **Remaining feature buckets**:
+  - Ambiguous parse detection and `ixml:state="ambiguous"` output
+  - XML-form grammar input / syntax XML bootstrap support
+  - Draft naming/alias syntax (`>` operator)
+  - Non-XML clear fixture bootstrap loop
+- **Recent Major Fixes**:
+  - [x] **Dynamic Errors**: COMPLETED - output validation detects D02-D07 and suite accepts expected dynamic codes #HIGH
+    - Files: src/parser.rs, src/cmd_suite.rs, src/cmd_parse.rs, src/testsuite_utils.rs
+    - Tests: `cargo run -- suite error --console SUMMARY --file FAILURES -o log/error-dynamic-after.txt` => 18 pass, 0 fail, 2 bootstrap
+  - [x] **Alternate Expected Results**: COMPLETED - multiple `<assert-xml>` expectations are alternatives #HIGH
+    - Fixed: `chars/chars.astral/chars.astral.1`
+  - [x] **Occurrence Mark Output**: COMPLETED - nonterminal occurrence marks override definition marks #HIGH
+    - Fixed: `grammar-misc/insert-multiple-attribute/iMultAtt-1`
+  - [x] **Encoded Terminal Marks**: COMPLETED - hidden `-#NN` terminals retain their tmark #HIGH
+    - Fixed: `error/non-XML-char-in-input-output-errors/SOH-RS-EOT`
 - **Previous Major Fixes**:
   - **Architecture Simplification**: COMPLETED - removed all parent-hash/blockchain complexity from parser
   - **Task Deduplication**: SIMPLIFIED - single identity hash per task based on core fields
@@ -247,7 +253,7 @@ This draft incorporates all 1.0 errata plus the following new features:
 
 ## Summary: Path to 100% ixml Current Draft Conformance
 
-**Current Status**: Targeting ixml 1.0 + E001 (87.1% pass rate, 81/93 tests)
+**Current Status**: Targeting ixml 1.0 + E001 (75.8% full-catalog pass rate, 175/231 tests)
 **Proposed Target**: ixml Draft 2025-09-01 (all 1.0 errata + renaming + Cc validation)
 
 **Required Changes**:
@@ -273,10 +279,10 @@ This draft incorporates all 1.0 errata plus the following new features:
 - [ ] S12: Grammar does not conform to implied or declared version #MED
 
 ### Dynamic Errors (detected when processing input with grammar)
-- [ ] D01: Parse tree cannot be represented as well-formed XML #MED
-- [ ] D02: Two or more attributes with same name on same element #HIGH
-- [ ] D03: Element or attribute name is not valid XML name #MED
-- [ ] D04: Attempt to serialize characters not permitted in XML #MED
-- [ ] D05: Attempt to serialize attribute as root node of XML document #LOW
-- [ ] D06: Parse tree does not contain exactly one top-level element #MED
-- [ ] D07: Attribute named "xmlns" appears on element #LOW
+- [x] D01: Parse tree cannot be represented as well-formed XML #MED
+- [x] D02: Two or more attributes with same name on same element #HIGH
+- [x] D03: Element or attribute name is not valid XML name #MED
+- [x] D04: Attempt to serialize characters not permitted in XML #MED
+- [x] D05: Attempt to serialize attribute as root node of XML document #LOW
+- [x] D06: Parse tree does not contain exactly one top-level element #MED
+- [x] D07: Attribute named "xmlns" appears on element #LOW

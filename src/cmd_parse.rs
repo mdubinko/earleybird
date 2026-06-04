@@ -261,6 +261,10 @@ impl Parse {
         // 5. Format and output results
         match self.out_format.as_str() {
             "XML" => {
+                if let Err(e) = Parser::validate_xml_output(&parse_tree) {
+                    eprintln!("Error serializing XML output: {}", e);
+                    std::process::exit(1);
+                }
                 let xml_output =
                     Parser::tree_to_test_format_with_version(&parse_tree, version_mismatch);
                 println!("{}", xml_output);

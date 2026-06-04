@@ -1431,6 +1431,149 @@ impl Parser {
         builder.string().unwrap()
     }
 
+    pub fn validate_xml_output(arena: &Arena<Content>) -> Result<(), ParseError> {
+        let root = arena.iter().next().unwrap();
+        let root_id = arena.get_node_id(root).unwrap();
+        let mut top_level_elements = 0;
+
+        for child in root_id.children(arena) {
+            match arena.get(child).unwrap().get() {
+                Content::Element(_) => top_level_elements += 1,
+                Content::Attribute(..) => {
+                    return Err(ParseError::dynamic_err(
+                        "D05: attribute cannot appear at the root of an XML document",
+                    ));
+                }
+                Content::Text(text) if text.is_empty() => {}
+                Content::Text(_) => {
+                    return Err(ParseError::dynamic_err(
+                        "D06: parse tree must contain exactly one top-level element",
+                    ));
+                }
+                Content::Root => {}
+            }
+        }
+
+        if top_level_elements != 1 {
+            return Err(ParseError::dynamic_err(
+                "D06: parse tree must contain exactly one top-level element",
+            ));
+        }
+
+        for child in root_id.children(arena) {
+            Self::validate_xml_output_recurse(arena, child)?;
+        }
+
+        Ok(())
+    }
+
+    fn validate_xml_output_recurse(arena: &Arena<Content>, nid: NodeId) -> Result<(), ParseError> {
+        match arena.get(nid).unwrap().get() {
+            Content::Root => {}
+            Content::Element(name) => {
+                if !Self::is_xml_name(name) {
+                    return Err(ParseError::dynamic_err(&format!(
+                        "D03: element name '{name}' is not an XML name"
+                    )));
+                }
+
+                let mut seen_attrs = HashSet::new();
+                for attr_child in nid
+                    .children(arena)
+                    .filter(|n| arena.get(*n).unwrap().get().is_attr())
+                {
+                    if let Content::Attribute(attr_name, attr_value) =
+                        arena.get(attr_child).unwrap().get()
+                    {
+                        if attr_name == "xmlns" {
+                            return Err(ParseError::dynamic_err(
+                                "D07: attribute name 'xmlns' is reserved",
+                            ));
+                        }
+                        if !Self::is_xml_name(attr_name) {
+                            return Err(ParseError::dynamic_err(&format!(
+                                "D03: attribute name '{attr_name}' is not an XML name"
+                            )));
+                        }
+                        if !seen_attrs.insert(attr_name.as_str()) {
+                            return Err(ParseError::dynamic_err(&format!(
+                                "D02: duplicate attribute '{attr_name}'"
+                            )));
+                        }
+                        Self::validate_xml_chars(attr_value)?;
+                    }
+                }
+
+                for child in nid.children(arena) {
+                    Self::validate_xml_output_recurse(arena, child)?;
+                }
+            }
+            Content::Attribute(_, value) => {
+                Self::validate_xml_chars(value)?;
+            }
+            Content::Text(value) => {
+                Self::validate_xml_chars(value)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn validate_xml_chars(value: &str) -> Result<(), ParseError> {
+        if let Some(ch) = value.chars().find(|ch| !Self::is_xml_char(*ch)) {
+            return Err(ParseError::dynamic_err(&format!(
+                "D04: character U+{:04X} is not permitted in XML",
+                ch as u32
+            )));
+        }
+        Ok(())
+    }
+
+    fn is_xml_char(ch: char) -> bool {
+        matches!(
+            ch as u32,
+            0x09 | 0x0A | 0x0D | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF
+        )
+    }
+
+    fn is_xml_name(name: &str) -> bool {
+        let mut chars = name.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        Self::is_xml_name_start_char(first) && chars.all(Self::is_xml_name_char)
+    }
+
+    fn is_xml_name_start_char(ch: char) -> bool {
+        matches!(
+            ch as u32,
+            0x3A
+                | 0x41..=0x5A
+                | 0x5F
+                | 0x61..=0x7A
+                | 0xC0..=0xD6
+                | 0xD8..=0xF6
+                | 0xF8..=0x2FF
+                | 0x370..=0x37D
+                | 0x37F..=0x1FFF
+                | 0x200C..=0x200D
+                | 0x2070..=0x218F
+                | 0x2C00..=0x2FEF
+                | 0x3001..=0xD7FF
+                | 0xF900..=0xFDCF
+                | 0xFDF0..=0xFFFD
+                | 0x10000..=0xEFFFF
+        )
+    }
+
+    fn is_xml_name_char(ch: char) -> bool {
+        Self::is_xml_name_start_char(ch)
+            || matches!(
+                ch as u32,
+                0x2D | 0x2E | 0x30..=0x39 | 0xB7 | 0x0300..=0x036F | 0x203F..=0x2040
+            )
+    }
+
     fn tree_to_test_format_recurse(
         arena: &Arena<Content>,
         builder: &mut Builder,
