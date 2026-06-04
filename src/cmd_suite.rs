@@ -482,8 +482,11 @@ fn run_single_test(test: testsuite_utils::TestCase) -> TestOutcome {
                 match parse_with_trace_limit(&mut parser, &test.input) {
                     Ok(tree) => match Parser::validate_xml_output(&tree) {
                         Ok(()) => {
-                            let actual_xml =
-                                Parser::tree_to_test_format_with_version(&tree, version_mismatch);
+                            let actual_xml = Parser::tree_to_test_format_with_state(
+                                &tree,
+                                version_mismatch,
+                                parser.is_ambiguous(),
+                            );
                             if xml_canonicalize(&actual_xml) == xml_canonicalize(&expected_xml) {
                                 TestOutcome::Pass
                             } else {

@@ -257,6 +257,7 @@ impl Parse {
                 std::process::exit(1);
             }
         };
+        let ambiguous = parser.is_ambiguous();
 
         // 5. Format and output results
         match self.out_format.as_str() {
@@ -265,8 +266,11 @@ impl Parse {
                     eprintln!("Error serializing XML output: {}", e);
                     std::process::exit(1);
                 }
-                let xml_output =
-                    Parser::tree_to_test_format_with_version(&parse_tree, version_mismatch);
+                let xml_output = Parser::tree_to_test_format_with_state(
+                    &parse_tree,
+                    version_mismatch,
+                    ambiguous,
+                );
                 println!("{}", xml_output);
             }
             _ => {

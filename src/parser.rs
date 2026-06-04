@@ -640,6 +640,8 @@ pub struct Parser {
     /// the permanent owner of all tasks, referenced by TraceId
     traces: TraceArena,
     completed_trace: Vec<TraceId>,
+    /// Length of the most recent input, used by is_ambiguous() to filter root-rule completions
+    last_input_len: usize,
 }
 
 /// Earley parser with LIFO prediction strategy and modified completion strategy
@@ -660,6 +662,7 @@ impl Parser {
             grammar,
             traces: TraceArena::new(),
             completed_trace: Vec::new(),
+            last_input_len: 0,
         }
     }
 
@@ -677,6 +680,7 @@ impl Parser {
     ) -> Result<Arena<Content>, ParseError> {
         let mut input = InputIter::new(input);
         session.input_length = input.tokens.len();
+        self.last_input_len = session.input_length;
         // Long comments can produce many finite completions at one position; keep
         // the small-input floor but scale enough to avoid false loop reports.
         session.infinite_loop_threshold = session
@@ -1430,24 +1434,58 @@ impl Parser {
         //        PUT pos IN newstart
     }
 
+    /// True if the last parse found root-alternative ambiguity.
+    ///
+    /// This deliberately stays narrower than structural ambiguity: nullable repetitions can
+    /// reach the same Earley item through non-ambiguous bookkeeping paths, so deeper ambiguity
+    /// detection needs explicit derivation counting.
+    pub fn is_ambiguous(&self) -> bool {
+        let root_name = match self.grammar.get_root_definition_name() {
+            Some(n) => n,
+            None => return false,
+        };
+        let root_alts: HashSet<usize> = self
+            .completed_trace
+            .iter()
+            .filter_map(|&tid| {
+                let t = self.traces.get(tid);
+                (t.name == root_name && t.origin == 0 && t.pos == self.last_input_len)
+                    .then_some(t.alt_index)
+            })
+            .collect();
+        root_alts.len() > 1
+    }
+
     pub fn tree_to_test_format(arena: &Arena<Content>) -> String {
-        Self::tree_to_test_format_with_version(arena, false)
+        Self::tree_to_test_format_with_state(arena, false, false)
     }
 
     pub fn tree_to_test_format_with_version(
         arena: &Arena<Content>,
         version_mismatch: bool,
     ) -> String {
+        Self::tree_to_test_format_with_state(arena, version_mismatch, false)
+    }
+
+    pub fn tree_to_test_format_with_state(
+        arena: &Arena<Content>,
+        version_mismatch: bool,
+        ambiguous: bool,
+    ) -> String {
         let mut builder = Builder::default();
         let root = arena.iter().next().unwrap(); // first item == root
         let root_id = arena.get_node_id(root).unwrap();
 
-        // Build extra attributes for root element if version mismatch
-        let extra_attrs = if version_mismatch {
+        let extra_attrs: Option<Vec<(&str, &str)>> = if version_mismatch {
             Some(vec![
                 ("xmlns", ""),
                 ("xmlns:ixml", "http://invisiblexml.org/NS"),
                 ("ixml:state", "version-mismatch"),
+            ])
+        } else if ambiguous {
+            Some(vec![
+                ("xmlns:ixml", "http://invisiblexml.org/NS"),
+                ("ixml:state", "ambiguous"),
             ])
         } else {
             None
