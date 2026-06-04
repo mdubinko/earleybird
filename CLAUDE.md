@@ -223,6 +223,15 @@ cargo run -- suite syntax/elem       # Run specific test pattern
 
 This is much more efficient than running the full test suite when debugging specific issues.
 
+## Test Suite Expected Results
+
+The iXML test catalog may list more than one acceptable expected result for a
+single test case, usually through multiple `<assert-xml>` entries. Treat these
+as alternatives: a case passes when the parser output matches any listed
+expected result. This is especially important for ambiguous grammars where the
+current parser may choose one valid tree while the catalog lists several valid
+serializations.
+
 ### Debug Examples by Use Case
 
 ```bash

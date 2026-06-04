@@ -1,12 +1,16 @@
-
-use argh::FromArgs;
-use earleybird::{testsuite_utils::{self, xml_canonicalize, TestGrammar, TestOutcome}, parser::Parser, grammar::Grammar, debug::DebugLevel};
 use crate::cmd_suite::testsuite_utils::TestResult::*;
-use std::path::{Path, PathBuf};
-use std::process;
+use argh::FromArgs;
+use earleybird::{
+    debug::DebugLevel,
+    grammar::Grammar,
+    parser::Parser,
+    testsuite_utils::{self, xml_canonicalize, TestGrammar, TestOutcome},
+};
+use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::Write;
-use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::process;
 
 // Helper functions for parsing case-insensitive CLI options
 fn parse_level(level_str: &str) -> Result<DebugLevel, String> {
@@ -43,7 +47,10 @@ fn parse_categories(categories_str: Option<&String>) -> Result<Option<HashSet<St
 }
 
 /// Parse with built-in trace size limit to prevent infinite loops
-fn parse_with_trace_limit(parser: &mut Parser, input: &str) -> Result<indextree::Arena<earleybird::parser::Content>, earleybird::parser::ParseError> {
+fn parse_with_trace_limit(
+    parser: &mut Parser,
+    input: &str,
+) -> Result<indextree::Arena<earleybird::parser::Content>, earleybird::parser::ParseError> {
     // The parser now has built-in trace size limit protection
     parser.parse(input)
 }
@@ -57,15 +64,27 @@ fn parse_with_trace_limit(parser: &mut Parser, input: &str) -> Result<indextree:
 fn resolve_suite_spec(suite_spec: Option<String>) -> (String, Option<String>) {
     let current_dir = std::env::current_dir().expect("Failed to get current directory");
     let ixml_path = current_dir.join("ixml/tests");
-    
+
     match suite_spec {
         None => {
             // Default: use master catalog, no filtering
-            (ixml_path.join("test-catalog.xml").to_string_lossy().to_string(), None)
+            (
+                ixml_path
+                    .join("test-catalog.xml")
+                    .to_string_lossy()
+                    .to_string(),
+                None,
+            )
         }
         Some(filter) => {
             // Always use master catalog, but filter by the provided string
-            (ixml_path.join("test-catalog.xml").to_string_lossy().to_string(), Some(filter))
+            (
+                ixml_path
+                    .join("test-catalog.xml")
+                    .to_string_lossy()
+                    .to_string(),
+                Some(filter),
+            )
         }
     }
 }
@@ -95,11 +114,23 @@ pub struct RunSuite {
     file_filter: Option<String>,
 
     /// output filename for results
-    #[argh(option, short = 'o', long = "output", default = "String::from(\"log/conformance-results.txt\")")]
+    #[argh(
+        option,
+        short = 'o',
+        long = "output",
+        default = "String::from(\"log/conformance-results.txt\")"
+    )]
     output: String,
 }
 
-fn run(suite_spec: Option<String>, console: &str, _console_filter: Option<&String>, file: &str, _file_filter: Option<&String>, output_file: &str) {
+fn run(
+    suite_spec: Option<String>,
+    console: &str,
+    _console_filter: Option<&String>,
+    file: &str,
+    _file_filter: Option<&String>,
+    output_file: &str,
+) {
     let (catalog_path, filter) = resolve_suite_spec(suite_spec);
     println!("Running tests from: {}", catalog_path);
 
@@ -107,11 +138,12 @@ fn run(suite_spec: Option<String>, console: &str, _console_filter: Option<&Strin
     let filtered_tests = match &filter {
         Some(filter_str) => {
             println!("Filtering tests containing: '{}'", filter_str);
-            all_tests.into_iter()
+            all_tests
+                .into_iter()
                 .filter(|test| test.name.contains(filter_str))
                 .collect()
         }
-        None => all_tests
+        None => all_tests,
     };
 
     println!("Loaded {} test cases", filtered_tests.len());
@@ -134,12 +166,14 @@ fn run(suite_spec: Option<String>, console: &str, _console_filter: Option<&Strin
         if let Some(parent) = Path::new(output_file).parent() {
             std::fs::create_dir_all(parent).expect("Could not create output directory");
         }
-        Some(OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(output_file)
-            .expect("Could not create output file"))
+        Some(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .truncate(true)
+                .open(output_file)
+                .expect("Could not create output file"),
+        )
     };
 
     // Write file header if file output enabled
@@ -150,7 +184,6 @@ fn run(suite_spec: Option<String>, console: &str, _console_filter: Option<&Strin
         writeln!(file, "Total tests: {}", filtered_tests.len()).unwrap();
         writeln!(file, "").unwrap();
     }
-
 
     // Statistics
     let mut stats = std::collections::HashMap::new();
@@ -207,7 +240,7 @@ fn run(suite_spec: Option<String>, console: &str, _console_filter: Option<&Strin
         let should_print_result = match console_level {
             DebugLevel::Trace | DebugLevel::Detailed => true, // DEBUG/INFO: show all
             DebugLevel::Basic => false, // SUMMARY: don't show individual results
-            DebugLevel::Off => false, // NONE/OFF: silent
+            DebugLevel::Off => false,   // NONE/OFF: silent
         };
 
         // Write result to file and/or print status
@@ -343,7 +376,8 @@ fn run(suite_spec: Option<String>, console: &str, _console_filter: Option<&Strin
         }
         DebugLevel::Basic => {
             println!("=== SUMMARY ===");
-            println!("Total: {} | Pass: {} | Fail: {} | Bootstrap: {} | Conversion: {} | Parse: {}",
+            println!(
+                "Total: {} | Pass: {} | Fail: {} | Bootstrap: {} | Conversion: {} | Parse: {}",
                 count,
                 stats.get("pass").unwrap_or(&0),
                 stats.get("fail").unwrap_or(&0),
@@ -355,7 +389,10 @@ fn run(suite_spec: Option<String>, console: &str, _console_filter: Option<&Strin
             let validation = stats.get("validation_error").unwrap_or(&0);
             let legacy_grammar = stats.get("grammar_error").unwrap_or(&0);
             if *validation > 0 || *legacy_grammar > 0 {
-                println!("Details: Validation: {} | Legacy Grammar: {}", validation, legacy_grammar);
+                println!(
+                    "Details: Validation: {} | Legacy Grammar: {}",
+                    validation, legacy_grammar
+                );
             }
             if file_level != DebugLevel::Off {
                 println!("Results written to: {}", output_file);
@@ -384,22 +421,29 @@ fn run_single_test(test: testsuite_utils::TestCase) -> TestOutcome {
 
     let target_grammar = match grammar {
         TestGrammar::Parsed(g) => g,
-        TestGrammar::Unparsed(ixml) => {
-            match Grammar::from_ixml_str_detailed(&ixml) {
-                Ok(g) => g,
-                Err(e) => {
-                    use earleybird::grammar::GrammarConstructionError;
-                    return match e {
-                        GrammarConstructionError::ValidationError(msg) => TestOutcome::ValidationError(msg),
-                        GrammarConstructionError::BootstrapParseError(err) => TestOutcome::BootstrapParseError(err.to_string()),
-                        GrammarConstructionError::ConversionError(msg) => TestOutcome::ConversionError(msg),
-                    };
-                }
+        TestGrammar::Unparsed(ixml) => match Grammar::from_ixml_str_detailed(&ixml) {
+            Ok(g) => g,
+            Err(e) => {
+                use earleybird::grammar::GrammarConstructionError;
+                return match e {
+                    GrammarConstructionError::ValidationError(msg) => {
+                        TestOutcome::ValidationError(msg)
+                    }
+                    GrammarConstructionError::BootstrapParseError(err) => {
+                        TestOutcome::BootstrapParseError(err.to_string())
+                    }
+                    GrammarConstructionError::ConversionError(msg) => {
+                        TestOutcome::ConversionError(msg)
+                    }
+                };
             }
-        }
+        },
     };
 
-    // Test each expected result
+    // Catalog entries may list several acceptable outcomes, such as multiple
+    // XML trees for an ambiguous grammar. A test passes if any expectation
+    // matches the implementation's result.
+    let mut first_failure = None;
     for expected in test.expected {
         let outcome = match expected {
             AssertNotASentence => {
@@ -413,15 +457,17 @@ fn run_single_test(test: testsuite_utils::TestCase) -> TestOutcome {
                     Err(_) => TestOutcome::Pass,
                 }
             }
-            AssertDynamicError(expected_code) => {
-                TestOutcome::Todo(format!("AssertDynamicError({}) not yet implemented", expected_code))
-            }
+            AssertDynamicError(expected_code) => TestOutcome::Todo(format!(
+                "AssertDynamicError({}) not yet implemented",
+                expected_code
+            )),
             AssertXml(expected_xml) => {
                 let version_mismatch = target_grammar.has_version_mismatch();
                 let mut parser = Parser::new(target_grammar.clone());
                 match parse_with_trace_limit(&mut parser, &test.input) {
                     Ok(tree) => {
-                        let actual_xml = Parser::tree_to_test_format_with_version(&tree, version_mismatch);
+                        let actual_xml =
+                            Parser::tree_to_test_format_with_version(&tree, version_mismatch);
                         if xml_canonicalize(&actual_xml) == xml_canonicalize(&expected_xml) {
                             TestOutcome::Pass
                         } else {
@@ -436,21 +482,24 @@ fn run_single_test(test: testsuite_utils::TestCase) -> TestOutcome {
             }
         };
 
-        // Return first non-pass result, or pass if all expectations pass
-        if !matches!(outcome, TestOutcome::Pass) {
-            return outcome;
+        if matches!(outcome, TestOutcome::Pass) {
+            return TestOutcome::Pass;
+        }
+        if first_failure.is_none() {
+            first_failure = Some(outcome);
         }
     }
 
-    TestOutcome::Pass
+    first_failure.unwrap_or(TestOutcome::Pass)
 }
 
 impl RunSuite {
     pub fn run(self) {
         // Check if the ixml directory exists
-        let current_dir: PathBuf = std::env::current_dir().expect("Failed to get current directory");
+        let current_dir: PathBuf =
+            std::env::current_dir().expect("Failed to get current directory");
         let ixml_path: PathBuf = current_dir.join("ixml");
-      
+
         if !Path::new(&ixml_path).exists() {
             eprintln!("Error: ixml directory not found");
             eprintln!("Place the official ixml repo (or a symlink to it) at ./ixml/");
@@ -491,6 +540,13 @@ impl RunSuite {
             }
         };
 
-        let _result = run(self.suite, &self.console, self.console_filter.as_ref(), &self.file, self.file_filter.as_ref(), &self.output);
+        let _result = run(
+            self.suite,
+            &self.console,
+            self.console_filter.as_ref(),
+            &self.file,
+            self.file_filter.as_ref(),
+            &self.output,
+        );
     }
 }
