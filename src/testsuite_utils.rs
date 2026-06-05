@@ -32,6 +32,12 @@ pub struct TestCase {
 pub enum TestGrammar {
     Unparsed(String),
     Parsed(Grammar),
+    /// Parse the test input using the built-in ixml grammar.
+    /// Used by grammar-test/assert-xml: input = grammar source text, grammar = ixml.ixml.
+    BootstrapIxml,
+    /// The grammar tree was syntactically valid XML but semantically invalid (S-error).
+    /// Used for VXML grammars that represent grammars containing static errors.
+    FailedToLoad(String),
 }
 
 impl fmt::Display for TestGrammar {
@@ -39,6 +45,8 @@ impl fmt::Display for TestGrammar {
         match self {
             Self::Unparsed(s) => write!(f, "{s}"),
             Self::Parsed(g) => write!(f, "Grammar with {} rules", g.get_rule_count()),
+            Self::BootstrapIxml => write!(f, "<built-in ixml grammar>"),
+            Self::FailedToLoad(e) => write!(f, "<grammar load failed: {e}>"),
         }
     }
 }
@@ -48,6 +56,7 @@ pub enum TestResult {
     AssertNotASentence,
     AssertDynamicError(String), // error code, e.g. "D01", "D02", ...
     AssertXml(XmlString),
+    AssertNotAGrammar, // the grammar source itself should fail to compile (S-errors)
 }
 
 #[derive(Debug)]
@@ -184,6 +193,13 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
     let mut builder = TestCaseBuilder::new();
     let mut test_cases: Vec<TestCase> = Vec::new();
 
+    // grammar-test state: tests the grammar source itself (parse tree or S-error validation)
+    let mut in_grammar_test = false;
+    let mut grammar_test_name: Option<String> = None;
+    let mut grammar_test_expected: Vec<TestResult> = Vec::new();
+    // app-info blocks hold optional processor-specific hints, not required conformance assertions
+    let mut in_app_info = false;
+
     // to capture <assert-xml> arbitrary content, we just store a buch of u8 in a Vec
     // (and later turn it into a String)
     let mut raw_xml_accum: Vec<u8> = Vec::new();
@@ -200,7 +216,8 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
             Ok(Event::Eof) => break,
 
             Ok(Event::Start(e)) => {
-                match e.name().as_ref() {
+                // Use local_name() to strip any namespace prefix (e.g. "tc:test-case" → "test-case")
+                match e.name().local_name().as_ref() {
                     b"test-set" => {
                         let name = attr_by_name(&e.attributes(), "name");
                         test_set_nesting.push(name);
@@ -219,7 +236,6 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                         let href = attr_by_name(&e.attributes(), "href");
                         let mut fullpath = basepath.to_path_buf();
                         fullpath.push(href);
-                        //println!("ixml-grammar-ref {}", fullpath.to_string_lossy());
                         current_grammar = TestGrammar::Unparsed(
                             fs::read_to_string(fullpath).expect("Error reading grammar file"),
                         );
@@ -228,7 +244,23 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                         let href = attr_by_name(&e.attributes(), "href");
                         let mut fullpath = basepath.to_path_buf();
                         fullpath.push(href);
-                        current_grammar = TestGrammar::Parsed(read_vxml_grammar(fullpath));
+                        current_grammar = read_vxml_grammar(fullpath);
+                    }
+                    b"grammar-test" => {
+                        in_grammar_test = true;
+                        grammar_test_expected.clear();
+                        // Build test name from current nesting
+                        let mut fullname = String::new();
+                        if let Some(ref prefix) = dir_prefix {
+                            fullname.push_str(prefix);
+                            fullname.push('/');
+                        }
+                        if !test_set_nesting.is_empty() {
+                            fullname.push_str(&test_set_nesting.join("/"));
+                            fullname.push('/');
+                        }
+                        fullname.push_str("grammar-test");
+                        grammar_test_name = Some(fullname);
                     }
                     b"test-case" => {
                         let name = attr_by_name(&e.attributes(), "name");
@@ -288,39 +320,59 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                         let href = attr_by_name(&e.attributes(), "href");
                         let mut fullpath = basepath.to_path_buf();
                         fullpath.push(href);
-                        //println!("test-string-ref {}", fullpath.to_string_lossy());
                         builder.input =
                             Some(fs::read_to_string(fullpath).expect("Error reading grammar file"));
                     }
+                    b"app-info" => {
+                        in_app_info = true;
+                    }
                     b"assert-not-a-sentence" => {
-                        builder.expected.push(TestResult::AssertNotASentence);
+                        if !in_app_info {
+                            builder.expected.push(TestResult::AssertNotASentence);
+                        }
+                    }
+                    b"assert-not-a-grammar" => {
+                        // The grammar source itself should fail to compile (S-error)
+                        if !in_app_info {
+                            if in_grammar_test {
+                                grammar_test_expected.push(TestResult::AssertNotAGrammar);
+                            } else {
+                                builder.expected.push(TestResult::AssertNotAGrammar);
+                            }
+                        }
                     }
                     b"assert-dynamic-error" => {
-                        let mut codes = attr_by_name(&e.attributes(), "error-code");
-                        if codes.is_empty() {
-                            codes = attr_by_name(&e.attributes(), "code");
-                        }
-                        for code in codes.split(' ') {
-                            if !code.is_empty() {
-                                builder
-                                    .expected
-                                    .push(TestResult::AssertDynamicError(String::from(code)));
+                        if !in_app_info {
+                            let mut codes = attr_by_name(&e.attributes(), "error-code");
+                            if codes.is_empty() {
+                                codes = attr_by_name(&e.attributes(), "code");
+                            }
+                            for code in codes.split(' ') {
+                                if !code.is_empty() {
+                                    builder
+                                        .expected
+                                        .push(TestResult::AssertDynamicError(String::from(code)));
+                                }
                             }
                         }
                     }
                     b"assert-xml" => {
-                        //let inner_content = reader.read_to_end(e.to_end().name());
-                        //builder.expected.push(TestResult::AssertXml(from_utf8(inner_content.expect("Error reading inline assert-xml")).unwrap()));
-                        enable_accum = true;
+                        if !in_app_info {
+                            enable_accum = true;
+                        }
                     }
                     b"assert-xml-ref" => {
-                        let href = attr_by_name(&e.attributes(), "href");
-                        let mut fullpath = basepath.to_path_buf();
-                        fullpath.push(href);
-                        //println!("assert-xml-ref {}", fullpath.to_string_lossy());
-                        builder.expected.push(TestResult::AssertXml(
-                            fs::read_to_string(fullpath).expect("Error reading assert-xml file"),
-                        ));
+                        if !in_app_info {
+                            let href = attr_by_name(&e.attributes(), "href");
+                            let mut fullpath = basepath.to_path_buf();
+                            fullpath.push(href);
+                            let xml = fs::read_to_string(fullpath).expect("Error reading assert-xml file");
+                            if in_grammar_test {
+                                grammar_test_expected.push(TestResult::AssertXml(xml));
+                            } else {
+                                builder.expected.push(TestResult::AssertXml(xml));
+                            }
+                        }
                     }
                     _ => {
                         if enable_accum {
@@ -337,7 +389,8 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                 }
             }
             Ok(Event::End(e)) => {
-                match e.name().as_ref() {
+                // Use local_name() to strip any namespace prefix
+                match e.name().local_name().as_ref() {
                     b"test-set" => {
                         test_set_nesting.pop();
                     }
@@ -346,15 +399,68 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                             test_cases.push(test_case);
                         }
                     }
+                    b"app-info" => {
+                        in_app_info = false;
+                    }
+                    b"grammar-test" => {
+                        in_grammar_test = false;
+                        if let Some(name) = grammar_test_name.take() {
+                            if !grammar_test_expected.is_empty() {
+                                let has_not_a_grammar = grammar_test_expected
+                                    .iter()
+                                    .any(|e| matches!(e, TestResult::AssertNotAGrammar));
+                                let has_assert_xml = grammar_test_expected
+                                    .iter()
+                                    .any(|e| matches!(e, TestResult::AssertXml(_)));
+
+                                if has_not_a_grammar {
+                                    // Grammar should fail to compile: use grammar source as subject.
+                                    // Filter out any assert-xml entries that snuck into the same block.
+                                    if let TestGrammar::Unparsed(ref source) = current_grammar {
+                                        let ang_expected: Vec<_> = grammar_test_expected
+                                            .iter()
+                                            .filter(|e| !matches!(e, TestResult::AssertXml(_)))
+                                            .cloned()
+                                            .collect();
+                                        test_cases.push(TestCase {
+                                            name: name.clone(),
+                                            grammars: vec![TestGrammar::Unparsed(source.clone())],
+                                            input: String::new(),
+                                            expected: ang_expected,
+                                        });
+                                    }
+                                }
+
+                                if has_assert_xml && !has_not_a_grammar {
+                                    // Parse the grammar source as iXML using the built-in grammar
+                                    // and compare the resulting parse tree to the expected XML.
+                                    if let TestGrammar::Unparsed(ref source) = current_grammar {
+                                        let xml_expected: Vec<_> = grammar_test_expected
+                                            .iter()
+                                            .filter(|e| matches!(e, TestResult::AssertXml(_)))
+                                            .cloned()
+                                            .collect();
+                                        test_cases.push(TestCase {
+                                            name,
+                                            grammars: vec![TestGrammar::BootstrapIxml],
+                                            input: source.clone(),
+                                            expected: xml_expected,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        grammar_test_expected.clear();
+                    }
                     b"assert-xml" => {
                         enable_accum = false;
                         let xml_string = from_utf8(&raw_xml_accum)
                             .expect("UTF-8 error in assert-xml")
                             .to_string();
 
-                        // Warn about special ixml:state values (features not yet supported)
-                        if let Some(ref name) = builder.name {
-                            // Match ixml:state containing specific words (may have other text)
+                        // Warn about special ixml:state values
+                        let active_name = if in_grammar_test { &grammar_test_name } else { &builder.name };
+                        if let Some(ref name) = active_name {
                             if xml_string.contains("ixml:state") {
                                 if xml_string.contains("ambiguous") {
                                     eprintln!("🫥 Ambiguous case: {}", name);
@@ -368,9 +474,13 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                             }
                         }
 
-                        //println!("assert-xml literal {xml_string}");
-                        builder.expected.push(TestResult::AssertXml(xml_string));
-                        raw_xml_accum.clear(); // Clear buffer for next assert-xml
+                        let result = TestResult::AssertXml(xml_string);
+                        if in_grammar_test {
+                            grammar_test_expected.push(result);
+                        } else {
+                            builder.expected.push(result);
+                        }
+                        raw_xml_accum.clear();
                     }
                     _ => {
                         if enable_accum {
@@ -396,10 +506,13 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
     test_cases
 }
 
-fn read_vxml_grammar(path: PathBuf) -> Grammar {
+fn read_vxml_grammar(path: PathBuf) -> TestGrammar {
     let xml = fs::read_to_string(&path).expect("Error reading VXML grammar file");
     let arena = vxml_to_arena(&xml);
-    Grammar::from_parse_tree(&arena).expect("Error converting VXML grammar file")
+    match Grammar::from_parse_tree(&arena) {
+        Ok(g) => TestGrammar::Parsed(g),
+        Err(e) => TestGrammar::FailedToLoad(e.to_string()),
+    }
 }
 
 fn vxml_to_arena(xml: &str) -> Arena<Content> {

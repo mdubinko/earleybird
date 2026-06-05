@@ -3,10 +3,11 @@ use argh::FromArgs;
 use earleybird::{
     debug::DebugLevel,
     grammar::Grammar,
+    ixml_bootstrap::bootstrap_ixml_grammar,
     parser::Parser,
     testsuite_utils::{self, xml_canonicalize, TestGrammar, TestOutcome},
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -204,6 +205,10 @@ fn run(
     let mut timings: Vec<(String, u128)> = Vec::new();
     let suite_start = Instant::now();
 
+    // Compiled grammars are keyed by their source text (or "__bootstrap_ixml__").
+    // Many test-sets share the same grammar file; recompiling on each test is wasteful.
+    let mut grammar_cache: HashMap<String, Grammar> = HashMap::new();
+
     for test in filtered_tests {
         count += 1;
         let test_name = test.name.clone();
@@ -220,7 +225,7 @@ fn run(
         }
 
         let test_start = Instant::now();
-        let outcome = run_single_test(test);
+        let outcome = run_single_test(test, &mut grammar_cache);
         let elapsed_ms = test_start.elapsed().as_millis();
         timings.push((test_name.clone(), elapsed_ms));
 
@@ -482,32 +487,72 @@ fn run(
     }
 }
 
-fn run_single_test(test: testsuite_utils::TestCase) -> TestOutcome {
-    // Parse grammar
+fn run_single_test(
+    test: testsuite_utils::TestCase,
+    cache: &mut HashMap<String, Grammar>,
+) -> TestOutcome {
+    // Handle assert-not-a-grammar: the grammar source itself should fail to compile.
+    // Intentionally broken grammars are never cached.
+    if test.expected.iter().any(|e| matches!(e, AssertNotAGrammar)) {
+        return match test.grammars.into_iter().next() {
+            Some(TestGrammar::Unparsed(source)) => {
+                match Grammar::from_ixml_str_detailed(&source) {
+                    Ok(_) => TestOutcome::Fail {
+                        expected: "grammar compilation failure (S-error)".to_string(),
+                        actual: "grammar compiled successfully".to_string(),
+                    },
+                    Err(_) => TestOutcome::Pass,
+                }
+            }
+            // VXML test grammars that failed S-error validation during loading
+            Some(TestGrammar::FailedToLoad(_)) => TestOutcome::Pass,
+            _ => TestOutcome::Skip(
+                "assert-not-a-grammar requires unparsed grammar source".to_string(),
+            ),
+        };
+    }
+
+    // Parse grammar (with cache to avoid recompiling the same source repeatedly)
     let grammar = match test.grammars.into_iter().next() {
         Some(g) => g,
         None => return TestOutcome::Skip("No grammar available".to_string()),
     };
 
     let target_grammar = match grammar {
+        TestGrammar::FailedToLoad(e) => {
+            return TestOutcome::ConversionError(e);
+        }
         TestGrammar::Parsed(g) => g,
-        TestGrammar::Unparsed(ixml) => match Grammar::from_ixml_str_detailed(&ixml) {
-            Ok(g) => g,
-            Err(e) => {
-                use earleybird::grammar::GrammarConstructionError;
-                return match e {
-                    GrammarConstructionError::ValidationError(msg) => {
-                        TestOutcome::ValidationError(msg)
+        TestGrammar::BootstrapIxml => cache
+            .entry("__bootstrap_ixml__".to_string())
+            .or_insert_with(bootstrap_ixml_grammar)
+            .clone(),
+        TestGrammar::Unparsed(ref ixml) => {
+            if let Some(cached) = cache.get(ixml) {
+                cached.clone()
+            } else {
+                match Grammar::from_ixml_str_detailed(ixml) {
+                    Ok(g) => {
+                        cache.insert(ixml.clone(), g.clone());
+                        g
                     }
-                    GrammarConstructionError::BootstrapParseError(err) => {
-                        TestOutcome::BootstrapParseError(err.to_string())
+                    Err(e) => {
+                        use earleybird::grammar::GrammarConstructionError;
+                        return match e {
+                            GrammarConstructionError::ValidationError(msg) => {
+                                TestOutcome::ValidationError(msg)
+                            }
+                            GrammarConstructionError::BootstrapParseError(err) => {
+                                TestOutcome::BootstrapParseError(err.to_string())
+                            }
+                            GrammarConstructionError::ConversionError(msg) => {
+                                TestOutcome::ConversionError(msg)
+                            }
+                        };
                     }
-                    GrammarConstructionError::ConversionError(msg) => {
-                        TestOutcome::ConversionError(msg)
-                    }
-                };
+                }
             }
-        },
+        }
     };
 
     // Catalog entries may list several acceptable outcomes, such as multiple
@@ -574,6 +619,8 @@ fn run_single_test(test: testsuite_utils::TestCase) -> TestOutcome {
                     Err(e) => TestOutcome::InputParseError(e.to_string()),
                 }
             }
+            // Handled in the early-return block above; unreachable in this loop
+            AssertNotAGrammar => TestOutcome::Skip("AssertNotAGrammar already handled".to_string()),
         };
 
         if matches!(outcome, TestOutcome::Pass) {
