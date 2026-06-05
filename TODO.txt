@@ -107,12 +107,18 @@
   - Impact: Clear indication that ambiguous parse support is not yet implemented
 
 ## Current Test Suite Status (Updated 2026-06-04)
-- **Full catalog**: **227/231 passing (98.3% pass rate)**
-  - **227 PASS**
-  - **4 FAIL** - all remaining failures are structural ambiguity cases not detected by the first saturated counting pass
-  - **0 Bootstrap Errors**
-  - **0 TODO**
-  - Latest run: `cargo run -- suite --console SUMMARY --file FAILURES -o log/counting-full.txt`
+- **Full catalog**: **231/231 passing (100% pass rate)** 🎉
+  - **231 PASS / 0 FAIL / 0 Bootstrap / 0 Conversion / 0 Parse**
+  - Final 4 (ambig4, ambig6, css, iSepAlt-1) fixed by reachable derivation-family ambiguity detection
+  - Latest run: `cargo run -- suite --console SUMMARY -o log/full-verify.txt`
+  - **Suite pinned at**: invisibleXML/ixml `b39977b3` (2025-02-26, "Merge PR #301 fix-typo").
+    This is the symlinked repo at ../ixml; it is ~25 commits behind origin/master
+    (upstream has since "Moved to Codeberg" and added the "Ambiguity Umbrella"). 100%
+    is against THIS snapshot, not current upstream.
+  - **Excluded tests**: local uncommitted edit to ../ixml/tests/correct/test-catalog.xml
+    comments out the `unicode-version-check` test-set (pathologically slow: 2M+ ops at a
+    single position, ~30s→1500s under the current queue). Hence 231 cases, not the full
+    upstream count. Re-enable once parser performance improves.
 - **Dynamic error tests**: **20/20 passing**
   - Implemented output-tree validation for D01-D07 conditions where applicable
   - Suite driver now accepts `assert-dynamic-error error-code="..."` and matches the produced D-code
@@ -133,8 +139,8 @@ three sub-groups:
 ### Sub-group A: Correct parse, missing state attribute only (5 tests) #HIGH
 These tests produce the right XML tree but the root element lacks `ixml:state="ambiguous"`.
 - [x] ambiguous/ambig3/ambig3 — fixed by saturated derivation-signature counting
-- [ ] ambiguous/ambig6/ambig6 — `<block>{}</block>` content matches; root needs state attr
-- [ ] ambiguous/css/css — full CSS output matches; root needs state attr
+- [x] ambiguous/ambig6/ambig6 — fixed by reachable derivation-family detection (empty rule vs empty rep)
+- [x] ambiguous/css/css — fixed by reachable derivation-family detection (empty property vs empty rep)
 - [x] ambiguous/date/date — root alternatives detected by root counting
 - [x] ambiguous/lf2/lf2 — fixed by saturated derivation-signature counting
 
@@ -144,7 +150,7 @@ preferred derivation or true multi-tree output. `ixml:state="ambiguous"` also re
 Each test has an `.alt.output.xml` file whose content matches our current parse tree —
 so adding the state attribute alone would pass the test if the alt is accepted.
 - [x] ambiguous/ambig/ambig — fixed by saturated derivation-signature counting #MED
-- [ ] ambiguous/ambig4/ambig4 — alt output matches our greedy parse tree #MED
+- [x] ambiguous/ambig4/ambig4 — fixed by reachable derivation-family detection (property+ split ambiguity)
 - [x] ambiguous/ambig5/ambig5 — fixed by saturated derivation-signature counting #MED
 - [x] ambiguous/expr0/expr0 — fixed by saturated derivation-signature counting #MED
 - [x] ambiguous/ambiguous-marks/Battr — `S B="b"` form is second expected alt; FIXED by root counting #MED
@@ -154,7 +160,7 @@ Grammar has two alternatives that each insert different literal text; parser pic
 without detecting ambiguity. Output uses wrong inserted text and lacks state attribute.
 - [x] grammar-misc/insert-ambiguous/iAmb-1 — `S: +'A'; +'B'`; two root alt_indices → FIXED by root counting #MED
 - [x] grammar-misc/insert-alternate/iAlt-1 — same as iAmb-1 → FIXED by root counting #MED
-- [ ] grammar-misc/insert-separator-alternate/iSepAlt-1 — ambiguity is in separator rule, not root; root counting misses it #MED
+- [x] grammar-misc/insert-separator-alternate/iSepAlt-1 — fixed by reachable derivation-family detection (separator alt :/= )
 
 ### Implemented: root alt_index counting (src/parser.rs)
 `Parser::is_ambiguous()` counts completed root-rule tasks at `(origin=0, pos=input_len)`.
@@ -188,11 +194,22 @@ full input" improves the ambiguous subset (11/15 passing) but incorrectly marks 
 ordinary `correct` fixtures ambiguous. `log/root-dup-correct.txt` showed 16 false
 failures including address, expr*, ranges, and whitespace/delimiter cases.
 
-### Remaining approach for undetected structural ambiguity (4 tests)
-The first counting pass still misses ambig4, ambig6, css, and insert-separator-alternate.
-Likely next step: propagate `Many` upgrades after an item has already been processed, or
-record a compact parent/child derivation edge when signatures collapse to the same output
-shape. Files: src/parser.rs (TraceArena duplicate handling, completion propagation)
+### Implemented: reachable derivation-family detection (src/parser.rs) — fixes the last 4
+Replaces the forward-propagated One/Many flag (which set Many too late to reach the root)
+with detection decoupled from decision:
+- `TraceArena.families: HashMap<(name, origin, pos), HashSet<u64>>`. At every dot-completion
+  site — `task_advance_cursor` (recorded BEFORE the dedup short-circuit, so a deduplicated
+  second derivation still registers) and the empty-rule branch of `predict` — record
+  `family_signature(alt_index, matched_so_far)`. Folding in alt_index makes different
+  alternatives over the same span distinct families (Mechanism A: ambig6/css/iSepAlt);
+  differing child splits make same-alt derivations distinct (Mechanism B: ambig4).
+- `is_ambiguous()` is now a read-only reachability walk (`span_is_ambiguous`) from
+  (root, 0, n), mirroring `unpack_parse_tree_internal` but over the internal (un-pruned)
+  forest so it descends into muted synthesized repetition rules. A span with >=2 families
+  is locally ambiguous; reachability from the accepting root excludes dead-end chart items
+  (the false positives that sank earlier attempts).
+Note: the older One/Many machinery (DerivationCount, derivation_sig, incoming_many) is now
+dead and slated for removal (was "File 4" of the plan); left in place pending a follow-up.
 - **Recent Major Fixes**:
   - [x] **VXML Grammar References**: COMPLETED - XML-form grammars load through the suite driver #HIGH
     - Files: src/testsuite_utils.rs

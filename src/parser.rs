@@ -206,6 +206,17 @@ fn derivation_signature(dot: &DotNotation) -> u64 {
     hasher.finish()
 }
 
+/// Identity of one derivation family of a completed item: its alternative plus the
+/// exact sequence of child edges (`matched_so_far`). Folding in `alt_index` makes two
+/// *different alternatives* completing the same span distinct families (Mechanism A),
+/// while differing child split points make same-alt derivations distinct (Mechanism B).
+fn family_signature(alt_index: usize, dot: &DotNotation) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    alt_index.hash(&mut hasher);
+    dot.matched_so_far.hash(&mut hasher);
+    hasher.finish()
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Task {
     id: TraceId,      // unique id, as handled by TraceArena
@@ -371,6 +382,12 @@ pub struct TraceArena {
     /// Map Earley item identity to its stored task for fast deduplication.
     task_by_hash: HashMap<u64, TraceId>,
 
+    /// For each fully-completed item span (name, origin, pos), the set of distinct
+    /// derivation-family signatures `hash(alt_index, matched_so_far)` that produced it.
+    /// Two or more entries at a span reachable from the accepting root means there are
+    /// two genuinely distinct derivations of that span — i.e. structural ambiguity.
+    families: HashMap<(SmolStr, usize, usize), HashSet<u64>>,
+
     /// Count of tasks that were deduplicated
     pub deduplicated_count: u32,
 }
@@ -382,6 +399,7 @@ impl TraceArena {
             queue: PositionBucketedQueue::new(),
             continuations: MultiMap::new(),
             task_by_hash: HashMap::new(),
+            families: HashMap::new(),
             deduplicated_count: 0,
         }
     }
@@ -400,6 +418,25 @@ impl TraceArena {
     fn save_task(&mut self, task: Task) {
         assert_eq!(task.id.0, self.arena.len());
         self.arena.push(task);
+    }
+
+    /// Record one derivation family for a fully-completed item span. Called at every
+    /// site that advances a dot to completion — including the deduplicated path — so a
+    /// second derivation reaching the same Earley item still registers its (different)
+    /// family. Idempotent: re-recording an identical derivation is a no-op.
+    fn record_family(
+        &mut self,
+        name: &SmolStr,
+        origin: usize,
+        pos: usize,
+        alt_index: usize,
+        dot: &DotNotation,
+    ) {
+        let sig = family_signature(alt_index, dot);
+        self.families
+            .entry((name.clone(), origin, pos))
+            .or_default()
+            .insert(sig);
     }
 
     /// Register a parent task that's waiting for a specific nonterminal alternative to complete
@@ -506,6 +543,19 @@ impl TraceArena {
         } else {
             DerivationCount::One
         };
+
+        // If this advance completes the rule, capture its derivation family now —
+        // before the dedup short-circuit below — so a second derivation that reaches
+        // the same Earley item (and gets deduplicated) still registers its family.
+        let completed_family = if new_dot.is_completed() {
+            Some((
+                (from_task.name.clone(), from_task.origin, new_pos),
+                family_signature(from_task.alt_index, &new_dot),
+            ))
+        } else {
+            None
+        };
+
         let id = TraceId(self.arena.len());
 
         // Compute hash without string allocation - hash the tuple of key identity fields
@@ -533,12 +583,18 @@ impl TraceArena {
             derivation_count,
         };
 
-        if self.have_we_seen(&task) {
+        let result = if self.have_we_seen(&task) {
             None
         } else {
             self.save_task(task);
             Some(id)
+        };
+
+        if let Some((key, sig)) = completed_family {
+            self.families.entry(key).or_default().insert(sig);
         }
+
+        result
     }
 
     /// returns true if this trace had been previously seen
@@ -992,6 +1048,13 @@ impl Parser {
                     if alt.factors.is_empty() {
                         // Truly empty rule - add initial task which is already completed
                         self.completed_trace.push(task_id);
+                        // A zero-factor rule completes via task() (not task_advance_cursor),
+                        // so record its (empty) derivation family here.
+                        let (nm, og, ps, ai, dotc) = {
+                            let t = self.traces.get(task_id);
+                            (t.name.clone(), t.origin, t.pos, t.alt_index, t.dot.clone())
+                        };
+                        self.traces.record_family(&nm, og, ps, ai, &dotc);
                     }
                     // Else: has nullable factors, will complete naturally
                 }
@@ -1481,34 +1544,56 @@ impl Parser {
 
     /// True if the last parse found root-alternative ambiguity.
     ///
-    /// This deliberately stays narrower than structural ambiguity: nullable repetitions can
-    /// reach the same Earley item through non-ambiguous bookkeeping paths, so deeper ambiguity
-    /// detection needs explicit derivation counting.
+    /// Structural ambiguity per the iXML spec: the accepting root item `(start, 0, n)`,
+    /// or any completed item reachable from it through the derivation forest, has two or
+    /// more distinct derivation families. Families are recorded during the parse (keyed by
+    /// immediate cause, so bookkeeping duplicates collapse to one); this is a read-only walk.
     pub fn is_ambiguous(&self) -> bool {
         let root_name = match self.grammar.get_root_definition_name() {
             Some(n) => n,
             None => return false,
         };
-        let has_many_root = self.completed_trace.iter().any(|&tid| {
-            let t = self.traces.get(tid);
-            t.name == root_name
-                && t.origin == 0
-                && t.pos == self.last_input_len
-                && t.derivation_count.is_many()
-        });
-        if has_many_root {
-            return true;
+        let mut visited: HashSet<(SmolStr, usize, usize)> = HashSet::new();
+        self.span_is_ambiguous(&root_name, 0, self.last_input_len, &mut visited)
+    }
+
+    /// True if this completed span, or any span reachable through its representative
+    /// derivation, is locally ambiguous (>=2 families). A locally-ambiguous node returns
+    /// immediately without recursing; an unambiguous node has exactly one family, so its
+    /// child edges are the unique reachability set and a single representative path is exact.
+    /// The walk descends into muted/synthesized rules, where repetition ambiguity lives.
+    fn span_is_ambiguous(
+        &self,
+        name: &str,
+        origin: usize,
+        end: usize,
+        visited: &mut HashSet<(SmolStr, usize, usize)>,
+    ) -> bool {
+        let key = (SmolStr::from(name), origin, end);
+        if !visited.insert(key.clone()) {
+            return false; // cycle / already-explored guard
         }
-        let root_alts: HashSet<usize> = self
-            .completed_trace
-            .iter()
-            .filter_map(|&tid| {
-                let t = self.traces.get(tid);
-                (t.name == root_name && t.origin == 0 && t.pos == self.last_input_len)
-                    .then_some(t.alt_index)
-            })
-            .collect();
-        root_alts.len() > 1
+        if self.traces.families.get(&key).map_or(0, |s| s.len()) >= 2 {
+            return true; // locally ambiguous
+        }
+        let task = match self.filter_completed_trace(name, origin, end) {
+            Some(t) => t,
+            None => return false,
+        };
+        let mut child_origin = origin;
+        for rec in task.dot.matches_iter() {
+            match rec {
+                MatchRec::NonTerm(nt, pos, _, _) => {
+                    if self.span_is_ambiguous(nt, child_origin, *pos, visited) {
+                        return true;
+                    }
+                    child_origin = *pos;
+                }
+                MatchRec::Term(_, pos, _) => child_origin = *pos,
+                MatchRec::Insertion(..) => {}
+            }
+        }
+        false
     }
 
     pub fn tree_to_test_format(arena: &Arena<Content>) -> String {
