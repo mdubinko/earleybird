@@ -2,16 +2,78 @@
 
 ## Quick Performance Checks
 
-### Baseline Timing
+### Conformance Suite Baseline
+
 ```bash
-# Time specific test
-time cargo run --release -- suite ambiguous/lf2 --console NONE --file NONE
+# Full release conformance run, with shell timing and failure log
+/usr/bin/time -p cargo run --release -- suite --console SUMMARY --file FAILURES \
+  -o log/codeberg-release.txt
 
-# Time full suite
-time cargo run --release -- suite correct --console NONE --file NONE
+# Focused release run while investigating one suite area
+/usr/bin/time -p cargo run --release -- suite ambiguous --console SUMMARY --file FAILURES \
+  -o log/ambiguous-release.txt
 
+# Quiet timing when console detail would distort a benchmark
+/usr/bin/time -p cargo run --release -- suite syntax --console NONE --file NONE
+```
+
+When `-o` is supplied, the suite runner writes a timing CSV beside the output
+stem. For example, `-o log/codeberg-release.txt` produces:
+
+```text
+log/codeberg-release.txt
+log/codeberg-release.timings.csv
+```
+
+The timing CSV schema is:
+
+```csv
+millis,name
+```
+
+### Built-In Bench Command
+
+Use `bench` for repeatable parser scaling checks and for the known heavy corpus
+cases. It is quiet by default; add `--stats` when parser task counts are useful.
+
+```bash
+# Synthetic scaling baseline
+cargo run --release -- bench --sizes 8,16,32,64,128 --reps 3 \
+  --csv log/bench-synthetic.csv
+
+# Narrow a synthetic family by substring
+cargo run --release -- bench --filter left --sizes 16,32,64 --reps 5 \
+  --csv log/bench-left.csv
+
+# All heavy corpus cases
+cargo run --release -- bench --heavy --csv log/bench-heavy.csv
+
+# One heavy corpus case; this keeps long runs targeted
+cargo run --release -- bench --heavy --filter unicode_version \
+  --csv log/bench-unicode-version.csv
+
+# Inspect one case with parser task statistics
+cargo run --release -- bench --heavy --filter ixml_self --stats \
+  --csv log/bench-ixml-self-stats.csv
+```
+
+Benchmark CSV schema:
+
+```csv
+kind,name,n,input_len,min_parse_ms,median_parse_ms,build_ms,parse_ms,status
+```
+
+Synthetic rows fill `n`, `input_len`, `min_parse_ms`, and
+`median_parse_ms`. Heavy rows leave the synthetic timing columns empty and fill
+`build_ms` and `parse_ms` separately, because grammar construction and input
+parsing often have very different cost profiles.
+
+### External Timing Tools
+
+```bash
 # Time with hyperfine (install: brew install hyperfine)
 hyperfine 'cargo run --release -- suite ambiguous --console NONE --file NONE'
+hyperfine 'cargo run --release -- bench --filter left --sizes 64 --reps 1'
 ```
 
 ## macOS Profiling Tools
@@ -25,8 +87,11 @@ cargo install cargo-instruments
 
 **CPU Time Profiling:**
 ```bash
-# Profile a specific test
+# Profile a specific suite filter
 cargo instruments -t time --release -- suite ambiguous/lf2 --console NONE --file NONE
+
+# Profile a focused benchmark
+cargo instruments -t time --release -- bench --filter left --sizes 128 --reps 1
 
 # Opens in Instruments.app with visual timeline
 # Shows hot functions, call stacks, CPU usage over time
@@ -35,6 +100,8 @@ cargo instruments -t time --release -- suite ambiguous/lf2 --console NONE --file
 **Memory Allocation Profiling:**
 ```bash
 cargo instruments -t alloc --release -- suite ambiguous --console NONE --file NONE
+
+cargo instruments -t alloc --release -- bench --heavy --filter ixml_self
 
 # Shows allocations, deallocations, memory growth
 # Identifies memory leaks and allocation hotspots
@@ -62,6 +129,9 @@ cargo install flamegraph
 ```bash
 # Creates flamegraph.svg in current directory
 cargo flamegraph --release -- suite ambiguous --console NONE --file NONE
+
+# Or focus a benchmark
+cargo flamegraph --release -- bench --heavy --filter ixml_self
 
 # Open in browser
 open flamegraph.svg
@@ -211,14 +281,22 @@ cargo run --release -- suite ambiguous --console NONE --file NONE
 - No function inlining
 - Full debug symbols
 
-## Current Performance Baseline (2025-10-02)
+## Current Performance Baseline (2026-06-05)
 
 ```
-Single ambiguous test (ambig/ambig): ~0.05s
-Simple lf2 test: ~0.05s
-Full 'correct' suite (93 tests): TBD
-Full 'ambiguous' suite (15 tests): TBD
+Current local Codeberg catalog: 232/232 passing
+Full release suite: 127.31s suite wall time / 133.64s process real time
+Slowest suite tests:
+  correct/ixml tests/unicode-version-check/unicode-version-14-diagnostic: 42.32s
+  correct/ixml tests/xpath/xpath: 25.93s
+
+Heavy benchmark sample:
+  unicode_version: build 39830.989ms / parse 2.695ms
+  ixml_self: build 1235.203ms / parse 993.118ms
 ```
+
+Use the exact invocations above when refreshing the baseline, and write outputs
+under `log/` so the project root stays clean.
 
 ## Memory Profiling
 

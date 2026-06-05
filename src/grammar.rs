@@ -404,8 +404,20 @@ impl Grammar {
 
     /// Parse an iXML grammar string and construct a Grammar (legacy method)
     pub fn from_ixml_str(ixml: &str) -> Result<Grammar, crate::parser::ParseError> {
+        Self::from_ixml_str_with_stats(ixml, true)
+    }
+
+    /// Parse an iXML grammar string without printing bootstrap parser statistics.
+    pub fn from_ixml_str_quiet(ixml: &str) -> Result<Grammar, crate::parser::ParseError> {
+        Self::from_ixml_str_with_stats(ixml, false)
+    }
+
+    fn from_ixml_str_with_stats(
+        ixml: &str,
+        stats_enabled: bool,
+    ) -> Result<Grammar, crate::parser::ParseError> {
         // Convert detailed error to legacy error for backward compatibility
-        match Self::from_ixml_str_detailed(ixml) {
+        match Self::from_ixml_str_detailed_with_stats(ixml, stats_enabled) {
             Ok(grammar) => Ok(grammar),
             Err(err) => Err(crate::parser::ParseError::static_err(&err.to_string())),
         }
@@ -413,6 +425,13 @@ impl Grammar {
 
     /// Parse an iXML grammar string with detailed error categorization
     pub fn from_ixml_str_detailed(ixml: &str) -> Result<Grammar, GrammarConstructionError> {
+        Self::from_ixml_str_detailed_with_stats(ixml, true)
+    }
+
+    fn from_ixml_str_detailed_with_stats(
+        ixml: &str,
+        stats_enabled: bool,
+    ) -> Result<Grammar, GrammarConstructionError> {
         // Phase 1: Validate and preprocess the iXML text
         let validation_result = crate::validator::validate_ixml(ixml.trim());
 
@@ -429,6 +448,7 @@ impl Grammar {
 
         // Phase 2: Parse the validated and preprocessed text
         let mut ixml_parser = Parser::new(bootstrap_ixml_grammar());
+        ixml_parser.set_stats_enabled(stats_enabled);
         let ixml_arena = match ixml_parser.parse(&validation_result.processed_text) {
             Ok(arena) => arena,
             Err(parse_error) => {

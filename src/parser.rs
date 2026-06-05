@@ -505,11 +505,7 @@ impl TraceArena {
 
     /// clone a task, except advancing the cursor (storing given `MatchRec` for the piece just advanced-over)
     /// Maintains the same parentage, and position
-    fn task_advance_cursor(
-        &mut self,
-        from: TraceId,
-        rec: MatchRec,
-    ) -> Option<TraceId> {
+    fn task_advance_cursor(&mut self, from: TraceId, rec: MatchRec) -> Option<TraceId> {
         let new_pos = rec.pos();
 
         let from_task = self.get(from);
@@ -703,6 +699,7 @@ pub struct Parser {
     completed_trace: Vec<TraceId>,
     /// Length of the most recent input, used by is_ambiguous() to filter root-rule completions
     last_input_len: usize,
+    stats_enabled: bool,
 }
 
 /// Earley parser with LIFO prediction strategy and modified completion strategy
@@ -724,7 +721,12 @@ impl Parser {
             traces: TraceArena::new(),
             completed_trace: Vec::new(),
             last_input_len: 0,
+            stats_enabled: true,
         }
+    }
+
+    pub fn set_stats_enabled(&mut self, enabled: bool) {
+        self.stats_enabled = enabled;
     }
 
     /// Successful return value is an indextree over Content. Consider this temporary
@@ -864,14 +866,16 @@ impl Parser {
         } else {
             0
         };
-        eprintln!(
-            "📊 Parse stats: {} tasks created, {} deduplicated ({}%), {} operations, max queue: {}",
-            self.traces.arena.len(),
-            self.traces.deduplicated_count,
-            dedup_pct,
-            session.total_operations,
-            session.max_queue_size
-        );
+        if self.stats_enabled {
+            eprintln!(
+                "📊 Parse stats: {} tasks created, {} deduplicated ({}%), {} operations, max queue: {}",
+                self.traces.arena.len(),
+                self.traces.deduplicated_count,
+                dedup_pct,
+                session.total_operations,
+                session.max_queue_size
+            );
+        }
         self.unpack_parse_tree(session)
     }
 
@@ -1050,8 +1054,7 @@ impl Parser {
                     trace!("MatchRec {:?}", &match_rec);
 
                     // Child completed immediately; advance parent cursor
-                    let maybe_continue_id =
-                        self.traces.task_advance_cursor(continue_id, match_rec);
+                    let maybe_continue_id = self.traces.task_advance_cursor(continue_id, match_rec);
 
                     // Queue parent continuations at back to ensure exhaustive alternative exploration
                     self.queue_back(maybe_continue_id);

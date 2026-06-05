@@ -1,4 +1,5 @@
 use argh::FromArgs;
+mod cmd_bench;
 mod cmd_parse;
 mod cmd_suite;
 mod cmd_validate;
@@ -34,6 +35,7 @@ enum Subcommand {
     Parse(cmd_parse::Parse),
     Suite(cmd_suite::RunSuite),
     Validate(cmd_validate::Validate),
+    Bench(cmd_bench::Bench),
 }
 
 impl Subcommand {
@@ -42,6 +44,7 @@ impl Subcommand {
             Subcommand::Parse(cmd) => cmd.run(),
             Subcommand::Suite(cmd) => cmd.run(),
             Subcommand::Validate(cmd) => cmd.run(),
+            Subcommand::Bench(cmd) => cmd.run(),
         }
     }
 }

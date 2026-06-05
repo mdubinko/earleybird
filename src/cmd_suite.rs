@@ -11,6 +11,7 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::time::Instant;
 
 // Helper functions for parsing case-insensitive CLI options
 fn parse_level(level_str: &str) -> Result<DebugLevel, String> {
@@ -86,6 +87,14 @@ fn resolve_suite_spec(suite_spec: Option<String>) -> (String, Option<String>) {
                 Some(filter),
             )
         }
+    }
+}
+
+fn csv_field(value: &str) -> String {
+    if value.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
     }
 }
 
@@ -189,6 +198,12 @@ fn run(
     let mut stats = std::collections::HashMap::new();
     let mut count = 0;
 
+    // Per-test timing. Lets us (a) flag a slow/hung test live, and (b) diff
+    // run-over-run to track perf work. Tests slower than this print immediately.
+    const SLOW_TEST_MS: u128 = 500;
+    let mut timings: Vec<(String, u128)> = Vec::new();
+    let suite_start = Instant::now();
+
     for test in filtered_tests {
         count += 1;
         let test_name = test.name.clone();
@@ -204,7 +219,16 @@ fn run(
             }
         }
 
+        let test_start = Instant::now();
         let outcome = run_single_test(test);
+        let elapsed_ms = test_start.elapsed().as_millis();
+        timings.push((test_name.clone(), elapsed_ms));
+
+        // Live slow-test flag (to stderr, so it never corrupts result/summary output).
+        // This is the "is it stuck?" signal: the last line printed names the culprit.
+        if elapsed_ms >= SLOW_TEST_MS && console_level != DebugLevel::Off {
+            eprintln!("⏱  {:>7.2}s  {}", elapsed_ms as f64 / 1000.0, test_name);
+        }
 
         // Update statistics
         let category = match &outcome {
@@ -408,6 +432,52 @@ fn run(
             if file_level != DebugLevel::Off {
                 println!("Results written to: {}", output_file);
             }
+        }
+    }
+
+    // === Per-test timing summary ===
+    // Always write a machine-readable timings file next to the requested output.
+    // Derive the name from the output stem so filtered/full runs do not clobber
+    // each other's timings.
+    let output_path = Path::new(output_file);
+    let timings_filename = output_path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(|stem| format!("{stem}.timings.csv"))
+        .unwrap_or_else(|| String::from("timings.csv"));
+    let timings_path = output_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.join(&timings_filename))
+        .unwrap_or_else(|| PathBuf::from(&timings_filename));
+    if let Some(parent) = timings_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+    }
+    let mut csv = String::from("millis,name\n");
+    for (name, ms) in &timings {
+        csv.push_str(&format!("{},{}\n", ms, csv_field(name)));
+    }
+    let wrote_csv = std::fs::write(&timings_path, csv).is_ok();
+
+    if console_level != DebugLevel::Off {
+        let total = suite_start.elapsed();
+        let mut slowest: Vec<&(String, u128)> = timings.iter().collect();
+        slowest.sort_by(|a, b| b.1.cmp(&a.1));
+        println!();
+        println!("=== TIMING ===");
+        println!(
+            "Total wall time: {:.2}s across {} tests",
+            total.as_secs_f64(),
+            timings.len()
+        );
+        println!("Slowest tests:");
+        for (name, ms) in slowest.iter().take(10) {
+            println!("  {:>8.3}s  {}", *ms as f64 / 1000.0, name);
+        }
+        if wrote_csv {
+            println!("Timings written to: {}", timings_path.display());
         }
     }
 }

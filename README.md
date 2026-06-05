@@ -35,9 +35,49 @@ cargo run -- suite syntax --console DEBUG --console-filter BOOTSTRAP,GRAMMAR --f
 # Silent operation with full logging
 cargo run -- suite --console NONE --file ALL -o full-results.txt
 
+# Full release conformance baseline with shell timing and per-test CSV timings
+/usr/bin/time -p cargo run --release -- suite --console SUMMARY --file FAILURES \
+  -o log/codeberg-release.txt
+
+# Focused release run while investigating one suite area
+cargo run --release -- suite ambiguous --console SUMMARY --file FAILURES \
+  -o log/ambiguous-release.txt
+
 # Or with environment variables for debugging:
 RUST_LOG=info RUST_BACKTRACE=1 cargo run -- suite
 ```
+
+When `-o` is supplied, suite timings are written beside the chosen output stem. For
+example, `-o log/codeberg-release.txt` also writes
+`log/codeberg-release.timings.csv`.
+
+### Run performance benchmarks
+
+```bash
+# Quick synthetic scaling check
+cargo run --release -- bench --sizes 8,16,32,64,128 --reps 3 \
+  --csv log/bench-synthetic.csv
+
+# Focus one synthetic family
+cargo run --release -- bench --filter left --sizes 16,32,64 --reps 5 \
+  --csv log/bench-left.csv
+
+# Run all heavy corpus benchmarks
+cargo run --release -- bench --heavy --csv log/bench-heavy.csv
+
+# Run one heavy corpus benchmark; useful for Unicode grammar-build work
+cargo run --release -- bench --heavy --filter unicode_version \
+  --csv log/bench-unicode-version.csv
+
+# Add parser task statistics when inspecting a single benchmark
+cargo run --release -- bench --heavy --filter ixml_self --stats \
+  --csv log/bench-ixml-self-stats.csv
+```
+
+Benchmark CSV columns are:
+`kind,name,n,input_len,min_parse_ms,median_parse_ms,build_ms,parse_ms,status`.
+Synthetic rows fill the parse timing columns; heavy rows fill `build_ms` and
+`parse_ms` separately.
 
 Alternatively, build the `eb` binary first:
 
@@ -46,6 +86,7 @@ cargo build --release
 ./target/release/eb parse -g grammar.ixml -i input.txt
 ./target/release/eb parse --grammar-str 'rule: "a" | "b".' --input-str 'a'
 ./target/release/eb suite --console SUMMARY --file NONE
+./target/release/eb bench --heavy --filter unicode_version --csv log/bench.csv
 ```
 
 The test suite expects the official ixml repo to be available as a symlink at `ixml/`.

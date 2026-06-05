@@ -67,52 +67,84 @@ impl fmt::Display for ValidationError {
 
 /// Main validation entry point
 pub fn validate_ixml(input: &str) -> ValidationResult {
-    // Comments are handled directly by the Earley parser in context-aware manner
-    ValidationResult::new(input.to_string())
+    match normalize_comments(input) {
+        Ok(processed_text) => ValidationResult::new(processed_text),
+        Err(error) => ValidationResult::new(input.to_string()).with_error(error),
+    }
 
     // TODO: Phase 2: Basic syntax validation
     // TODO: Phase 3: Character validation
 }
 
-/// Strip nested comments {...} from iXML text
-#[allow(dead_code)]
-fn strip_comments(input: &str) -> Result<String, ValidationError> {
+/// Replace nested comments with whitespace before bootstrap parsing.
+///
+/// Comments are grammar spacing in ixml. Replacing a complete comment with one
+/// space keeps comments usable as required spacing between tokens without making
+/// the bootstrap parser explore every character of long comment bodies.
+fn normalize_comments(input: &str) -> Result<String, ValidationError> {
     let mut result = String::new();
     let mut chars = input.char_indices().peekable();
+    let mut quote = None;
 
     while let Some((pos, ch)) = chars.next() {
-        if ch == '{' {
-            // Start of comment - skip until matching }
-            let mut depth = 1;
-            let start_pos = pos;
+        if let Some(active_quote) = quote {
+            result.push(ch);
 
-            while let Some((_, inner_ch)) = chars.next() {
-                if inner_ch == '{' {
-                    depth += 1;
-                } else if inner_ch == '}' {
-                    depth -= 1;
-                    if depth == 0 {
-                        break; // Found matching close brace
-                    }
+            if ch == active_quote {
+                if matches!(chars.peek(), Some((_, next)) if *next == active_quote) {
+                    let (_, doubled_quote) = chars.next().expect("peeked quote should exist");
+                    result.push(doubled_quote);
+                } else {
+                    quote = None;
                 }
             }
+            continue;
+        }
 
-            // Check if we found the matching close brace
-            if depth > 0 {
-                return Err(ValidationError {
-                    kind: ValidationErrorKind::UncloseComment,
-                    position: Some(start_pos),
-                    message: format!("Unclosed comment starting at position {}", start_pos),
-                });
+        match ch {
+            '{' => {
+                result.push_str(&comment_replacement(&mut chars, pos)?);
             }
-
-            // Comment successfully stripped - don't add anything to result
-        } else {
-            result.push(ch);
+            '"' | '\'' => {
+                quote = Some(ch);
+                result.push(ch);
+            }
+            _ => result.push(ch),
         }
     }
 
     Ok(result)
+}
+
+fn comment_replacement<I>(
+    chars: &mut std::iter::Peekable<I>,
+    start_pos: usize,
+) -> Result<String, ValidationError>
+where
+    I: Iterator<Item = (usize, char)>,
+{
+    let mut replacement = String::from(" ");
+    let mut depth = 1usize;
+
+    for (_, ch) in chars.by_ref() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Ok(replacement);
+                }
+            }
+            '\n' | '\r' => replacement.push(ch),
+            _ => {}
+        }
+    }
+
+    Err(ValidationError {
+        kind: ValidationErrorKind::UncloseComment,
+        position: Some(start_pos),
+        message: format!("Unclosed comment starting at position {}", start_pos),
+    })
 }
 
 #[cfg(test)]
@@ -127,7 +159,51 @@ mod tests {
         assert_eq!(result.processed_text, "rule: \"a\".");
     }
 
-    // TODO: Comment processing tests removed - current pre-stripping approach is flawed.
-    // Comments should be parsed context-aware within the Earley parser, not pre-stripped,
-    // since { and } can appear in quoted strings and other contexts.
+    #[test]
+    fn comments_become_spacing() {
+        let input = "A{comment}B.";
+        let result = validate_ixml(input);
+
+        assert!(result.is_valid());
+        assert_eq!(result.processed_text, "A B.");
+    }
+
+    #[test]
+    fn nested_comments_become_spacing() {
+        let input = "A {outer {inner} still outer} = \"a\".";
+        let result = validate_ixml(input);
+
+        assert!(result.is_valid());
+        assert_eq!(result.processed_text, "A   = \"a\".");
+    }
+
+    #[test]
+    fn comments_preserve_line_breaks() {
+        let input = "A:{one\n two} \"a\".";
+        let result = validate_ixml(input);
+
+        assert!(result.is_valid());
+        assert_eq!(result.processed_text, "A: \n \"a\".");
+    }
+
+    #[test]
+    fn braces_inside_strings_are_not_comments() {
+        let input = "A: \"{\"; '''}'''. {comment}";
+        let result = validate_ixml(input);
+
+        assert!(result.is_valid());
+        assert_eq!(result.processed_text, "A: \"{\"; '''}'''.  ");
+    }
+
+    #[test]
+    fn unterminated_comment_is_validation_error() {
+        let input = "A: \"a\". {unterminated";
+        let result = validate_ixml(input);
+
+        assert!(!result.is_valid());
+        assert!(matches!(
+            result.errors[0].kind,
+            ValidationErrorKind::UncloseComment
+        ));
+    }
 }

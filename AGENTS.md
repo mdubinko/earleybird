@@ -145,7 +145,42 @@ cargo run -- suite correct --console SUMMARY --file FAILURES -o log/results.txt
 
 # Debug specific test categories
 cargo run -- suite syntax --console DEBUG --console-filter BOOTSTRAP,GRAMMAR --file NONE
+
+# Full release baseline with process timing and per-test timing CSV
+/usr/bin/time -p cargo run --release -- suite --console SUMMARY --file FAILURES \
+  -o log/codeberg-release.txt
 ```
+
+When `-o log/codeberg-release.txt` is supplied, the suite runner also writes
+`log/codeberg-release.timings.csv`. Keep generated logs and CSV files under
+`log/`.
+
+## bench - Run parser performance checks
+```bash
+# Synthetic scaling baseline
+cargo run --release -- bench --sizes 8,16,32,64,128 --reps 3 \
+  --csv log/bench-synthetic.csv
+
+# Focus one synthetic family by substring
+cargo run --release -- bench --filter left --sizes 16,32,64 --reps 5 \
+  --csv log/bench-left.csv
+
+# Heavy corpus cases from ixml/
+cargo run --release -- bench --heavy --csv log/bench-heavy.csv
+
+# One heavy case; useful for Unicode grammar-build work
+cargo run --release -- bench --heavy --filter unicode_version \
+  --csv log/bench-unicode-version.csv
+
+# Show parser task statistics when inspecting one case
+cargo run --release -- bench --heavy --filter ixml_self --stats \
+  --csv log/bench-ixml-self-stats.csv
+```
+
+Benchmark CSV columns are:
+`kind,name,n,input_len,min_parse_ms,median_parse_ms,build_ms,parse_ms,status`.
+Synthetic rows use the parse timing columns; heavy rows split `build_ms` and
+`parse_ms`.
 
 # Debugging Workflow
 

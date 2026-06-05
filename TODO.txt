@@ -106,19 +106,20 @@
   - Added: 🫥 emoji warning when loading tests with ixml:state="ambiguous" (src/testsuite_utils.rs:310-314)
   - Impact: Clear indication that ambiguous parse support is not yet implemented
 
-## Current Test Suite Status (Updated 2026-06-04)
-- **Full catalog**: **231/231 passing (100% pass rate)** 🎉
-  - **231 PASS / 0 FAIL / 0 Bootstrap / 0 Conversion / 0 Parse**
+## Current Test Suite Status (Updated 2026-06-05)
+- **Current local Codeberg catalog**: **232/232 passing (100% pass rate)**
+  - **232 PASS / 0 FAIL / 0 Bootstrap / 0 Conversion / 0 Parse**
   - Final 4 (ambig4, ambig6, css, iSepAlt-1) fixed by reachable derivation-family ambiguity detection
-  - Latest run: `cargo run -- suite --console SUMMARY -o log/full-verify.txt`
-  - **Suite pinned at**: invisibleXML/ixml `b39977b3` (2025-02-26, "Merge PR #301 fix-typo").
-    This is the symlinked repo at ../ixml; it is ~25 commits behind origin/master
-    (upstream has since "Moved to Codeberg" and added the "Ambiguity Umbrella"). 100%
-    is against THIS snapshot, not current upstream.
-  - **Excluded tests**: local uncommitted edit to ../ixml/tests/correct/test-catalog.xml
-    comments out the `unicode-version-check` test-set (pathologically slow: 2M+ ops at a
-    single position, ~30s→1500s under the current queue). Hence 231 cases, not the full
-    upstream count. Re-enable once parser performance improves.
+  - Latest run: `/usr/bin/time -p cargo run --release -- suite --console SUMMARY --file FAILURES -o log/perf-suite-fixes-codeberg-release.txt`
+    completed in 127.31s suite wall time / 133.64s process real time.
+  - Slowest current tests: `correct/ixml tests/unicode-version-check/unicode-version-14-diagnostic`
+    at 42.32s and `correct/ixml tests/xpath/xpath` at 25.93s.
+  - **Suite pinned at**: Codeberg InvisibleXML/ixml `ca938ecd` (2026-02-03, "Merge pull request #336 from ndw/iss-330-xmlns-retry").
+    This is the symlinked repo at ../ixml-codeberg, with `ixml -> ../ixml-codeberg`.
+  - **Catalog note**: `../ixml-codeberg/tests/correct/test-catalog.xml` has local edits from
+    outside this repo. The current run includes the Unicode 14 diagnostic case, but full
+    Unicode-version dependency handling is still the right suite-driver follow-up if more
+    version-specific expected outputs are re-enabled.
 - **Dynamic error tests**: **20/20 passing**
   - Implemented output-tree validation for D01-D07 conditions where applicable
   - Suite driver now accepts `assert-dynamic-error error-code="..."` and matches the produced D-code
@@ -218,6 +219,20 @@ in commit 65091b1 once the family detector proved out.
     - Context: `../reference/ixml.xml` is reused across many syntax tests, and full-suite runs repeatedly rebuild the same `Grammar`
     - Files: src/testsuite_utils.rs
   - [x] **Long Comment Bootstrap Guard**: COMPLETED - finite completion waves from long comments no longer trip the infinite-loop guard #HIGH
+  - [x] **Compact Grammar Comment Normalization**: COMPLETED - grammar-source comments are replaced with a single spacing token before bootstrap parsing #HIGH #performance
+    - Files: src/validator.rs
+    - Preserves braces inside quoted strings and handles nested comments.
+    - Unicode diagnostic release run: 46.78s, no conversion panic.
+    - Codeberg 231-case release suite: 231/231 in 81.47s, down from 164.86s.
+  - [x] **Performance Harness Baseline**: COMPLETED - bench command and suite timing output are usable for ongoing perf work #MED #performance
+    - Files: src/cmd_bench.rs, src/cmd_suite.rs, src/parser.rs, src/grammar.rs
+    - Suite timings now write beside the selected output stem, e.g. `log/perf-suite-fixes-codeberg-release.timings.csv`.
+    - CSV output quotes fields correctly and separates synthetic parse timings from heavy-case build/parse timings.
+    - Bench runs are quiet by default, with `--stats` available when parser task stats are useful.
+    - `--filter` applies to heavy benchmarks too, so focused runs do not accidentally launch every heavy case.
+    - Common suite and bench invocations documented in README.md, AGENTS.md, and docs/PROFILING.md.
+    - Heavy benchmark sample: `unicode_version` build 40713.597ms / parse 3.256ms; `ixml_self` build 1235.203ms / parse 993.118ms.
+  - [ ] Add suite-driver support for `dependencies Unicode-version="..."` so the Codeberg Unicode diagnostic block can be re-enabled #MED
     - Files: src/parser.rs
     - Tests: `cargo run -- suite non-XML-char-in-input-output-clear --console SUMMARY --file FAILURES -o log/nonxml-clear-after.txt` => 2 pass, 0 fail, 0 bootstrap
   - [x] **Draft Naming/Alias Syntax**: COMPLETED - `>` aliases preserve parse targets while renaming XML output #HIGH
