@@ -2,25 +2,7 @@
 
 ## Enhanced Debugging & Transparency
 
-### Phase 1: CLI & Logging (Complete)
-- [x] Add --verbose levels to cmd_parse command
-- [x] Create centralized debug logging module with structured levels
-- [x] Enhance Earley parser logging with key decision points
-- [x] Write Earley trace to external file and make it easily greppable including by tools
-- [x] Add grammar tree processing debug output (src/grammar.rs with GRAMMAR| prefix)
-- [x] Enhanced parse failure diagnostics with detailed error reporting (src/parser.rs:580-634)
-- [x] Hand-built vs parsed grammar comparison testing methodology
-- [x] **CLI Interface Overhaul**: COMPLETED - Unified --console/--file options across all commands
-  - Status: COMPLETED - Consistent CLI interface with case-insensitive parsing
-  - Implementation: --console/--file levels + --console-filter/--file-filter categories
-  - Coverage: All commands (parse, validate, suite) use same option patterns
-  - Files: src/cmd_parse.rs, src/cmd_validate.rs, src/cmd_suite.rs, src/eb.rs
-  - Documentation: Updated README.md, CLAUDE.md with new CLI examples
-- [x] **Category-based Debug Filtering**: COMPLETED - 8 debug categories with structured macros
-  - Categories: BOOTSTRAP, QUEUE, SCANNER, OUTPUT, PREDICT, COMPLETE, DEDUP, GRAMMAR
-  - Macros: debug_bootstrap!(), debug_queue!(), debug_scanner!(), etc.
-  - Files: src/debug.rs (category functions and macros), all command modules
-  - Integration: Category filtering works across console and file output independently
+### Phase 1: CLI & Logging
 - [ ] **stderr Pseudo-Redirect for Claude Code Debugging**: Enhance debug system with stderr routing #MED
   - Problem: stderr content (warnings, errors) not captured in --console/--file streams, making Claude Code debugging incomplete
   - Solution: Add --stderr-to option to route stderr through existing console/file debug infrastructure
@@ -36,233 +18,65 @@
 - [ ] Interactive parser stepper (step through one operation at a time)
 - [ ] Export parse states to JSON/GraphViz formats
 
-## Immediate Priorities - Quick Test Suite Wins (Target: 35% → 65% pass rate)
-
-### Priority 1: Bootstrap Grammar Parsing Issues #CRITICAL
-- [x] Complete character set member processing (src/grammar.rs:320,351) #HIGH
-  - Status: COMPLETED - Added range support to `process_member_element` function
-  - Added support for `range` child elements with `from`/`to` attributes
-  - Tree processing now handles ranges, hex members, and class members correctly
-- [x] Enhanced parse failure diagnostics (src/parser.rs:580-634) #HIGH
-  - Status: COMPLETED - Added detailed parse failure reporting
-  - Shows furthest position reached, partial completions, nearby completions, active queue
-  - Dramatically improves debugging of bootstrap grammar parsing failures
-- [x] Fix Earley parser ambiguity handling for character ranges #CRITICAL
-  - Fixed: `["A"-"C"]` patterns now work correctly with proper queue management
-  - Fixed: Parser no longer prioritizes early string completion over range exploration
-  - Fixed: Simple hash system prevents task deduplication issues
-  - Verified: All character range patterns working: ["A"-"C"], ["0"-"9"; "A"-"F"], ["A"; "0"-"9"]
-  - Impact: Character range parsing no longer blocks test suite progress
-- [x] Add comment syntax to bootstrap grammar definition (src/ixml_bootstrap.rs:12,17,36,39) #HIGH
-  - Fixed: Implemented comment: -"{", (cchar; comment)*, -"}" with nested comment support
-  - Fixed: Added cchar: ~["{}"] rule for comment content
-  - Fixed: Integrated comments into s and RS spacing rules
-  - Verified: Nested comments working: {outer {inner} comment}
-- [ ] Investigate and fix remaining test suite issues
-
-### Priority 2: Unicode Character Classes #HIGH
-- [x] Implement all Unicode categories (src/unicode_ranges.rs, src/grammar.rs) #HIGH
-  - Status: COMPLETED (2025-10-01) - All 45 Unicode General Categories now implemented
-  - Added: Complete UnicodeRange enum with all major categories (C, L, M, N, P, S, Z)
-  - Added: All subcategories (LC, Ll, Lm, Lo, Lt, Lu, Mc, Me, Mn, Nd, Nl, No, etc.)
-  - Fixed: Bootstrap grammar 'letter' rule now allows ["A"-"Z"; "a"-"z"] per 2025-09-01 draft spec
-  - Fixed: process_class_member() simplified to pass all codes directly to ch_unicode()
-  - Verified: [L], [LC], [Nd], [Mn], [Zs] and all other Unicode class patterns working
-  - Tests: 3/4 unicode tests passing (unicode-range*, unicode-classes has output format issue)
-  - Files: src/unicode_ranges.rs (complete enum), src/grammar.rs:692-696, src/ixml_bootstrap.rs:274-277
-  - Impact: Full Unicode character class support for iXML 1.0 conformance
-
-### Priority 3: Insertion Syntax #HIGH
-- [x] Implement insertion syntax: `+` insertion for literal text #HIGH
-  - Status: COMPLETED (2025-10-01) - Full insertion implementation working
-  - Added: Factor::Insertion variant to grammar (src/grammar.rs:905)
-  - Added: MatchRec::Insertion for parse tree tracking (src/parser.rs:155)
-  - Fixed: Insertions handled in main parse loop without consuming input (src/parser.rs:654-660)
-  - Fixed: Insertions treated as nullable factors (src/grammar.rs:278-281)
-  - Fixed: Output generation includes inserted text (src/parser.rs:1087-1094)
-  - Tests: 9/12 insertion tests passing (75%) - 3 failures are ambiguous parse cases (not yet supported)
-  - Files: src/grammar.rs, src/parser.rs, src/ixml_bootstrap.rs
-- [x] Preserve nonterminal occurrence marks during output tree construction (src/parser.rs:1326) #HIGH
-  - Status: COMPLETED - `@b` references now serialize as attributes even when rule `b` is defined with the default mark
-  - Fixed: `grammar-misc/insert-multiple-attribute/iMultAtt-1` now passes
-  - Impact: Insertion tests now have only the known ambiguous cases failing
-
-### Priority 4: Output Formatting & Test Infrastructure #HIGH
-- [x] XML self-closing tags for empty elements #HIGH
-  - Status: COMPLETED (2025-10-01) - Empty elements now use `<tag/>` format
-  - Fixed: tree_to_test_format checks for content before choosing tag format (src/parser.rs:1165-1178)
-  - Impact: Cleaner, standard-compliant XML output
-- [x] Preserve terminal marks on encoded literals (src/grammar.rs:665) #HIGH
-  - Status: COMPLETED - `-#NN` encoded terminals now retain their hidden tmark during grammar conversion
-  - Fixed: `error/non-XML-char-in-input-output-errors/SOH-RS-EOT` no longer serializes hidden control characters as text
-  - Remaining related work: dynamic errors for visible non-XML characters still require D04/D01 implementation
-- [x] Test catalog XML parsing bugs #CRITICAL
-  - Status: COMPLETED (2025-10-01) - Fixed two critical bugs
-  - Fixed: assert-xml accumulator not cleared between tests (src/testsuite_utils.rs:318)
-  - Fixed: test-string XML entities not unescaped (src/testsuite_utils.rs:244-250)
-  - Impact: Test expectations now parsed correctly, fixing many false failures
-- [x] Ambiguous parse detection #LOW
-  - Status: COMPLETED (2025-10-01) - Warning added for ambiguous test cases
-  - Added: 🫥 emoji warning when loading tests with ixml:state="ambiguous" (src/testsuite_utils.rs:310-314)
-  - Impact: Clear indication that ambiguous parse support is not yet implemented
-
 ## Current Test Suite Status (Updated 2026-06-05)
-- **Current local Codeberg catalog**: **232/232 passing (100% pass rate)**
-  - **232 PASS / 0 FAIL / 0 Bootstrap / 0 Conversion / 0 Parse**
-  - Final 4 (ambig4, ambig6, css, iSepAlt-1) fixed by reachable derivation-family ambiguity detection
-  - Latest run: `/usr/bin/time -p cargo run --release -- suite --console SUMMARY --file FAILURES -o log/perf-suite-fixes-codeberg-release.txt`
-    completed in 127.31s suite wall time / 133.64s process real time.
-  - Slowest current tests: `correct/ixml tests/unicode-version-check/unicode-version-14-diagnostic`
-    at 42.32s and `correct/ixml tests/xpath/xpath` at 25.93s.
-  - **Suite pinned at**: Codeberg InvisibleXML/ixml `ca938ecd` (2026-02-03, "Merge pull request #336 from ndw/iss-330-xmlns-retry").
-    This is the symlinked repo at ../ixml-codeberg, with `ixml -> ../ixml-codeberg`.
-  - **Catalog note**: `../ixml-codeberg/tests/correct/test-catalog.xml` has local edits from
-    outside this repo. The current run includes the Unicode 14 diagnostic case, but full
-    Unicode-version dependency handling is still the right suite-driver follow-up if more
-    version-specific expected outputs are re-enabled.
-- **Dynamic error tests**: **20/20 passing**
-  - Implemented output-tree validation for D01-D07 conditions where applicable
-  - Suite driver now accepts `assert-dynamic-error error-code="..."` and matches the produced D-code
-- **Syntax tests**: **78/78 passing**
-  - `vxml-grammar-ref` XML grammar references now load and convert to `Grammar`
-- **Insertion tests**: **12/13 passing**
-  - Remaining insertion failures are ambiguous parse cases
-  - Core insertion, attributed insertion, and encoded insertion behavior are working
-- **Remaining feature buckets**:
-  - Structural ambiguous parse detection and `ixml:state="ambiguous"` output (all 4 remaining failures)
+- **Full catalog**: **792/906 passing (87.4% pass rate)**
+  - **792 PASS / 113 FAIL / 0 Bootstrap / 1 Conversion / 0 Parse**
+  - Latest run (2026-06-05): 906 tests, 638.83s wall time (~10.6 min)
+    `cargo run --release -- suite --console SUMMARY --file FAILURES -o log/s-errors-after.txt`
+  - +47 tests recovered vs baseline (746→792) with zero regressions
+  - Previous baseline (2026-06-05): **746/906 passing (82.3%)**
+  - Earlier baseline (old loader, 232 tests only): **232/232 passing (100%)**
 
-## Ambiguous Parse Support (4 failing tests — all share this root cause)
+  ### Remaining 113 failure breakdown (all pre-existing, none introduced by S-error work):
 
-The 4 remaining failures require the parser to detect structural ambiguity and emit
-`ixml:state="ambiguous"` on the root element per the iXML 1.0 spec. They divide into
-three sub-groups:
+  **Category A — 88 grammar-test/assert-xml: naming structure mismatch**
+  - Tests parse grammar source text via BootstrapIxml and compare XML parse tree.
+  - Expected: `<rule name="S">` (name as direct attribute on rule/nonterminal)
+  - Actual: `<rule><naming name="S">` (naming as sub-element)
+  - Root cause: our bootstrap grammar was updated to use the `naming` production (needed for
+    aliasing feature), but the official test catalog was generated with the older grammar
+    (ixml3.ixml) where `mark?` and `name` appeared directly in `rule:` and `nonterminal:`.
+  - Fix approach: in src/ixml_bootstrap.rs, change naming to be transparent/muted, OR use
+    the same structure as ixml3.ixml (no `naming` production, inline mark?/name in rule/nonterminal)
+  - Files: src/ixml_bootstrap.rs
 
-### Sub-group A: Correct parse, missing state attribute only (5 tests) #HIGH
-These tests produce the right XML tree but the root element lacks `ixml:state="ambiguous"`.
-- [x] ambiguous/ambig3/ambig3 — fixed by saturated derivation-signature counting
-- [x] ambiguous/ambig6/ambig6 — fixed by reachable derivation-family detection (empty rule vs empty rep)
-- [x] ambiguous/css/css — fixed by reachable derivation-family detection (empty property vs empty rep)
-- [x] ambiguous/date/date — root alternatives detected by root counting
-- [x] ambiguous/lf2/lf2 — fixed by saturated derivation-signature counting
+  **Category B — 16 unicode-version-check: fixed Unicode version**
+  - Tests expect Unicode version-specific character category behavior (v6.0, v7, v8...v17).
+  - We use a single fixed Unicode version (from the unicode_character_database crate).
+  - These are inherently hard to fix without multi-version Unicode support.
 
-### Sub-group B: Wrong parse chosen from ambiguous alternatives (5 tests) #HIGH
-Parser picks one valid but wrong derivation; correct output requires either a different
-preferred derivation or true multi-tree output. `ixml:state="ambiguous"` also required.
-Each test has an `.alt.output.xml` file whose content matches our current parse tree —
-so adding the state attribute alone would pass the test if the alt is accepted.
-- [x] ambiguous/ambig/ambig — fixed by saturated derivation-signature counting #MED
-- [x] ambiguous/ambig4/ambig4 — fixed by reachable derivation-family detection (property+ split ambiguity)
-- [x] ambiguous/ambig5/ambig5 — fixed by saturated derivation-signature counting #MED
-- [x] ambiguous/expr0/expr0 — fixed by saturated derivation-signature counting #MED
-- [x] ambiguous/ambiguous-marks/Battr — `S B="b"` form is second expected alt; FIXED by root counting #MED
+  **Category C — 7 ambiguity detection gaps**
+  - Tests expect `ixml:state="ambiguous"` but parser returns plain result.
+  - Cases: g05.c01, g10c01, g12.c04, g12.c05, g20c01, g27.c03, g28.c02
+  - Ambiguity IS detected in many cases; these are gaps in the detection algorithm.
 
-### Sub-group C: Ambiguous insertions (3 tests) #MED
-Grammar has two alternatives that each insert different literal text; parser picks one
-without detecting ambiguity. Output uses wrong inserted text and lacks state attribute.
-- [x] grammar-misc/insert-ambiguous/iAmb-1 — `S: +'A'; +'B'`; two root alt_indices → FIXED by root counting #MED
-- [x] grammar-misc/insert-alternate/iAlt-1 — same as iAmb-1 → FIXED by root counting #MED
-- [x] grammar-misc/insert-separator-alternate/iSepAlt-1 — fixed by reachable derivation-family detection (separator alt :/= )
+  **Category D — 2 parse-should-fail not caught**
+  - Tests expect parse failure (assert-not-a-sentence) but parse succeeds.
+  - Cases: g24.r02, g27.r02
+  - Likely involve non-productive or cyclic grammars that technically parse but shouldn't.
 
-### Implemented: root alt_index counting (src/parser.rs)
-`Parser::is_ambiguous()` counts completed root-rule tasks at `(origin=0, pos=input_len)`.
-If two or more distinct alt_indices complete, the grammar is ambiguous. Fixes 4 tests:
-date, Battr, iAmb-1, iAlt-1. Wired into `tree_to_test_format_with_state()` in
-cmd_parse.rs and cmd_suite.rs.
+  - [x] Cache compiled grammars in run_single_test to avoid recompiling on every test (2026-06-05)
+    - HashMap<String, Grammar> keyed by ixml source; bootstrap_ixml_grammar cached as "__bootstrap_ixml__"
+    - Files: src/cmd_suite.rs
 
-### Implemented: saturated derivation-signature counting (src/parser.rs)
-Each `Task` stores one derivation signature plus a capped `One`/`Many` count. When a
-duplicate Earley item arrives with a different signature, or from an already-`Many`
-child derivation, the stored item becomes `Many`. `Parser::is_ambiguous()` then marks
-completed root items with `Many` as ambiguous. Fixes 5 more tests: ambig, ambig3,
-ambig5, expr0, and lf2.
+  - [x] Static S-error detection implemented (2026-06-05)
+    - S02: undefined nonterminal — post-build check in Grammar::from_parse_tree
+    - S03: duplicate rule — inline check in Grammar::from_parse_tree (before construct_rule_from_tree)
+    - S06: non-hex characters in hex literal — validate_hex_codepoint in append_factor_from_tree
+    - S07: hex value outside 0..10FFFF — validate_hex_codepoint
+    - S08: surrogate or noncharacter code point — validate_hex_codepoint
+    - S09: reversed range — parse_range_values
+    - S10: invalid Unicode category — process_class_member + UnicodeRange::is_valid
+    - Files: src/grammar.rs, src/unicode_ranges.rs, src/testsuite_utils.rs, src/cmd_suite.rs
 
-### Attempted: Earley chart structural deduplication (ABANDONED — too many false positives)
-The intuition: when a completed task is blocked by deduplication inside `complete()`,
-two derivations reached the same chart state — structural ambiguity. In practice this
-fires for any grammar using optional rules (`rule?`) because:
-1. The predictor eagerly advances a parent over a nullable child (`f-star`, `f-option`)
-2. When `complete()` later processes the same child's actual completion, it finds the
-   parent advancement already done and deduplicates — but this is NOT a second derivation.
-Filtering by "both child and parent consumed input (origin ≠ pos)" reduces false positives
-but doesn't eliminate them: rules like `chars: punct, nonpunct?` still trigger because
-the optional `nonpunct?` can complete at many different end positions, each creating the
-same parent task hash via a different path. Reverting this approach; root counting is
-the only safe ambiguity signal available without deeper Earley chart bookkeeping.
-
-### Attempted: duplicate completed root item (ABANDONED — false positives)
-Narrowing the dedup signal to "a duplicate task would complete the root rule over the
-full input" improves the ambiguous subset (11/15 passing) but incorrectly marks many
-ordinary `correct` fixtures ambiguous. `log/root-dup-correct.txt` showed 16 false
-failures including address, expr*, ranges, and whitespace/delimiter cases.
-
-### Implemented: reachable derivation-family detection (src/parser.rs) — fixes the last 4
-Replaces the forward-propagated One/Many flag (which set Many too late to reach the root)
-with detection decoupled from decision:
-- `TraceArena.families: HashMap<(name, origin, pos), HashSet<u64>>`. At every dot-completion
-  site — `task_advance_cursor` (recorded BEFORE the dedup short-circuit, so a deduplicated
-  second derivation still registers) and the empty-rule branch of `predict` — record
-  `family_signature(alt_index, matched_so_far)`. Folding in alt_index makes different
-  alternatives over the same span distinct families (Mechanism A: ambig6/css/iSepAlt);
-  differing child splits make same-alt derivations distinct (Mechanism B: ambig4).
-- `is_ambiguous()` is now a read-only reachability walk (`span_is_ambiguous`) from
-  (root, 0, n), mirroring `unpack_parse_tree_internal` but over the internal (un-pruned)
-  forest so it descends into muted synthesized repetition rules. A span with >=2 families
-  is locally ambiguous; reachability from the accepting root excludes dead-end chart items
-  (the false positives that sank earlier attempts).
-The older One/Many machinery (DerivationCount, derivation_sig, incoming_many) was removed
-in commit 65091b1 once the family detector proved out.
-- **Recent Major Fixes**:
-  - [x] **VXML Grammar References**: COMPLETED - XML-form grammars load through the suite driver #HIGH
-    - Files: src/testsuite_utils.rs
-    - Tests: `cargo run -- suite syntax --console SUMMARY --file FAILURES -o log/syntax-after-vxml.txt` => 78 pass, 0 fail, 0 bootstrap
-  - [ ] Cache parsed VXML grammar references in the suite loader to avoid reparsing the same XML grammar for every test case #MED #performance
-    - Context: `../reference/ixml.xml` is reused across many syntax tests, and full-suite runs repeatedly rebuild the same `Grammar`
-    - Files: src/testsuite_utils.rs
-  - [x] **Long Comment Bootstrap Guard**: COMPLETED - finite completion waves from long comments no longer trip the infinite-loop guard #HIGH
-  - [x] **Compact Grammar Comment Normalization**: COMPLETED - grammar-source comments are replaced with a single spacing token before bootstrap parsing #HIGH #performance
-    - Files: src/validator.rs
-    - Preserves braces inside quoted strings and handles nested comments.
-    - Unicode diagnostic release run: 46.78s, no conversion panic.
-    - Codeberg 231-case release suite: 231/231 in 81.47s, down from 164.86s.
-  - [x] **Performance Harness Baseline**: COMPLETED - bench command and suite timing output are usable for ongoing perf work #MED #performance
-    - Files: src/cmd_bench.rs, src/cmd_suite.rs, src/parser.rs, src/grammar.rs
-    - Suite timings now write beside the selected output stem, e.g. `log/perf-suite-fixes-codeberg-release.timings.csv`.
-    - CSV output quotes fields correctly and separates synthetic parse timings from heavy-case build/parse timings.
-    - Bench runs are quiet by default, with `--stats` available when parser task stats are useful.
-    - `--filter` applies to heavy benchmarks too, so focused runs do not accidentally launch every heavy case.
-    - Common suite and bench invocations documented in README.md, AGENTS.md, and docs/PROFILING.md.
-    - Heavy benchmark sample: `unicode_version` build 40713.597ms / parse 3.256ms; `ixml_self` build 1235.203ms / parse 993.118ms.
-  - [ ] Add suite-driver support for `dependencies Unicode-version="..."` so the Codeberg Unicode diagnostic block can be re-enabled #MED
-    - Files: src/parser.rs
-    - Tests: `cargo run -- suite non-XML-char-in-input-output-clear --console SUMMARY --file FAILURES -o log/nonxml-clear-after.txt` => 2 pass, 0 fail, 0 bootstrap
-  - [x] **Draft Naming/Alias Syntax**: COMPLETED - `>` aliases preserve parse targets while renaming XML output #HIGH
-    - Files: src/ixml_bootstrap.rs, src/grammar.rs, src/parser.rs
-    - Tests: `cargo run -- suite naming --console SUMMARY --file FAILURES -o log/naming-after.txt` => 4 pass, 0 fail, 0 bootstrap
-  - [x] **Dynamic Errors**: COMPLETED - output validation detects D02-D07 and suite accepts expected dynamic codes #HIGH
-    - Files: src/parser.rs, src/cmd_suite.rs, src/cmd_parse.rs, src/testsuite_utils.rs
-    - Tests: `cargo run -- suite error --console SUMMARY --file FAILURES -o log/error-dynamic-after.txt` => 18 pass, 0 fail, 2 bootstrap
-  - [x] **Alternate Expected Results**: COMPLETED - multiple `<assert-xml>` expectations are alternatives #HIGH
-    - Fixed: `chars/chars.astral/chars.astral.1`
-  - [x] **Occurrence Mark Output**: COMPLETED - nonterminal occurrence marks override definition marks #HIGH
-    - Fixed: `grammar-misc/insert-multiple-attribute/iMultAtt-1`
-  - [x] **Encoded Terminal Marks**: COMPLETED - hidden `-#NN` terminals retain their tmark #HIGH
-    - Fixed: `error/non-XML-char-in-input-output-errors/SOH-RS-EOT`
-- **Previous Major Fixes**:
-  - **Architecture Simplification**: COMPLETED - removed all parent-hash/blockchain complexity from parser
-  - **Task Deduplication**: SIMPLIFIED - single identity hash per task based on core fields
-  - **Nullable Nonterminal Handling**: FIXED - proper advancement for deduplicated nullable nonterminals
-  - **Code Clarity**: IMPROVED - much simpler parser structure for easier debugging
-- **Unicode Character Classes**: WORKING - [L], [Nd], [Mn], [Zs] patterns parse correctly
-- [x] **Left Recursion Issue**: COMPLETELY RESOLVED - implemented alternative indexing with simple deduplication #CRITICAL
-  - Problem: Parent-hash chaining created infinitely growing chains for predictions (expr→sum→expr = [A→B→C→D...])
-  - Root Cause: Confusion between individual alternatives (Rules) vs grouped alternatives (BranchingRules)
-  - Solution: Added `alt_index: usize` field to Task struct with simple deduplication strategy
-  - Implementation: Basic identity hash based on name[alt_index], origin, pos, dot
-  - Verification: `S: S, "a"; "b".` with input `ba` now parses correctly as `<S><S>b</S>a</S>`
-  - Technical Details: Position semantics changed to S(N) notation, removed unused at_end() method, removed all parent-hash complexity
-  - Files Modified: src/parser.rs (Task struct, have_we_seen method), src/debug.rs (trace format)
-  - Impact: Left recursion fully working, no more infinite loops or 🚧 TODO markers in test results
-- **Infrastructure Improvements**: Enhanced diagnostics, background task support, emoji documentation, simplified architecture
+## Current Bench Baseline (2026-06-05, log/bench-baseline-906.csv)
+  - unicode_version:  build=59437ms, parse=3.1ms
+  - ixml_self:        build=1461ms,  parse=1394ms
+  - ambiguous n=128:  median=696ms
+  - right_recursion n=128: median=33ms
+  - left_recursion n=128:  median=0.7ms
+  - repeat_plus n=128:     median=66ms
+  - nested n=128:          median=1.5ms
 
 ## Lower Priority - Architecture
 - [ ] Implement Grammar::to_string() method for bootstrap self-validation #MED
@@ -271,19 +85,6 @@ in commit 65091b1 once the family detector proved out.
   - Implementation: Walk grammar structure and emit proper iXML syntax with marks, alternatives, etc.
   - Value: Would enable `Grammar::from_ixml_str(&bootstrap_grammar.to_string())` roundtrip test
   - Complexity: Significant - need to handle all grammar constructs, marks, repeats, character classes
-- [x] Investigate test suite debug configuration integration #LOW
-  - Status: COMPLETED - Added full debug configuration to `eb suite` command
-  - Implementation: --console/--file levels and category filtering now available in suite command
-  - Impact: Can now debug conformance failures with granular control over output
-- [x] Follow Rust testing conventions throughout codebase #LOW
-  - Use `#[cfg(test)]` modules in source files for unit tests
-  - Reserve `tests/` directory for integration tests only
-  - Ensures tests stay close to the code they test
-- [x] Add SUMMARY log level for high-level debugging #HIGH
-  - Status: COMPLETED - SUMMARY level implemented and integrated across all commands
-  - Implementation: SUMMARY maps to DebugLevel::Basic with structured output
-  - Integration: Available in --console and --file options for all commands
-  - Usage: Provides token-efficient debugging with major parsing stages only
 - [ ] Replace ad-hoc logging with structured tracing crate #MED
   - Use `tracing` crate with spans and structured fields
   - Add contextual information to all parsing operations
@@ -303,25 +104,6 @@ in commit 65091b1 once the family detector proved out.
   - [ ] Auto-generate round-trip tests comparing hand-coded vs parsed grammar behavior
   - [ ] Create verification that bootstrap implementation matches embedded iXML specification
   - [ ] Consider declarative grammar builder macro as alternative approach
-
-## iXML 1.0 Specification Errata (https://invisiblexml.org/1.0/errata.html)
-
-- [x] E001: The Unicode character class "LC" #HIGH
-  - Status: IMPLEMENTED - Bootstrap grammar 'letter' rule uses ["A"-"Z"; "a"-"z"] per erratum
-  - Issue: Unicode character class "LC" was not properly addressed in original letter definition
-  - Correction: Modified definition of letter nonterminal to use explicit character ranges
-  - Files: src/ixml_bootstrap.rs:274-277
-- [ ] E002: A string cannot contain C0 or C1 control characters #MED
-  - Issue: Original spec did not clearly define restrictions on control characters in strings
-  - Correction: Updated definition of quoted strings to exclude C0 and C1 control characters
-  - Amendment: Error S11 now specifies these restrictions
-  - Implementation: Need to validate string/quoted content against C0 (0x00-0x1F) and C1 (0x80-0x9F) ranges
-  - Files: src/grammar.rs (string validation), src/parser.rs (error reporting for S11)
-- [ ] E003: Ignore UTF-8 BOM #LOW
-  - Issue: Specification needed clarification on handling UTF-8 Byte Order Mark (U+FEFF)
-  - Correction: Added explicit requirement to ignore UTF-8 BOM during parsing
-  - Implementation: Strip BOM (0xEF 0xBB 0xBF) from beginning of grammar and input strings
-  - Files: src/parser.rs (input preprocessing), src/grammar.rs (grammar text preprocessing)
 
 ## iXML Draft 2025-09-01 Changes (Beyond 1.0 + Errata)
 
@@ -364,31 +146,18 @@ This draft incorporates all 1.0 errata plus the following new features:
   - Impact: Purely organizational, no semantic change
   - Files: src/ixml_bootstrap.rs
 
-## Summary: Path to 100% ixml Current Draft Conformance
-
-**Current Status**: Targeting ixml 1.0 + E001 plus draft renaming (94.4% full-catalog pass rate, 218/231 tests)
-**Proposed Target**: ixml Draft 2025-09-01 (all 1.0 errata + renaming + Cc validation)
-
-**Required Changes**:
-1. **E002 (Cc category)**: Replace line-break checks with full Unicode control character exclusion
-2. **E003 (BOM)**: Strip UTF-8 BOM from inputs
-3. **Renaming**: Complete; alias syntax support is implemented
-4. **Prolog/RS**: Adjust spacing requirements around version declaration
-
-**Observed Impact**: 175/231 → 218/231 tests passing across dynamic errors, renaming, long-comment bootstrap handling, and VXML grammar references
-
 ## iXML Specification Error Codes (https://invisiblexml.org/1.0/)
 
 ### Static Errors (detectable by inspecting grammar)
-- [ ] S01: Two rules not separated by whitespace or comment #MED
-- [ ] S02: Nonterminal name used but not defined in grammar #HIGH
-- [ ] S03: Grammar contains more than one rule for given nonterminal #HIGH
-- [ ] S06: Hex encoding uses characters not allowed in hexadecimal #MED
-- [ ] S07: Hexadecimal value not within Unicode code-point range #MED
-- [ ] S08: Encoded character denotes Unicode noncharacter or surrogate code point #MED
-- [ ] S09: First character in range has greater code point than second character #MED
-- [ ] S10: Unicode character category not defined in Unicode specification #MED
-- [ ] S11: String contains C0 or C1 control character, including line break #MED
+- [x] S02: Nonterminal name used but not defined in grammar (2026-06-05) #HIGH
+- [x] S03: Grammar contains more than one rule for given nonterminal (2026-06-05) #HIGH
+- [x] S06: Hex encoding uses characters not allowed in hexadecimal (2026-06-05) #MED
+- [x] S07: Hexadecimal value not within Unicode code-point range (2026-06-05) #MED
+- [x] S08: Encoded character denotes Unicode noncharacter or surrogate code point (2026-06-05) #MED
+- [x] S09: First character in range has greater code point than second character (2026-06-05) #MED
+- [x] S10: Unicode character category not defined in Unicode specification (2026-06-05) #MED
+- [ ] S01: Two rules not separated by whitespace or comment — bootstrap parser already catches most #MED
+- [ ] S11: String contains C0 or C1 control character — REMOVED from spec (upstream a71727c) #WONTFIX
 - [ ] S12: Grammar does not conform to implied or declared version #MED
 
 ### Dynamic Errors (detected when processing input with grammar)

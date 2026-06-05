@@ -1,5 +1,5 @@
 # EarleyBird
-Experimental implementation of ixml in Rust. Currently targeting the 1.0 spec.
+Experimental implementation of ixml in Rust. Targeting the 2026-02-03 Editorial Draft of the ixml specification.
 
 # Usage
 
@@ -318,6 +318,8 @@ The test harness expects to locate resources from the official ixml repo in a sy
 # References
 
 Invisible XML: https://invisiblexml.org/
+
+ixml Specification (2026-02-03 Editorial Draft): https://invisiblexml.org/current/
 
 IXML Repo: https://github.com/invisibleXML/ixml
 

@@ -34,7 +34,7 @@ Bad:   // NEW algorithm...
 
          rule: naming, -["=:"], s, -alts, -".".
         @mark: ["@^-"].
-       naming: (mark, s)?, name, s, (-">", s, alias, s)?.
+      -naming: (mark, s)?, name, s, (-">", s, alias, s)?.
         @alias: name.
          alts: alt++(-[";|"], s).
           alt: term**(-",", s).
@@ -94,7 +94,7 @@ Bad:   // NEW algorithm...
     insertion: -"+", s, (string; -"#", hex), s.
 </ixml>
 
-- Primary specification: https://invisiblexml.org/1.0/ -- access this if looking at the EBNF above is insufficient
+- Primary specification: https://invisiblexml.org/current/ (2026-02-03 Editorial Draft) -- access this if looking at the EBNF above is insufficient
 - Use this as authoritative source for grammar syntax and semantics
 - Bootstrap implementation should match spec grammar productions exactly
 - This project's goal is 100% conformance to the ixml spec
@@ -341,51 +341,25 @@ grep "FAIL" log/debug.log          # All failures
 3. **Focus on parse tree structure** - grammar parsing vs input parsing are different issues
 4. **Leverage test suite patterns** - find working examples to understand correct behavior
 
-## Current Status (Updated 2026-06-04)
-
-**Full conformance catalog**
-- **Pass Rate**: 218/231 passing (94.4%)
-- **Remaining**: 13 concrete failures, 0 bootstrap errors, 0 TODO
-- **Latest baseline**: `cargo run -- suite --console SUMMARY --file FAILURES -o log/full-suite-vxml-after.txt`
-
-**Feature Status Summary**
-- ✅ **Position-Bucketed Queue**: Working
-- ✅ **Left Recursion**: Supported
-- ✅ **Character Sets**: Core patterns working (`["A"]`, `[#20]`, `["0"-"9"]`, `[L]`, Unicode classes)
-- ✅ **Insertion Syntax**: Core functionality complete; remaining insertion failures are ambiguous cases
-- ✅ **Draft Naming/Alias Syntax**: Rule-definition and nonterminal-reference aliases are implemented
-- ✅ **Dynamic Errors**: D01-D07 output validation implemented where applicable
-- ✅ **Comments**: Nested comment support
-- ✅ **Version Declarations**: Version mismatch detection and `ixml:state` attribute support
-- ✅ **Dynamic Error Suite**: `error` subset is 20/20 passing
-- ✅ **XML-form Grammar Fixtures**: `syntax` subset is 78/78 passing
-- ⚠️ **Ambiguous Parses**: Not yet supported; remaining `FAIL` cases are ambiguity-related
-
 # TODO File Management
-
 - Always read `TODO.txt` at session start
 - Reference TODO items when suggesting or planning work
 - Auto-update TODO.txt after completing tasks
 - Add new issues discovered while coding
 
 ## TODO Format
-
 - `- [ ]` incomplete, `- [x]` complete; Include file paths: `(src/auth.js:45)`
 - Suffix tags for priority or anything else: `#HIGH` `#MED` `#LOW`; or `#techdebt`, etc.
 
 ## Workflow
-
 @TODO.txt is for multi-session issues; not immediate work at hand
-
 - Mention when adding, modifying, working on, or marking items done
 - Break down COMPLEX tasks
 
 # WebAssembly
-
 - Always ensure that we are producing code that can target WebAssembly (this does not include test harnesses or suites)
 - Minimize external dependencies; if using dependencies make sure they can readily compile to WebAssembly
 
 ### Position Semantics
-
 - Position notation: `S(N)` = position before character N; S(0) = before first character
 - `InputIter.get_at(cursor)` returns the character immediately after `cursor`
