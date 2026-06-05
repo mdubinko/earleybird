@@ -208,8 +208,8 @@ with detection decoupled from decision:
   forest so it descends into muted synthesized repetition rules. A span with >=2 families
   is locally ambiguous; reachability from the accepting root excludes dead-end chart items
   (the false positives that sank earlier attempts).
-Note: the older One/Many machinery (DerivationCount, derivation_sig, incoming_many) is now
-dead and slated for removal (was "File 4" of the plan); left in place pending a follow-up.
+The older One/Many machinery (DerivationCount, derivation_sig, incoming_many) was removed
+in commit 65091b1 once the family detector proved out.
 - **Recent Major Fixes**:
   - [x] **VXML Grammar References**: COMPLETED - XML-form grammars load through the suite driver #HIGH
     - Files: src/testsuite_utils.rs
