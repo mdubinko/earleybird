@@ -157,11 +157,10 @@ impl Grammar {
         }
         branching_rule.add_alt_branch(main_rule);
 
-        // 2) synthesized rules
-        //for (syn_name, builders) in sb.syn_rules {
+        // 2) synthesized rules — drain by insertion order to avoid cloning
+        let mut syn_rules = sb.syn_rules;
         for syn_name in sb.defn_order {
-            let builders = sb.syn_rules[&syn_name].to_vec(); // TODO: NOT copy
-            for builder in builders {
+            for builder in syn_rules.remove(&syn_name).unwrap_or_default() {
                 let syn_branching_rule =
                     self.definitions.entry(syn_name.clone()).or_insert_with(|| {
                         self.defn_order.push(syn_name.clone());
@@ -433,6 +432,8 @@ impl Grammar {
         stats_enabled: bool,
     ) -> Result<Grammar, GrammarConstructionError> {
         // Phase 1: Validate and preprocess the iXML text
+        // E003: strip UTF-8 BOM (U+FEFF) before any other processing
+        let ixml = ixml.trim_start_matches('\u{FEFF}');
         let validation_result = crate::validator::validate_ixml(ixml.trim());
 
         if !validation_result.is_valid() {
@@ -580,6 +581,11 @@ impl Grammar {
                 "can't convert ixml tree to grammar: no rules present",
             ));
         }
+
+        // S03: track top-level rule names to detect duplicates
+        let mut seen_rule_names: std::collections::HashSet<SmolStr> =
+            std::collections::HashSet::new();
+
         for rule in all_rules {
             let rule_attrs = Parser::get_attributes(arena, rule);
             let naming = Grammar::naming_from_node(arena, rule);
@@ -592,6 +598,15 @@ impl Grammar {
                     ));
                 }
             };
+
+            // S03: duplicate rule definition
+            let rule_name_smol = SmolStr::new(rule_name.as_str());
+            if !seen_rule_names.insert(rule_name_smol) {
+                return Err(crate::parser::ParseError::static_err(&format!(
+                    "S03: grammar contains more than one rule for nonterminal '{rule_name}'"
+                )));
+            }
+
             let rule_mark = rule_attrs.get("mark").or(naming.mark.as_ref());
             let mark = match rule_mark.map(|s| s.as_str()) {
                 Some("@") => Mark::Attr,
@@ -606,8 +621,24 @@ impl Grammar {
                 arena,
                 rule_name,
                 &mut g,
-            );
+            )?;
         }
+
+        // S02: every nonterminal reference must have a corresponding rule definition
+        for br in g.definitions.values() {
+            for alt in br.iter() {
+                for factor in alt.iter() {
+                    if let Factor::Nonterm(_, name, _) = factor {
+                        if !g.definitions.contains_key(name.as_str()) {
+                            return Err(crate::parser::ParseError::static_err(&format!(
+                                "S02: nonterminal '{name}' is used but not defined in the grammar"
+                            )));
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(g)
     }
 
@@ -636,7 +667,7 @@ impl Grammar {
         arena: &Arena<crate::parser::Content>,
         rule_name: &str,
         g: &mut Grammar,
-    ) {
+    ) -> Result<(), crate::parser::ParseError> {
         use crate::debug::DebugLevel;
         use crate::parser::Parser;
 
@@ -658,7 +689,7 @@ impl Grammar {
                     alt_count,
                     rule_name
                 );
-                let rb = Grammar::build_sequence_from_tree(eid, arena, &ctx);
+                let rb = Grammar::build_sequence_from_tree(eid, arena, &ctx)?;
                 g.mark_define_alias(mark, rule_name, alias, rb);
             }
         }
@@ -668,6 +699,7 @@ impl Grammar {
             rule_name,
             alt_count
         );
+        Ok(())
     }
 
     /// Helper function: Construct a sequence from parse tree node
@@ -675,7 +707,7 @@ impl Grammar {
         node: NodeId,
         arena: &Arena<crate::parser::Content>,
         ctx: &Rc<RuleContext>,
-    ) -> SeqBuilder {
+    ) -> Result<SeqBuilder, crate::parser::ParseError> {
         use crate::debug::DebugLevel;
         use crate::parser::Parser;
 
@@ -695,7 +727,7 @@ impl Grammar {
                 name,
                 ctx.rulename
             );
-            seq = Grammar::append_factor_from_tree(seq, &name, nid, arena, ctx);
+            seq = Grammar::append_factor_from_tree(seq, &name, nid, arena, ctx)?;
         }
         debug_grammar!(
             DebugLevel::Trace,
@@ -703,7 +735,7 @@ impl Grammar {
             ctx.rulename,
             factor_count
         );
-        seq
+        Ok(seq)
     }
 
     /// Helper function: Add factors to sequence from parse tree
@@ -713,7 +745,7 @@ impl Grammar {
         nid: NodeId,
         arena: &Arena<crate::parser::Content>,
         ctx: &Rc<RuleContext>,
-    ) -> SeqBuilder {
+    ) -> Result<SeqBuilder, crate::parser::ParseError> {
         use crate::debug::DebugLevel;
         use crate::parser::Parser;
 
@@ -726,22 +758,20 @@ impl Grammar {
         let attrs = Parser::get_attributes(arena, nid);
         match name {
             "alts" => {
-                // an <alts> with only one <alt> child can be inlined, otherwise we give it the full treatment
                 let alt_elements = Parser::get_child_elements_named(arena, nid, "alt");
                 if alt_elements.len() == 1 {
-                    seq = Grammar::append_factor_from_tree(seq, "alt", alt_elements[0], arena, ctx);
+                    seq = Grammar::append_factor_from_tree(seq, "alt", alt_elements[0], arena, ctx)?;
                 } else {
                     let altrules: Vec<SeqBuilder> = alt_elements
                         .iter()
                         .map(|n| Grammar::build_sequence_from_tree(*n, arena, ctx))
-                        .collect();
+                        .collect::<Result<_, _>>()?;
                     seq = seq.alts(altrules);
                 }
             }
             "alt" => {
-                // Handle individual alt elements by processing their contents as a sequence
                 for (child_name, child_nid) in Parser::get_child_elements(arena, nid) {
-                    seq = Grammar::append_factor_from_tree(seq, &child_name, child_nid, arena, ctx);
+                    seq = Grammar::append_factor_from_tree(seq, &child_name, child_nid, arena, ctx)?;
                 }
             }
             "literal" => {
@@ -760,42 +790,18 @@ impl Grammar {
                     attrs
                 );
                 if let Some(string_value) = attrs.get("string") {
-                    if string_value.is_empty() {
-                        debug_grammar!(
-                            DebugLevel::Basic,
-                            "WARNING: empty string literal encountered - treating as epsilon"
-                        );
-                        // Empty string - no characters to match, continue with current seq
-                    } else {
+                    if !string_value.is_empty() {
                         seq = seq.mark_str(string_value, tmark);
                     }
                 } else if let Some(hex_value) = attrs.get("hex") {
-                    // Handle hex literals like #a (which is newline \n)
-                    if let Ok(code_point) = u32::from_str_radix(hex_value, 16) {
-                        if let Some(ch) = char::from_u32(code_point) {
-                            seq = seq.mark_ch(ch, tmark);
-                            debug_grammar!(
-                                DebugLevel::Trace,
-                                "      Converted hex #{} to character '{}'",
-                                hex_value,
-                                ch
-                            );
-                        } else {
-                            debug_grammar!(
-                                DebugLevel::Basic,
-                                "ERROR: invalid Unicode code point from hex #{}",
-                                hex_value
-                            );
-                        }
-                    } else {
-                        debug_grammar!(
-                            DebugLevel::Basic,
-                            "ERROR: invalid hex value '{}'",
-                            hex_value
-                        );
-                    }
-                } else {
-                    debug_grammar!(DebugLevel::Basic, "ERROR: literal element missing both 'string' and 'hex' attributes, attrs: {:?}", attrs);
+                    let code_point =
+                        u32::from_str_radix(hex_value, 16).map_err(|_| {
+                            crate::parser::ParseError::static_err(&format!(
+                                "S06: invalid hexadecimal value '#{hex_value}'"
+                            ))
+                        })?;
+                    let ch = Self::validate_hex_codepoint(code_point, hex_value)?;
+                    seq = seq.mark_ch(ch, tmark);
                 }
             }
             "inclusion" => {
@@ -804,12 +810,9 @@ impl Grammar {
                     Some("-") => TMark::Mute,
                     _ => TMark::Default,
                 };
-                // character classes - handle both string attributes and child member elements
                 if let Some(string_attr) = attrs.get("string") {
-                    // Simple string character class like ["abc"]
                     seq = seq.mark_ch_in(string_attr, tmark);
                 } else {
-                    // Process child member elements for ranges and other complex patterns
                     let mut lit_builder = TerminalDefn::union();
                     for (child_name, child_nid) in Parser::get_child_elements(arena, nid) {
                         if child_name == "member" {
@@ -817,16 +820,13 @@ impl Grammar {
                             if let (Some(from), Some(to)) =
                                 (member_attrs.get("from"), member_attrs.get("to"))
                             {
-                                // Character range like ["a"-"z"] or hex range like [#41-#46]
-                                let (from_char, to_char) = Self::parse_range_values(from, to);
+                                let (from_char, to_char) = Self::parse_range_values(from, to)?;
                                 lit_builder = lit_builder.ch_range(from_char, to_char);
                             } else if let Some(string_attr) = member_attrs.get("string") {
-                                // Simple string member like ["abc"]
                                 lit_builder = lit_builder.ch_in(string_attr);
                             } else {
-                                // Handle hex members and class members
                                 lit_builder =
-                                    Self::process_member_element(arena, child_nid, lit_builder);
+                                    Self::process_member_element(arena, child_nid, lit_builder)?;
                             }
                         }
                     }
@@ -839,12 +839,9 @@ impl Grammar {
                     Some("-") => TMark::Mute,
                     _ => TMark::Default,
                 };
-                // character classes - handle both string attributes and child member elements
                 if let Some(string_attr) = attrs.get("string") {
-                    // Simple string character class like ~["abc"]
                     seq = seq.mark_lit(TerminalDefn::union().exclude().ch_in(string_attr), tmark);
                 } else {
-                    // Process child member elements for ranges and other complex patterns
                     let mut lit_builder = TerminalDefn::union().exclude();
                     for (child_name, child_nid) in Parser::get_child_elements(arena, nid) {
                         if child_name == "member" {
@@ -852,16 +849,13 @@ impl Grammar {
                             if let (Some(from), Some(to)) =
                                 (member_attrs.get("from"), member_attrs.get("to"))
                             {
-                                // Character range like ~["a"-"z"] or hex range like ~[#41-#46]
-                                let (from_char, to_char) = Self::parse_range_values(from, to);
+                                let (from_char, to_char) = Self::parse_range_values(from, to)?;
                                 lit_builder = lit_builder.ch_range(from_char, to_char);
                             } else if let Some(string_attr) = member_attrs.get("string") {
-                                // Simple string member like ~["abc"]
                                 lit_builder = lit_builder.ch_in(string_attr);
                             } else {
-                                // Handle hex members and class members
                                 lit_builder =
-                                    Self::process_member_element(arena, child_nid, lit_builder);
+                                    Self::process_member_element(arena, child_nid, lit_builder)?;
                             }
                         }
                     }
@@ -887,12 +881,11 @@ impl Grammar {
                 seq = seq.mark_nt_alias(nt_name, mark, naming.alias.as_deref());
             }
             "option" => {
-                let subexpr = Grammar::build_sequence_from_tree(nid, arena, ctx);
+                let subexpr = Grammar::build_sequence_from_tree(nid, arena, ctx)?;
                 seq = seq.opt(subexpr);
             }
             "repeat0" => {
                 let children = Parser::get_child_elements(arena, nid);
-                // assume first child is what-to-repeat (from `factor`)
                 let expr = children
                     .get(0)
                     .expect("Should always be at least one child here");
@@ -904,12 +897,11 @@ impl Grammar {
                     repeat_this_node,
                     arena,
                     ctx,
-                );
+                )?;
 
-                // if a <sep> child exists, this is a ** rule, otherwise just *
                 if let Some(sep) = children.get(1) {
                     assert_eq!(sep.0, "sep");
-                    let separated_by = Grammar::build_sequence_from_tree(sep.1, arena, ctx);
+                    let separated_by = Grammar::build_sequence_from_tree(sep.1, arena, ctx)?;
                     seq = seq.repeat0_sep(repeat_this, separated_by)
                 } else {
                     seq = seq.repeat0(repeat_this);
@@ -917,7 +909,6 @@ impl Grammar {
             }
             "repeat1" => {
                 let children = Parser::get_child_elements(arena, nid);
-                // assume first child is what-to-repeat (from `factor`)
                 let expr = children
                     .get(0)
                     .expect("Should always be at least one child here");
@@ -929,48 +920,41 @@ impl Grammar {
                     repeat_this_node,
                     arena,
                     ctx,
-                );
+                )?;
 
-                // if a <sep> child exists, this is a ++ rule, otherwise just +
                 if let Some(sep) = children.get(1) {
                     assert_eq!(sep.0, "sep");
-                    let separated_by = Grammar::build_sequence_from_tree(sep.1, arena, ctx);
+                    let separated_by = Grammar::build_sequence_from_tree(sep.1, arena, ctx)?;
                     seq = seq.repeat1_sep(repeat_this, separated_by)
                 } else {
                     seq = seq.repeat1(repeat_this);
                 }
             }
             "insertion" => {
-                // insertion: -"+", s, (string; -"#", hex), s.
-                // Insertion consumes no input but adds content to the output
-                let attrs = Parser::get_attributes(arena, nid);
-
-                // Get tmark if present
                 let tmark = match attrs.get("tmark").map(|s| s.as_str()) {
                     Some("^") => TMark::Unmute,
                     Some("-") => TMark::Mute,
                     _ => TMark::Default,
                 };
-
-                // Get the text to insert - either from string attribute or hex attribute
                 let text = if let Some(string_val) = attrs.get("string") {
                     string_val.to_string()
                 } else if let Some(hex_val) = attrs.get("hex") {
-                    // Parse hex value and convert to char
-                    let code_point =
-                        u32::from_str_radix(hex_val, 16).expect("Invalid hex in insertion");
-                    char::from_u32(code_point)
-                        .expect("Invalid Unicode code point in insertion")
-                        .to_string()
+                    let code_point = u32::from_str_radix(hex_val, 16).map_err(|_| {
+                        crate::parser::ParseError::static_err(&format!(
+                            "S06: invalid hexadecimal value '#{hex_val}' in insertion"
+                        ))
+                    })?;
+                    Self::validate_hex_codepoint(code_point, hex_val)?.to_string()
                 } else {
-                    panic!("Insertion must have either string or hex attribute");
+                    return Err(crate::parser::ParseError::static_err(
+                        "insertion must have either string or hex attribute",
+                    ));
                 };
-
                 seq = seq.insertion(text, tmark);
             }
             _ => unimplemented!("unknown element {name} child of <alt>"),
         }
-        seq
+        Ok(seq)
     }
 
     /// Process hex members, class members, and child elements for character sets
@@ -978,16 +962,14 @@ impl Grammar {
         arena: &Arena<crate::parser::Content>,
         child_nid: NodeId,
         mut lit_builder: LitBuilder,
-    ) -> LitBuilder {
+    ) -> Result<LitBuilder, crate::parser::ParseError> {
         use crate::parser::Parser;
         let member_attrs = Parser::get_attributes(arena, child_nid);
 
-        // Check for hex attribute
         if let Some(hex_attr) = member_attrs.get("hex") {
             return Self::process_hex_member(hex_attr, lit_builder);
         }
 
-        // Check for class/code attribute (Unicode character class)
         if let Some(class_attr) = member_attrs.get("class") {
             return Self::process_class_member(class_attr, lit_builder);
         }
@@ -995,66 +977,94 @@ impl Grammar {
             return Self::process_class_member(code_attr, lit_builder);
         }
 
-        // Check for child elements (hex, class, or range elements)
         for (child_elem_name, child_elem_nid) in Parser::get_child_elements(arena, child_nid) {
             match child_elem_name.as_str() {
                 "hex" => {
                     if let Some(hex_text) = Self::extract_text_content(arena, child_elem_nid) {
-                        lit_builder = Self::process_hex_member(&hex_text, lit_builder);
+                        lit_builder = Self::process_hex_member(&hex_text, lit_builder)?;
                     }
                 }
                 "class" => {
                     if let Some(class_text) = Self::extract_text_content(arena, child_elem_nid) {
-                        lit_builder = Self::process_class_member(&class_text, lit_builder);
+                        lit_builder = Self::process_class_member(&class_text, lit_builder)?;
                     }
                 }
                 _ => {}
             }
         }
 
-        lit_builder
+        Ok(lit_builder)
     }
 
     /// Process hex member like #41
-    fn process_hex_member(hex_attr: &str, lit_builder: LitBuilder) -> LitBuilder {
-        if let Ok(hex_value) = u32::from_str_radix(hex_attr, 16) {
-            if let Some(hex_char) = char::from_u32(hex_value) {
-                return lit_builder.ch(hex_char);
-            }
+    /// S07/S08: validate a raw code-point number and convert to char
+    fn validate_hex_codepoint(code: u32, hex_attr: &str) -> Result<char, crate::parser::ParseError> {
+        if code > 0x10FFFF {
+            return Err(crate::parser::ParseError::static_err(&format!(
+                "S07: hex value #{hex_attr} is outside the Unicode code-point range (0..10FFFF)"
+            )));
         }
-        lit_builder
+        if (0xD800..=0xDFFF).contains(&code) {
+            return Err(crate::parser::ParseError::static_err(&format!(
+                "S08: hex value #{hex_attr} denotes a Unicode surrogate code point"
+            )));
+        }
+        if (0xFDD0..=0xFDEF).contains(&code) || (code & 0xFFFF) >= 0xFFFE {
+            return Err(crate::parser::ParseError::static_err(&format!(
+                "S08: hex value #{hex_attr} denotes a Unicode noncharacter"
+            )));
+        }
+        Ok(char::from_u32(code).expect("validated above"))
+    }
+
+    fn process_hex_member(hex_attr: &str, lit_builder: LitBuilder) -> Result<LitBuilder, crate::parser::ParseError> {
+        let hex_value = u32::from_str_radix(hex_attr, 16).map_err(|_| {
+            crate::parser::ParseError::static_err(&format!(
+                "S06: invalid hexadecimal value '#{hex_attr}'"
+            ))
+        })?;
+        let ch = Self::validate_hex_codepoint(hex_value, hex_attr)?;
+        Ok(lit_builder.ch(ch))
     }
 
     /// Process Unicode class member like L, LC, Nd, etc.
-    fn process_class_member(class_attr: &str, lit_builder: LitBuilder) -> LitBuilder {
-        // All Unicode General Category codes are valid - pass directly to ch_unicode
-        // This delegates validation to UnicodeRange::new() which will panic on invalid codes
-        lit_builder.ch_unicode(class_attr)
+    fn process_class_member(class_attr: &str, lit_builder: LitBuilder) -> Result<LitBuilder, crate::parser::ParseError> {
+        if !UnicodeRange::is_valid(class_attr) {
+            return Err(crate::parser::ParseError::static_err(&format!(
+                "S10: '{class_attr}' is not a defined Unicode character category"
+            )));
+        }
+        Ok(lit_builder.ch_unicode(class_attr))
     }
 
     /// Parse range values that could be characters or hex values
-    fn parse_range_values(from: &str, to: &str) -> (char, char) {
-        let from_char = Self::parse_char_or_hex(from);
-        let to_char = Self::parse_char_or_hex(to);
-        (from_char, to_char)
+    fn parse_range_values(from: &str, to: &str) -> Result<(char, char), crate::parser::ParseError> {
+        let from_char = Self::parse_char_or_hex(from)?;
+        let to_char = Self::parse_char_or_hex(to)?;
+        if from_char > to_char {
+            return Err(crate::parser::ParseError::static_err(&format!(
+                "S09: in character range '{from}'-'{to}', first character has greater code point than second"
+            )));
+        }
+        Ok((from_char, to_char))
     }
 
     /// Parse a value that could be a character literal or hex value
-    fn parse_char_or_hex(value: &str) -> char {
-        // Check if it's a hex value (starts with #)
+    fn parse_char_or_hex(value: &str) -> Result<char, crate::parser::ParseError> {
         if let Some(hex_part) = value.strip_prefix('#') {
-            if let Ok(hex_value) = u32::from_str_radix(hex_part, 16) {
-                if let Some(hex_char) = char::from_u32(hex_value) {
-                    return hex_char;
-                }
-            }
+            let hex_value = u32::from_str_radix(hex_part, 16).map_err(|_| {
+                crate::parser::ParseError::static_err(&format!(
+                    "S06: invalid hexadecimal value '{value}'"
+                ))
+            })?;
+            return Self::validate_hex_codepoint(hex_value, hex_part);
         }
 
-        // Fall back to treating as character literal
+        // Character literal
         value
             .chars()
             .next()
-            .expect("Value should have at least one character")
+            .ok_or_else(|| crate::parser::ParseError::static_err("empty character value in range"))
     }
 
     /// Extract text content from an element node
@@ -1735,7 +1745,7 @@ mod tests {
         let mut parser = Parser::new(g);
         let arena = parser.parse(ixml)?;
         let result = Parser::tree_to_test_format(&arena);
-        let expected = r#"<ixml><rule><naming name="doc"/><alt><literal string="A"/><literal string="B"/></alt></rule></ixml>"#;
+        let expected = r#"<ixml><rule name="doc"><alt><literal string="A"/><literal string="B"/></alt></rule></ixml>"#;
         assert_eq!(result, expected);
 
         println!("=============");

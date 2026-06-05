@@ -107,6 +107,20 @@ pub enum UnicodeRange {
 }
 
 impl UnicodeRange {
+    pub fn is_valid(name: &str) -> bool {
+        matches!(
+            name,
+            "C" | "L" | "M" | "N" | "P" | "S" | "Z"
+                | "LC" | "Ll" | "Lm" | "Lo" | "Lt" | "Lu"
+                | "Mc" | "Me" | "Mn"
+                | "Nd" | "Nl" | "No"
+                | "Pc" | "Pd" | "Pe" | "Pf" | "Pi" | "Po" | "Ps"
+                | "Sc" | "Sk" | "Sm" | "So"
+                | "Zl" | "Zp" | "Zs"
+                | "Cc" | "Cf" | "Cn" | "Co" | "Cs"
+        )
+    }
+
     pub fn new(name: &str) -> Self {
         match name {
             // Major categories

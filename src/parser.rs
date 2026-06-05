@@ -732,6 +732,8 @@ impl Parser {
     /// Successful return value is an indextree over Content. Consider this temporary
     pub fn parse(&mut self, input: &str) -> Result<Arena<Content>, ParseError> {
         let mut session = ParseSession::default();
+        // E003: strip UTF-8 BOM (U+FEFF) before parsing
+        let input = input.trim_start_matches('\u{FEFF}');
         self.parse_with_session(input, &mut session)
     }
 
@@ -1364,6 +1366,7 @@ impl Parser {
             "Found completed parse of '{}' from 0 to {}",
             name, session.input_length
         );
+        let mut visited = HashSet::new();
         self.unpack_parse_tree_internal(
             &mut arena,
             &name,
@@ -1372,6 +1375,7 @@ impl Parser {
             0,
             session.input_length,
             root,
+            &mut visited,
         );
 
         // the standard algorithm above leaves attribute nodes in an inconvenient state.
@@ -1416,7 +1420,15 @@ impl Parser {
         origin: usize,
         end: usize,
         root: NodeId,
+        visited: &mut HashSet<(SmolStr, usize, usize)>,
     ) {
+        // Skip nonterminals already on the current path — cyclic grammar derivations would
+        // otherwise recurse infinitely through the same (name, span) triple.
+        let key = (SmolStr::new(name), origin, end);
+        if !visited.insert(key.clone()) {
+            return;
+        }
+
         let matching_trace = self.filter_completed_trace(name, origin, end);
         let mut new_root = root;
         match matching_trace {
@@ -1462,8 +1474,6 @@ impl Parser {
                             new_origin = *pos;
                         }
                         MatchRec::NonTerm(nt_name, pos, mark, alias) => {
-                            // guard against infinite recursion
-                            assert!((nt_name != name || new_origin != origin || *pos != end));
                             self.unpack_parse_tree_internal(
                                 arena,
                                 nt_name,
@@ -1472,6 +1482,7 @@ impl Parser {
                                 new_origin,
                                 *pos,
                                 new_root,
+                                visited,
                             );
                             new_origin = *pos;
                         }
@@ -1490,6 +1501,8 @@ impl Parser {
                 info!("  No matching traces for {}@{}:{}", name, origin, end);
             }
         }
+
+        visited.remove(&key);
 
         //HOW TO SERIALISE name FROM start TO end:
         //    IF SOME task IN trace[end] HAS (symbol task = name AND finished task AND start.position task = start):
@@ -1760,10 +1773,6 @@ impl Parser {
                 builder.append("<");
                 builder.append(name.to_string());
 
-                // handle attributes before closing start tag...
-                // TODO: Add dynamic error detection for duplicate attribute names (D02 error code)
-                // This should check for duplicate attr_name values and report appropriate errors
-                // for AssertDynamicError test cases like expr1
                 for attr_child in nid
                     .children(arena)
                     .filter(|n| arena.get(*n).unwrap().get().is_attr())

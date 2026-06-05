@@ -126,9 +126,10 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
     let ctx = RuleContext::new("mark");
     g.mark_define(Mark::Attr, "mark", ctx.seq().ch_in("@^-"));
 
-    // naming: (mark, s)?, name, s, (-">", s, alias, s)?.
+    // -naming: (mark, s)?, name, s, (-">", s, alias, s)?.
     let ctx = RuleContext::new("naming");
-    g.define(
+    g.mark_define(
+        Mark::Mute,
         "naming",
         ctx.seq()
             .opt(ctx.seq().nt("mark").nt("s"))
