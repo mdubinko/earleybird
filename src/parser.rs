@@ -188,24 +188,6 @@ impl MatchRec {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum DerivationCount {
-    One,
-    Many,
-}
-
-impl DerivationCount {
-    fn is_many(self) -> bool {
-        self == Self::Many
-    }
-}
-
-fn derivation_signature(dot: &DotNotation) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    dot.matched_so_far.hash(&mut hasher);
-    hasher.finish()
-}
-
 /// Identity of one derivation family of a completed item: its alternative plus the
 /// exact sequence of child edges (`matched_so_far`). Folding in `alt_index` makes two
 /// *different alternatives* completing the same span distinct families (Mechanism A),
@@ -228,8 +210,6 @@ pub struct Task {
     pos: usize,       // current position in the input
     dot: DotNotation, // progress
     hash: u64,        // identity hash based on name, alt_index, origin, pos, dot
-    derivation_sig: u64,
-    derivation_count: DerivationCount,
 }
 
 impl Task {
@@ -503,7 +483,6 @@ impl TraceArena {
         let dot_cursor = dot.matched_so_far.len();
         let hash = utils::hash_to_u64(&(name, alt_index, origin, pos, dot_cursor));
 
-        let derivation_sig = derivation_signature(&dot);
         let task = Task {
             id,
             name: SmolStr::new(name),
@@ -514,8 +493,6 @@ impl TraceArena {
             pos,
             dot,
             hash,
-            derivation_sig,
-            derivation_count: DerivationCount::One,
         };
 
         if self.have_we_seen(&task) {
@@ -532,17 +509,11 @@ impl TraceArena {
         &mut self,
         from: TraceId,
         rec: MatchRec,
-        incoming_many: bool,
     ) -> Option<TraceId> {
         let new_pos = rec.pos();
 
         let from_task = self.get(from);
         let new_dot = from_task.dot.advance_dot(rec);
-        let derivation_count = if from_task.derivation_count.is_many() || incoming_many {
-            DerivationCount::Many
-        } else {
-            DerivationCount::One
-        };
 
         // If this advance completes the rule, capture its derivation family now —
         // before the dedup short-circuit below — so a second derivation that reaches
@@ -577,10 +548,8 @@ impl TraceArena {
             alias: from_task.alias.clone(),
             origin: from_task.origin,
             pos: new_pos,
-            derivation_sig: derivation_signature(&new_dot),
             dot: new_dot,
             hash,
-            derivation_count,
         };
 
         let result = if self.have_we_seen(&task) {
@@ -603,16 +572,12 @@ impl TraceArena {
     /// Simple Task Deduplication Strategy:
     /// Use task identity hash based on name, alt_index, origin, pos, and dot
     fn have_we_seen(&mut self, task: &Task) -> bool {
-        if let Some(existing_id) = self.task_by_hash.get(&task.hash).copied() {
+        if self.task_by_hash.contains_key(&task.hash) {
             debug!(
                 "🚫 DUPLICATE TASK DETECTED: Skipping {}[{}]",
                 task.name, task.alt_index
             );
             self.deduplicated_count += 1;
-            let existing = &mut self.arena[existing_id.0];
-            if existing.derivation_sig != task.derivation_sig || task.derivation_count.is_many() {
-                existing.derivation_count = DerivationCount::Many;
-            }
             true
         } else {
             debug!("...caching task {}[{}]", task.name, task.alt_index);
@@ -878,7 +843,7 @@ impl Parser {
                     Factor::Insertion(tmark, text) => {
                         let current_pos = self.traces.get(tid).pos;
                         let match_rec = MatchRec::Insertion(current_pos, text.clone(), tmark);
-                        let maybe_id = self.traces.task_advance_cursor(tid, match_rec, false);
+                        let maybe_id = self.traces.task_advance_cursor(tid, match_rec);
                         // Queue at front for immediate processing
                         self.queue_front(maybe_id);
                     }
@@ -956,10 +921,7 @@ impl Parser {
             trace!("MatchRec {:?}", &match_rec);
 
             // Child may have made progress; next item in parent seq needs to account for this
-            let child_many = self.traces.get(tid).derivation_count.is_many();
-            let maybe_id = self
-                .traces
-                .task_advance_cursor(continue_id, match_rec, child_many);
+            let maybe_id = self.traces.task_advance_cursor(continue_id, match_rec);
 
             // CRITICAL FIX: Queue parent continuations at back to ensure exhaustive alternative exploration
             // This allows all alternatives at current position to be explored before parent propagation
@@ -1089,8 +1051,7 @@ impl Parser {
 
                     // Child completed immediately; advance parent cursor
                     let maybe_continue_id =
-                        self.traces
-                            .task_advance_cursor(continue_id, match_rec, false);
+                        self.traces.task_advance_cursor(continue_id, match_rec);
 
                     // Queue parent continuations at back to ensure exhaustive alternative exploration
                     self.queue_back(maybe_continue_id);
@@ -1159,7 +1120,7 @@ impl Parser {
                 input.get_at(current_pos),
                 new_pos
             );
-            let maybe_id = self.traces.task_advance_cursor(tid, rec, false);
+            let maybe_id = self.traces.task_advance_cursor(tid, rec);
             self.queue_back(maybe_id);
         } else {
             // Terminal doesn't match - silently drop this task (no requeue)
