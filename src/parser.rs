@@ -574,23 +574,22 @@ impl TraceArena {
             .insert((SmolStr::from(target_nt), position), waiting_parent_tid);
     }
 
-    /// Get the parent tasks waiting for a completion of `rule_name` that started at
-    /// `origin`. These are exactly the parents whose dot is before `rule_name` at
-    /// `origin`; the Earley-set key makes the old `pos == origin` filter unnecessary.
-    fn waiting_parents_at(&self, rule_name: &str, origin: usize) -> Vec<TraceId> {
-        let result = self
-            .continuations
-            .get_vec(&(SmolStr::from(rule_name), origin))
-            .cloned()
-            .unwrap_or_default();
-
+    /// Fill `out` with the parent tasks waiting for a completion of `rule_name` that
+    /// started at `origin`. These are exactly the parents whose dot is before
+    /// `rule_name` at `origin`; the Earley-set key makes the old `pos == origin`
+    /// filter unnecessary. `out` is cleared first; the caller passes a reusable
+    /// buffer so the per-`complete` parent list does not allocate a fresh `Vec`.
+    fn collect_waiting_parents(&self, rule_name: &str, origin: usize, out: &mut Vec<TraceId>) {
+        out.clear();
+        if let Some(parents) = self.continuations.get_vec(&(SmolStr::from(rule_name), origin)) {
+            out.extend_from_slice(parents);
+        }
         debug!(
             "..🔁 found {} parent tasks waiting for {} at {}",
-            result.len(),
+            out.len(),
             rule_name,
             origin
         );
-        result
     }
 
     /// originate a completely new task (root level)
@@ -840,6 +839,13 @@ pub struct Parser {
     /// only — deliberately NOT enabled by `Grammar::from_ixml_str*`, so running the
     /// test suite (which builds a grammar per test) is not flooded with phase tables.
     phase_report: bool,
+    /// Reusable buffer for the waiting-parent TraceIds gathered each `complete`
+    /// (and nullable `predict`). The list must be detached from the `continuations`
+    /// borrow before the loop mutates `self.traces`, but allocating a fresh `Vec`
+    /// per `complete` (229k+ times on the unicode build) is pure churn; `mem::take`
+    /// this buffer, fill it, drain it, and put it back to keep the capacity.
+    /// See TODO.txt "Stop cloning grammar fragments in the hot loop" (d).
+    parents_scratch: Vec<TraceId>,
 }
 
 /// Earley parser with LIFO prediction strategy and modified completion strategy
@@ -864,6 +870,7 @@ impl Parser {
             last_input_len: 0,
             stats_enabled: true,
             phase_report: false,
+            parents_scratch: Vec::new(),
         }
     }
 
@@ -1146,13 +1153,20 @@ impl Parser {
         self.completed_trace.push(tid);
 
         // Find "parent" states that predicted this nonterminal at our origin position;
-        // the (name, origin) key already guarantees parent.pos == our origin.
-        let completed_task = self.traces.get(tid);
-        let waiting_parents = self
-            .traces
-            .waiting_parents_at(&completed_task.name, completed_task.origin);
+        // the (name, origin) key already guarantees parent.pos == our origin. Use the
+        // reusable scratch buffer (mem::take to detach it from `self` for the loop,
+        // restore afterwards) so this does not allocate a fresh Vec per complete.
+        let mut waiting_parents = std::mem::take(&mut self.parents_scratch);
+        {
+            let completed_task = self.traces.get(tid);
+            self.traces.collect_waiting_parents(
+                &completed_task.name,
+                completed_task.origin,
+                &mut waiting_parents,
+            );
+        }
 
-        for continue_id in waiting_parents {
+        for &continue_id in &waiting_parents {
             debug!(
                 "...deferring continuation Task... {}",
                 self.traces.format_task(continue_id)
@@ -1181,6 +1195,8 @@ impl Parser {
             // This allows all alternatives at current position to be explored before parent propagation
             self.queue_back(maybe_id);
         }
+        // Return the buffer (now holding this call's parents) for reuse next complete.
+        self.parents_scratch = waiting_parents;
         Ok(())
     }
 
@@ -1275,12 +1291,13 @@ impl Parser {
 
                 // For empty rules, we need to trigger completion regardless of deduplication.
                 // The child completes at current_pos, so resume parents that predicted
-                // this nonterminal at current_pos (the (name, current_pos) key).
-                let waiting_parents = self
-                    .traces
-                    .waiting_parents_at(name, current_pos);
+                // this nonterminal at current_pos (the (name, current_pos) key). Reuse the
+                // scratch buffer (no `?` returns inside, so the capacity is always restored).
+                let mut waiting_parents = std::mem::take(&mut self.parents_scratch);
+                self.traces
+                    .collect_waiting_parents(name, current_pos, &mut waiting_parents);
 
-                for continue_id in waiting_parents {
+                for &continue_id in &waiting_parents {
                     debug!(
                         "...immediately continuing parent Task for empty rule... {}",
                         self.traces.format_task(continue_id)
@@ -1306,6 +1323,8 @@ impl Parser {
                     // Queue parent continuations at back to ensure exhaustive alternative exploration
                     self.queue_back(maybe_continue_id);
                 }
+                // Restore the scratch buffer for reuse.
+                self.parents_scratch = waiting_parents;
             }
 
             // Handle task queueing for non-empty rules or if we need to queue the task itself
