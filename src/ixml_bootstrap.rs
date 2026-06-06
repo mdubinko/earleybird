@@ -274,7 +274,7 @@ pub fn bootstrap_ixml_grammar() -> Grammar {
         Mark::Mute,
         "quoted",
         ctx.seq()
-            .opt(ctx.seq().nt("mark").nt("s"))
+            .opt(ctx.seq().nt("tmark").nt("s"))
             .nt("string")
             .nt("s"),
     );

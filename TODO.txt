@@ -19,55 +19,51 @@
 - [ ] Export parse states to JSON/GraphViz formats
 
 ## Current Test Suite Status (Updated 2026-06-05)
-- **Full catalog**: **792/906 passing (87.4% pass rate)**
-  - **792 PASS / 113 FAIL / 0 Bootstrap / 1 Conversion / 0 Parse**
-  - Latest run (2026-06-05): 906 tests, 638.83s wall time (~10.6 min)
-    `cargo run --release -- suite --console SUMMARY --file FAILURES -o log/s-errors-after.txt`
-  - +47 tests recovered vs baseline (746→792) with zero regressions
-  - Previous baseline (2026-06-05): **746/906 passing (82.3%)**
-  - Earlier baseline (old loader, 232 tests only): **232/232 passing (100%)**
+- **Full catalog**: **889/890 loaded passing** (906 in catalog; 16 not loaded — Unicode version ≠ 14.0)
+  - **889 PASS / 1 FAIL** — confirmed with current working-tree binary (fixes not yet committed)
+  - Previous baseline (post-tmark+bnf fix): 881/890 passing (9 failures)
+  - This session fixed 8 more failures: whitespace trim, app-info grammar leak,
+    ambiguity detection (family recording), parse tree selection via `filter_completed_trace` rewrite
 
-  ### Remaining 113 failure breakdown (all pre-existing, none introduced by S-error work):
+  ### Remaining 1 failure:
 
-  **Category A — 88 grammar-test/assert-xml: naming structure mismatch**
-  - Tests parse grammar source text via BootstrapIxml and compare XML parse tree.
-  - Expected: `<rule name="S">` (name as direct attribute on rule/nonterminal)
-  - Actual: `<rule><naming name="S">` (naming as sub-element)
-  - Root cause: our bootstrap grammar was updated to use the `naming` production (needed for
-    aliasing feature), but the official test catalog was generated with the older grammar
-    (ixml3.ixml) where `mark?` and `name` appeared directly in `rule:` and `nonterminal:`.
-  - Fix approach: in src/ixml_bootstrap.rs, change naming to be transparent/muted, OR use
-    the same structure as ixml3.ixml (no `naming` production, inline mark?/name in rule/nonterminal)
-  - Files: src/ixml_bootstrap.rs
+  **misc/sample.grammar.12/g12.c05** — "aaaaaaaa" (8 a's) with grammar `S: A+. A: (A, A)+; "a"+.`
+  - Expected: `<S ixml:state="ambiguous"><A>aaaaaaaa</A></S>` (simple flat text in A)
+  - Actual: deeply nested tree with `(A,A)+` recursive structure
+  - Root cause (deep): `A: (A,A)+; "a"+.` means A[alt=0]=(A,A)+ and A[alt=1]="a"+.
+    A[alt=0]'s first child is synthesized rule `--A.f-plus` (not "A" directly).
+    `filter_completed_trace` checks if the first matched child == rule name to detect
+    direct self-reference. `--A.f-plus` ≠ "A" → not flagged as self-ref → alt=0 is preferred
+    (non-self-ref + lower alt_index wins) → recursive structure selected.
+  - Fix approaches:
+    (a) Trace through synthesized `--` rules to detect TRANSITIVE self-reference back to parent
+    (b) Add special case: when alt=0 uses a synthesized rule that contains the parent's name
+        in its name (e.g., `--A.f-plus` contains "A"), treat it as effectively self-referential
+    (c) Add a "penalize left-recursion-via-synthesized-rules" heuristic in filter_completed_trace
+    (d) Swap alt order in the conformance test grammar (changes the grammar, not preferred)
+  - Approach (b) is simplest: check if name starts with `--{rule_name}.` in is_self_ref closure
 
-  **Category B — 16 unicode-version-check: fixed Unicode version**
-  - Tests expect Unicode version-specific character category behavior (v6.0, v7, v8...v17).
-  - We use a single fixed Unicode version (from the unicode_character_database crate).
-  - These are inherently hard to fix without multi-version Unicode support.
+  ### Previous failures fixed in this session:
+  - g24.r02, g27.r02: whitespace-only test input was being trimmed by quick-xml trim_text(true)
+  - g12.c04: parse-forest grammar in app-info leaked into `current_grammar` for subsequent tests
+  - g05.c01, g10c01, g20c01: `is_ambiguous()` returned false for empty-alt root rules because
+    families weren't recorded in `complete()` (only in `task_advance_cursor`)
+  - g27.c03, g28.c02: parse tree used cyclic path (D→Z→C→D) instead of non-cyclic (D→E→F→G)
+  - g52.c01: directly-left-recursive `L: L, M; .` now handled by non-self-ref preference
+  - defn1/defn2: bootstrap quoted rule used `mark` (includes `@`) instead of `tmark` (excludes `@`)
+  - ixml/bnf/bnf: false S06 error on bare `#` in charset range `["#"-"~"]`
 
-  **Category C — 7 ambiguity detection gaps**
-  - Tests expect `ixml:state="ambiguous"` but parser returns plain result.
-  - Cases: g05.c01, g10c01, g12.c04, g12.c05, g20c01, g27.c03, g28.c02
-  - Ambiguity IS detected in many cases; these are gaps in the detection algorithm.
+  ### filter_completed_trace rewrite summary (src/parser.rs:1242)
+  The previous first-match strategy returned the highest alt_index for nullable rules because
+  `queue_front` (LIFO) means last-queued alt lands at deque front and completes first.
+  New strategy for user-defined rules: prefer non-directly-self-referential alts, then lower
+  alt_index. For synthesized rules (`--` prefix): still first-match (empty zero-factor alt
+  completes at prediction time, always first in trace). See memory/project_filter_completed_trace.md.
 
-  **Category D — 2 parse-should-fail not caught**
-  - Tests expect parse failure (assert-not-a-sentence) but parse succeeds.
-  - Cases: g24.r02, g27.r02
-  - Likely involve non-productive or cyclic grammars that technically parse but shouldn't.
-
-  - [x] Cache compiled grammars in run_single_test to avoid recompiling on every test (2026-06-05)
-    - HashMap<String, Grammar> keyed by ixml source; bootstrap_ixml_grammar cached as "__bootstrap_ixml__"
-    - Files: src/cmd_suite.rs
-
-  - [x] Static S-error detection implemented (2026-06-05)
-    - S02: undefined nonterminal — post-build check in Grammar::from_parse_tree
-    - S03: duplicate rule — inline check in Grammar::from_parse_tree (before construct_rule_from_tree)
-    - S06: non-hex characters in hex literal — validate_hex_codepoint in append_factor_from_tree
-    - S07: hex value outside 0..10FFFF — validate_hex_codepoint
-    - S08: surrogate or noncharacter code point — validate_hex_codepoint
-    - S09: reversed range — parse_range_values
-    - S10: invalid Unicode category — process_class_member + UnicodeRange::is_valid
-    - Files: src/grammar.rs, src/unicode_ranges.rs, src/testsuite_utils.rs, src/cmd_suite.rs
+  ### Caution: synthesized rule dependency
+  If X*/X+/X? equivalence rules are refactored (different alt structure), first-match for
+  synthesized rules may break if the empty base case is no longer a zero-factor alt.
+  See memory/project_synth_rule_dependency.md for mitigation strategies.
 
 ## Current Bench Baseline (2026-06-05, log/bench-baseline-906.csv)
   - unicode_version:  build=59437ms, parse=3.1ms

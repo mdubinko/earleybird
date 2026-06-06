@@ -892,6 +892,18 @@ impl Parser {
             "COMPLETER: {} completed",
             self.traces.format_task(tid)
         );
+
+        // Record derivation family here to catch items that reached complete() without going
+        // through task_advance_cursor (e.g., empty-alt root items created during initialization).
+        // For non-empty rules this is a no-op (same sig already in the HashSet from
+        // task_advance_cursor), but for truly-empty init items it's the only recording site.
+        {
+            let t = self.traces.get(tid);
+            let key = (t.name.clone(), t.origin, t.pos);
+            let sig = family_signature(t.alt_index, &t.dot);
+            self.traces.families.entry(key).or_default().insert(sig);
+        }
+
         self.completed_trace.push(tid);
 
         // Find "parent" states at same origin that can produce this expression
@@ -1214,17 +1226,60 @@ impl Parser {
         format!("{}...{} ({})", front.join(","), back.join(","), queue_len)
     }
 
-    /// Sift through and find only completed Tasks
-    /// this speeds up the unpacking process by omitting parse states irrelevant to the final result
+    /// Sift through and find only completed Tasks.
+    /// Speeds up tree unpacking by skipping irrelevant parse states.
+    ///
+    /// Selection strategy:
+    /// - Synthesized rules (names starting with "--"): first match in trace order.
+    ///   Their alt ordering is implementation-defined; for repeat0/opt the empty alt
+    ///   completes first (zero-factor, pushed immediately at prediction time), so
+    ///   first-match gives the correct empty choice.
+    /// - User-defined rules: prefer the lowest alt_index UNLESS that alt is directly
+    ///   self-referential (its first matched child is the same nonterminal as the rule
+    ///   itself, e.g. `L: L, M; .`).  Self-referential alts rank below non-self-referential
+    ///   ones; within each category lowest alt_index wins.  If all alts are self-referential,
+    ///   fall back to first-match.
     fn filter_completed_trace(&self, name: &str, origin: usize, pos: usize) -> Option<&Task> {
-        // TODO: optimize
-        for tid in &self.completed_trace {
-            let t = self.traces.get(*tid);
-            if t.name == name && t.origin == origin && t.pos == pos {
-                return Some(t);
+        if name.starts_with("--") {
+            // Synthesized rules: return the first match.
+            for &tid in &self.completed_trace {
+                let t = self.traces.get(tid);
+                if t.name == name && t.origin == origin && t.pos == pos {
+                    return Some(t);
+                }
+            }
+            return None;
+        }
+
+        // A task is "directly self-referential" if its first matched NonTerm child is
+        // the rule itself — e.g. L→L•,M satisfies this, but L→• (empty) does not.
+        let is_self_ref = |t: &Task| -> bool {
+            matches!(
+                t.dot.matches_iter().next(),
+                Some(MatchRec::NonTerm(n, ..)) if n.as_str() == name
+            )
+        };
+
+        let mut best: Option<&Task> = None;
+        for &tid in &self.completed_trace {
+            let t = self.traces.get(tid);
+            if t.name != name || t.origin != origin || t.pos != pos {
+                continue;
+            }
+            let is_better = match best {
+                None => true,
+                Some(b) => {
+                    let t_self = is_self_ref(t);
+                    let b_self = is_self_ref(b);
+                    // Non-self-ref beats self-ref; within same category, lower alt_index wins.
+                    (!t_self && b_self) || (t_self == b_self && t.alt_index < b.alt_index)
+                }
+            };
+            if is_better {
+                best = Some(t);
             }
         }
-        None
+        best
     }
 
     /// Only for use in test sutes. Not guaranteed to be stable...

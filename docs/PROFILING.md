@@ -284,15 +284,15 @@ cargo run --release -- suite ambiguous --console NONE --file NONE
 ## Current Performance Baseline (2026-06-05)
 
 ```
-Current local Codeberg catalog: 232/232 passing
-Full release suite: 127.31s suite wall time / 133.64s process real time
+Current local Codeberg catalog: 872/890 loaded passing (906 total; 16 skipped, Unicode version ≠ 14.0)
+Full release suite: 638.83s suite wall time (~10.6 min)
 Slowest suite tests:
-  correct/ixml tests/unicode-version-check/unicode-version-14-diagnostic: 42.32s
-  correct/ixml tests/xpath/xpath: 25.93s
+  correct/ixml tests/unicode-version-check/unicode-version-14-diagnostic: ~59s
+  correct/ixml tests/xpath/xpath: ~26s
 
 Heavy benchmark sample:
-  unicode_version: build 39830.989ms / parse 2.695ms
-  ixml_self: build 1235.203ms / parse 993.118ms
+  unicode_version: build 59437ms / parse 3.1ms
+  ixml_self: build 1461ms / parse 1394ms
 ```
 
 Use the exact invocations above when refreshing the baseline, and write outputs

@@ -1052,12 +1052,15 @@ impl Grammar {
     /// Parse a value that could be a character literal or hex value
     fn parse_char_or_hex(value: &str) -> Result<char, crate::parser::ParseError> {
         if let Some(hex_part) = value.strip_prefix('#') {
-            let hex_value = u32::from_str_radix(hex_part, 16).map_err(|_| {
-                crate::parser::ParseError::static_err(&format!(
-                    "S06: invalid hexadecimal value '{value}'"
-                ))
-            })?;
-            return Self::validate_hex_codepoint(hex_value, hex_part);
+            if !hex_part.is_empty() {
+                let hex_value = u32::from_str_radix(hex_part, 16).map_err(|_| {
+                    crate::parser::ParseError::static_err(&format!(
+                        "S06: invalid hexadecimal value '{value}'"
+                    ))
+                })?;
+                return Self::validate_hex_codepoint(hex_value, hex_part);
+            }
+            // '#' alone is the plain '#' character (codepoint 0x23)
         }
 
         // Character literal
@@ -1758,6 +1761,26 @@ mod tests {
         let result2 = Parser::tree_to_test_format(&gen_arena);
         let expected2 = "<doc>AB</doc>";
         assert_eq!(result2, expected2);
+        Ok(())
+    }
+
+    #[test]
+    fn parse_ixml_tmark_is_tmark_not_mark() -> Result<(), crate::parser::ParseError> {
+        // Regression: bootstrap `quoted` rule must use @tmark not @mark.
+        // A literal with a terminal mark must produce tmark="..." not mark="...".
+        let g = bootstrap_ixml_grammar();
+        let ixml: &str = r#"doc = -"A"."#;
+        let mut parser = Parser::new(g);
+        let arena = parser.parse(ixml)?;
+        let result = Parser::tree_to_test_format(&arena);
+        assert!(
+            result.contains("tmark=\"-\""),
+            "expected tmark attribute but got: {result}"
+        );
+        assert!(
+            !result.contains("mark=\"-\"") || result.contains("tmark=\"-\""),
+            "got mark instead of tmark: {result}"
+        );
         Ok(())
     }
 

@@ -1,6 +1,14 @@
 # EarleyBird
 Experimental implementation of ixml in Rust. Targeting the 2026-02-03 Editorial Draft of the ixml specification.
 
+## Conformance status
+
+- The official iXML conformance suite (Codeberg `ca938ecd`) contains 906 tests.
+- 16 of those declare `<dependencies Unicode-version="..."/>` for a version other than 14.0
+  and are not loaded — earleybird is compiled against Unicode 14.0
+  (`unicode-character-database` 0.1.0).
+- **890 tests loaded; 872 pass, 18 fail** (16 misc/sample.grammar corpus, 2 S-error edge cases).
+
 # Usage
 
 ## Running

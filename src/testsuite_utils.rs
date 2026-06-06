@@ -17,6 +17,10 @@ use indextree::{Arena, NodeId};
 
 type XmlString = String;
 
+/// Unicode general-category version compiled into earleybird via unicode-character-database.
+/// Tests that declare a different Unicode-version dependency are not loaded.
+const SUPPORTED_UNICODE_VERSION: &str = "14.0";
+
 #[derive(Clone, Debug)]
 /// a test case. We duplicate the grammar (from parent test-set) if needed, for one-stop shopping
 pub struct TestCase {
@@ -88,6 +92,7 @@ struct TestCaseBuilder {
     pub grammar: Vec<TestGrammar>,
     pub input: Option<String>,
     pub expected: Vec<TestResult>,
+    pub unicode_version_required: Option<String>,
 }
 
 impl TestCaseBuilder {
@@ -97,6 +102,7 @@ impl TestCaseBuilder {
             grammar: Vec::new(),
             input: None,
             expected: Vec::new(),
+            unicode_version_required: None,
         }
     }
 
@@ -127,6 +133,18 @@ impl TestCaseBuilder {
             );
             return None;
         }
+        // Drop tests whose Unicode-version dependency we don't satisfy.
+        if let Some(ref required) = self.unicode_version_required {
+            if required != SUPPORTED_UNICODE_VERSION {
+                self.name = None;
+                self.grammar.clear();
+                self.input = None;
+                self.expected.clear();
+                self.unicode_version_required = None;
+                return None;
+            }
+        }
+
         let name = self.name.take();
         self.name = None;
         let grammar = self.grammar.drain(..).collect();
@@ -135,7 +153,7 @@ impl TestCaseBuilder {
         self.input = None;
         let expected = self.expected.drain(..).collect();
         self.expected.clear();
-        // println!("built test case ===={}====", name.clone().unwrap());
+        self.unicode_version_required = None;
 
         Some(TestCase {
             name: name.unwrap(),
@@ -226,19 +244,25 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                         let grammar = reader.read_text(e.to_end().name());
                         let raw_grammar = grammar.expect("parse error reading inline grammar");
                         // quick-xml's read_text() doesn't decode entities, so we use unescape()
-                        current_grammar = TestGrammar::Unparsed(
-                            unescape(&raw_grammar)
-                                .expect("Failed to unescape inline grammar")
-                                .to_string(),
-                        );
+                        // Ignore grammars inside app-info blocks (those are processor hints,
+                        // e.g., parse-forest grammars, not the grammar under test).
+                        if !in_app_info {
+                            current_grammar = TestGrammar::Unparsed(
+                                unescape(&raw_grammar)
+                                    .expect("Failed to unescape inline grammar")
+                                    .to_string(),
+                            );
+                        }
                     }
                     b"ixml-grammar-ref" => {
                         let href = attr_by_name(&e.attributes(), "href");
                         let mut fullpath = basepath.to_path_buf();
                         fullpath.push(href);
-                        current_grammar = TestGrammar::Unparsed(
-                            fs::read_to_string(fullpath).expect("Error reading grammar file"),
-                        );
+                        if !in_app_info {
+                            current_grammar = TestGrammar::Unparsed(
+                                fs::read_to_string(fullpath).expect("Error reading grammar file"),
+                            );
+                        }
                     }
                     b"vxml-grammar-ref" => {
                         let href = attr_by_name(&e.attributes(), "href");
@@ -261,6 +285,12 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                         }
                         fullname.push_str("grammar-test");
                         grammar_test_name = Some(fullname);
+                    }
+                    b"dependencies" => {
+                        let uv = attr_by_name(&e.attributes(), "Unicode-version");
+                        if !uv.is_empty() {
+                            builder.unicode_version_required = Some(uv);
+                        }
                     }
                     b"test-case" => {
                         let name = attr_by_name(&e.attributes(), "name");
@@ -307,7 +337,11 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                         test_cases.append(&mut referenced_tests);
                     }
                     b"test-string" => {
+                        // Disable trim_text so whitespace-only inputs (e.g. " ") are preserved;
+                        // trim_text(true) would collapse them to empty string.
+                        reader.trim_text(false);
                         let input = reader.read_text(e.to_end().name());
+                        reader.trim_text(true);
                         let raw_input = input.expect("parse error reading inline test-string");
                         // quick-xml's read_text() doesn't decode entities, so we use unescape()
                         builder.input = Some(
