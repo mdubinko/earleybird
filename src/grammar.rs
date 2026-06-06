@@ -28,7 +28,7 @@
 
 use crate::{
     debug::DebugLevel,
-    parser::{DotNotation, Parser},
+    parser::Parser,
     unicode_ranges::UnicodeRange,
 };
 use crate::{debug_grammar, ixml_bootstrap::bootstrap_ixml_grammar};
@@ -1125,10 +1125,10 @@ impl fmt::Display for Grammar {
 }
 
 /// within a `BranchingRule`, iterate through the available Rules (branches)
-pub struct RuleIter<'a>(&'a Vec<Rule>, usize);
+pub struct RuleIter<'a>(&'a Vec<Rc<Rule>>, usize);
 
 impl<'a> Iterator for RuleIter<'a> {
-    type Item = &'a Rule;
+    type Item = &'a Rc<Rule>;
     fn next(&mut self) -> Option<Self::Item> {
         let rc = self.0.get(self.1);
         self.1 += 1;
@@ -1155,7 +1155,11 @@ impl<'a> Iterator for TermIter<'a> {
 pub struct BranchingRule {
     mark: Mark,
     alias: Option<SmolStr>,
-    alts: Vec<Rule>,
+    /// Each alternative is held behind an `Rc` so the predict path can hand a shared
+    /// rule to `DotNotation` (a refcount bump) instead of deep-cloning the whole
+    /// `Vec<Factor>` once per predicted alternative — see TODO.txt "Stop cloning
+    /// grammar fragments in the hot loop".
+    alts: Vec<Rc<Rule>>,
     is_internal: bool,
 }
 
@@ -1170,7 +1174,7 @@ impl BranchingRule {
     }
 
     fn add_alt_branch(&mut self, alt: Rule) {
-        self.alts.push(alt);
+        self.alts.push(Rc::new(alt));
     }
 
     pub fn iter(&self) -> RuleIter<'_> {
@@ -1246,10 +1250,6 @@ impl Rule {
 
     pub fn len(&self) -> usize {
         self.factors.len()
-    }
-
-    pub fn dot_notator(&self) -> DotNotation {
-        DotNotation::new(self)
     }
 
     pub fn add_term(&mut self, term: Factor) {

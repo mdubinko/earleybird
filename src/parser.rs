@@ -112,9 +112,12 @@ pub struct DotNotation {
 }
 
 impl DotNotation {
-    pub fn new(rule: &Rule) -> Self {
+    /// Build a fresh dot notator that shares the grammar-owned `Rc<Rule>`. Cloning the
+    /// `Rc` is a refcount bump, so predicting an alternative no longer deep-clones its
+    /// `Vec<Factor>` — see TODO.txt "Stop cloning grammar fragments in the hot loop".
+    pub fn new(rule: Rc<Rule>) -> Self {
         Self {
-            iteratee: Rc::new(rule.clone()),
+            iteratee: rule,
             matched_so_far: Vec::new(),
         }
     }
@@ -803,7 +806,7 @@ impl Parser {
                 g.get_definition_alias(&root_name)?,
                 0,
                 0,
-                alt.dot_notator(),
+                DotNotation::new(Rc::clone(alt)),
             );
             self.queue_front(maybe_id);
         }
@@ -1103,7 +1106,7 @@ impl Parser {
                 defn_alias.clone(),
                 current_pos,
                 current_pos,
-                alt.dot_notator(),
+                DotNotation::new(Rc::clone(alt)),
             );
 
             // CRITICAL FIX: Handle nullable alternatives immediately whether new or deduplicated
