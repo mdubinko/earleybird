@@ -347,17 +347,23 @@ pub struct TraceArena {
     /// active queue of tasks, bucketed by position for proper Earley ordering
     queue: PositionBucketedQueue,
 
-    /// Track every place where a nonterminal can be triggered.
-    /// Key is a nonterminal name. Value is a particular TraceId that references it
+    /// Track every place where a nonterminal can be triggered, indexed by the
+    /// Earley set it was predicted in. Key is `(nonterminal name, origin position)`;
+    /// value is a TraceId of a parent task whose dot sits just before that
+    /// nonterminal at that position. This is the classic Earley-set indexing: a
+    /// completion of `name` spanning `origin..pos` only needs to resume parents that
+    /// predicted `name` at `origin`, i.e. parents keyed by `(name, origin)`. Keying
+    /// by name alone (no position) would force every completion to scan every parent
+    /// that ever referenced `name` anywhere in the input — O(n^2)+ on pervasive
+    /// nonterminals.
     /// For example in
     /// doc = S.
     /// S = S, "+", T | T
-    /// upon completing an "S", we need to go back and resume both
-    /// the doc=(S) rule as well as the S=(S, "+", T) branch, bumping the dot cursor one term
-    /// therefore, when inititally queueing the S branches, we need to record
-    /// "S" -> (TraceId for doc=(• S))
-    /// "S" -> (TraceId for S=(• S "+" T))
-    continuations: MultiMap<SmolStr, TraceId>,
+    /// when predicting S at position 0 we record
+    /// ("S", 0) -> (TraceId for doc=(• S))
+    /// ("S", 0) -> (TraceId for S=(• S "+" T))
+    /// so completing an "S" that started at 0 resumes exactly those two parents.
+    continuations: MultiMap<(SmolStr, usize), TraceId>,
 
     /// Map Earley item identity to its stored task for fast deduplication.
     task_by_hash: HashMap<u64, TraceId>,
@@ -382,11 +388,6 @@ impl TraceArena {
             families: HashMap::new(),
             deduplicated_count: 0,
         }
-    }
-
-    /// Format alternative-specific name for continuations system
-    fn format_alt_specific_name(rule_name: &str, alt_index: usize) -> String {
-        format!("{}[{}]", rule_name, alt_index)
     }
 
     fn get(&self, id: TraceId) -> &Task {
@@ -419,47 +420,40 @@ impl TraceArena {
             .insert(sig);
     }
 
-    /// Register a parent task that's waiting for a specific nonterminal alternative to complete
+    /// Register a parent task that's waiting for a nonterminal predicted at `position`
+    /// to complete. Indexed by `(name, position)` so that only completions spanning
+    /// `position..` resume this parent — see the `continuations` field doc.
     fn register_waiting_parent_task(
         &mut self,
         target_nt: &str,
-        alt_index: usize,
+        position: usize,
         waiting_parent_tid: TraceId,
     ) {
-        let alt_specific_name = Self::format_alt_specific_name(target_nt, alt_index);
         debug!(
-            "..⏸️ registering parent {} waiting for {}",
+            "..⏸️ registering parent {} waiting for {} at {}",
             self.format_task(waiting_parent_tid),
-            alt_specific_name
+            target_nt,
+            position
         );
         self.continuations
-            .insert(SmolStr::from(alt_specific_name), waiting_parent_tid);
+            .insert((SmolStr::from(target_nt), position), waiting_parent_tid);
     }
 
-    /// Get all parent tasks waiting for ANY alternative of a nonterminal to complete
-    fn get_waiting_parent_tasks_by_name(&self, rule_name: &str) -> Vec<TraceId> {
-        let mut result = Vec::new();
-        let mut alt_index = 0;
-
-        // Try consecutive alternative indices until we get a miss
-        loop {
-            let alt_specific_name = Self::format_alt_specific_name(rule_name, alt_index);
-            if let Some(task_ids) = self
-                .continuations
-                .get_vec(&SmolStr::from(&alt_specific_name))
-            {
-                result.extend(task_ids);
-                alt_index += 1;
-            } else {
-                // No more alternatives found, we're done
-                break;
-            }
-        }
+    /// Get the parent tasks waiting for a completion of `rule_name` that started at
+    /// `origin`. These are exactly the parents whose dot is before `rule_name` at
+    /// `origin`; the Earley-set key makes the old `pos == origin` filter unnecessary.
+    fn waiting_parents_at(&self, rule_name: &str, origin: usize) -> Vec<TraceId> {
+        let result = self
+            .continuations
+            .get_vec(&(SmolStr::from(rule_name), origin))
+            .cloned()
+            .unwrap_or_default();
 
         debug!(
-            "..🔁 found {} parent tasks waiting for any alternative of {}",
+            "..🔁 found {} parent tasks waiting for {} at {}",
             result.len(),
-            rule_name
+            rule_name,
+            origin
         );
         result
     }
@@ -906,17 +900,14 @@ impl Parser {
 
         self.completed_trace.push(tid);
 
-        // Find "parent" states at same origin that can produce this expression
+        // Find "parent" states that predicted this nonterminal at our origin position;
+        // the (name, origin) key already guarantees parent.pos == our origin.
         let completed_task = self.traces.get(tid);
         let waiting_parents = self
             .traces
-            .get_waiting_parent_tasks_by_name(&completed_task.name);
+            .waiting_parents_at(&completed_task.name, completed_task.origin);
 
         for continue_id in waiting_parents {
-            // Make sure we only continue from a compatible position
-            if self.traces.get(continue_id).pos != self.traces.get(tid).origin {
-                continue;
-            }
             debug!(
                 "...deferring continuation Task... {}",
                 self.traces.format_task(continue_id)
@@ -973,13 +964,11 @@ impl Parser {
             name
         );
 
-        // Register this parent task as waiting for ALL alternatives of the child rule
-        // We need to register for each possible alternative since we don't know which one will complete
-        let child_rule = g.get_definition(&name)?;
-        for child_alt_index in 0..child_rule.iter().count() {
-            self.traces
-                .register_waiting_parent_task(&name, child_alt_index, tid);
-        }
+        // Register this parent task as waiting for the child rule, indexed by the
+        // position we're predicting at. A single entry per (name, position) suffices;
+        // every completion of `name` starting here resumes this parent.
+        self.traces
+            .register_waiting_parent_task(&name, current_pos, tid);
 
         // We can have a Mark at the point of definition,
         // as well as at the point of reference...
@@ -1039,15 +1028,14 @@ impl Parser {
                     // Else: has nullable factors, will complete naturally
                 }
 
-                // For empty rules, we need to trigger completion regardless of deduplication
-                // Find waiting parents for this rule name and alternative
-                let waiting_parents = self.traces.get_waiting_parent_tasks_by_name(&name);
+                // For empty rules, we need to trigger completion regardless of deduplication.
+                // The child completes at current_pos, so resume parents that predicted
+                // this nonterminal at current_pos (the (name, current_pos) key).
+                let waiting_parents = self
+                    .traces
+                    .waiting_parents_at(&name, current_pos);
 
                 for continue_id in waiting_parents {
-                    // Make sure we only continue from a compatible position
-                    if self.traces.get(continue_id).pos != current_pos {
-                        continue;
-                    }
                     debug!(
                         "...immediately continuing parent Task for empty rule... {}",
                         self.traces.format_task(continue_id)

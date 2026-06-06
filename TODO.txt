@@ -83,38 +83,50 @@
 
 ## Performance & Soundness Defects (High Priority)
 
-These were identified in the 2026-06-06 architecture review. #1 and #2 are the same
-root problem and dominate everything else: an 84-byte input creates ~578k tasks and
-takes ~35s (see bench unicode_version). Do these BEFORE the interning item below —
-interning optimizes structures that should first be made the right shape.
+These were identified in the 2026-06-06 architecture review. #1 is DONE (branch
+perf/completer-position-index); the profile after #1 shows #2 — NOT the completer
+scan — is the dominant cost. Do these BEFORE the interning item below — interning
+optimizes structures that should first be made the right shape.
 
-- [ ] Position-index the completer; remove the per-alt continuation fan-out #HIGH
-  - Problem: there are no per-position Earley sets. `continuations: MultiMap<SmolStr,
-    TraceId>` is keyed by nonterminal NAME with no position. On every completion,
-    `get_waiting_parent_tasks_by_name` gathers EVERY parent that ever waited on that
-    nonterminal anywhere in the whole input, then linearly filters `pos == origin`.
-    So completion is O(all historical references to this NT) per event, not
-    O(|S[origin]|). For pervasive nonterminals (ixml `s` whitespace, expr) the registry
-    grows ~O(n) and there are ~O(n) completions → O(n^2)+ blowup.
-  - Extra waste: `predict` registers each parent under k separate `name[alt]` keys (one
-    per child alternative) and the getter unions them all, so each parent is stored and
-    processed k times — saved from incorrectness only by task dedup. The `[alt]`
-    subscript is dead complexity: register-per-alt then retrieve-all-and-union does
-    nothing the bare name wouldn't.
-  - Solution: key waiting parents by `(nonterminal, origin_position)` (reintroduce
-    Earley-set indexing); drop the per-alt fan-out and the format!("{}[{}]") key.
+- [x] Position-index the completer; remove the per-alt continuation fan-out (2026-06-06) #HIGH
+  - Problem: there were no per-position Earley sets. `continuations: MultiMap<SmolStr,
+    TraceId>` was keyed by nonterminal NAME with no position. On every completion,
+    `get_waiting_parent_tasks_by_name` gathered EVERY parent that ever waited on that
+    nonterminal anywhere in the whole input, then linearly filtered `pos == origin`.
+    Plus a k-fold fan-out: `predict` registered each parent under k separate `name[alt]`
+    keys and the getter unioned+duplicated them, saved from incorrectness only by task
+    dedup.
+  - Done: `continuations` is now `MultiMap<(SmolStr, usize), TraceId>` keyed by
+    `(nonterminal, origin_position)` — real Earley-set indexing. `predict` registers
+    each parent ONCE at current_pos; getter is a single bucket lookup; the redundant
+    `pos == origin` filters in complete() and the nullable path are gone; deleted
+    `format_alt_specific_name` and the alt-scanning loop. Renamed getter to
+    `waiting_parents_at`.
+  - RESULT (profile, NOT what the diagnosis predicted): the fan-out removal is real and
+    deterministic — dedup ratio on unicode_version dropped 33% -> 16% (296,836 ->
+    117,946 deduped). But tasks created (577,883) and operations (543,186) are UNCHANGED
+    and build time moved only ~7% (56.2s -> 52.4s). Synthetic scaling is still
+    super-linear: right_recursion ~O(n^2.6), repeat_plus ~O(n^2.5). So the completer
+    global-scan was NOT the time-dominant cost. Correctness preserved: 889/890 (only
+    g12.c05/SPPF still fails). The structural fix is correct and a prerequisite for
+    interning, but the real lever is #2.
   - Files: src/parser.rs (TraceArena.continuations, register_waiting_parent_task,
-    get_waiting_parent_tasks_by_name, complete, predict)
-- [ ] Bound the item set / cut task explosion #HIGH
+    waiting_parents_at, complete, predict)
+- [ ] Bound the item set / cut task explosion #HIGH  <-- NOW THE DOMINANT COST (confirmed by profile after #1)
   - Problem: ~6,900 items per character position (578k @ n=84); correct Earley is O(n)
-    per set. Driven by: the k-fold parent fan-out (#1 above); items carrying
-    matched_so_far so "same Earley item, different children" are materialized as full
-    Tasks (allocated + SipHashed) before dedup (which keys on cursor length) collapses
-    them; eager duplicated nullable handling (see below).
-  - First step: instrument the dedup ratio (deduplicated_count is already tracked) and
-    profile before/after #1 — much of this may fall out once #1 lands. Confirm with a
-    profile rather than guessing the split between #1/#2/#3.
-  - Files: src/parser.rs (task_advance_cursor, have_we_seen, predict, complete)
+    per set. The profile after #1 isolates the driver: items carry matched_so_far so
+    "same Earley item, different children" are materialized as full Tasks (allocated +
+    SipHashed over the name + matched vec) BEFORE dedup (which keys on cursor length)
+    collapses them. The k-fold fan-out (#1) is now gone yet task count is identical, so
+    THIS is what produces the 577k tasks. Also: eager duplicated nullable handling (see
+    the nullable item below).
+  - Solution direction: stop putting matched_so_far / children in Task identity. Make an
+    Earley item (name, alt, dot, origin, pos) the dedup key and materialize/allocate the
+    Task only once per distinct item; attach derivation children to that single item
+    (this is the SPPF-shaped change, and also what g12.c05 needs). Pair with interning
+    so the dedup key is (NonTermId, u32, u32, u32) ints, not a SipHash over name bytes.
+  - Files: src/parser.rs (Task, MatchRec, task_advance_cursor, have_we_seen, predict,
+    complete)
 - [ ] Stop cloning grammar fragments in the hot loop #MED
   - Problem: `DotNotation::next_unparsed() -> Factor` clones a Factor on every queue pop
     of a non-completed item; for terminals that's a heap `TerminalDefn { Vec<CharMatcher> }`
