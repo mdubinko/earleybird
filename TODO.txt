@@ -94,7 +94,7 @@ the interning item — interning optimizes structures that should first be made 
 right shape. Methodology reminder (docs/PROFILING.md): measure, attribute count-vs-
 per-op, change one thing, re-measure.
 
-- [ ] De-quadratic the tree extractor (`filter_completed_trace` linear scan) #HIGH  <-- THE DOMINANT REAL-WORLD COST (2026-06-06 broad profile)
+- [x] De-quadratic the tree extractor (`filter_completed_trace` linear scan) (2026-06-06, 23209de) #HIGH  <-- WAS THE DOMINANT REAL-WORLD COST; span-index dropped the full suite 790s -> ~28s
   - Evidence (release `bench --stats`, per-phase wall-time): tree extraction
     (`unpack_parse_tree`) is ~98% of the unicode_version grammar build (50.6s of 51.8s;
     the Earley loop is ~1.2s / 2.3%) and ~82% of ixml_self (both build and parse). The
