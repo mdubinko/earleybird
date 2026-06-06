@@ -93,6 +93,11 @@ descendant text.
 - **Decision: marks (`@`, `^`, `-`) and aliases are applied here**, not during
   recognition — the parse keeps the full structure; serialization decides what is an
   element, attribute, text, or muted.
+- **Decision: `completed_trace` is span-indexed** (`completed_by_span`, built once
+  before the recursion) so the per-node `filter_completed_trace` is an O(bucket) lookup
+  keyed by `(name, origin, pos)`, not an O(|trace|) linear scan. This was the dominant
+  real-world cost before 2026-06-06 (≈98% of the unicode_version grammar build; see
+  `docs/PROFILING.md`). Buckets preserve trace order so selection is unchanged.
 
 ### 4. Disambiguation — `filter_completed_trace` (+ `is_ambiguous`)
 
@@ -134,18 +139,23 @@ Discernible from the repo and history:
   `docs/archive/xrust_experiment.rs` are abandoned scaffolds; the project committed
   to a from-scratch Earley core.
 - **Integer-interned symbols.** Nonterminals are keyed by `SmolStr` throughout
-  (`continuations`, `families`, task identity). Interning to integer ids was not
-  done; it remains the highest-leverage structural change for performance.
+  (`continuations`, `families`, task identity, `completed_by_span`). Interning to
+  integer ids was not done. With the tree-extractor scan fixed (the prior dominant
+  cost), interning is the highest-leverage change *within the now-dominant parse loop*
+  — it removes the per-item SipHash over name bytes and the composite-key allocations.
 
 ## Known tension: single derivation vs. forest
 
 The keystone decision — *the Earley item is the (one) partial parse tree* — buys
 simplicity and debuggability and fights back in three places:
 
-1. **Performance.** `matched_so_far` is cloned on every advance; `completed_trace`
-   is an unindexed `Vec` scanned linearly per output node; `rule_reaches` recomputes
-   static grammar reachability inside selection. Aggressive optimization pushes
-   toward identity-only items + a side forest — i.e. unwinding this decision.
+1. **Performance.** The dotted rule is now shared via `Rc<Rule>` (advance is a
+   refcount bump), and `completed_trace` is span-indexed for extraction (both done
+   2026-06-06). What remains of this decision's tax: `matched_so_far` is still cloned
+   on every advance (O(k²) to build a k-child item); `DotNotation::new` still clones
+   the `Rule` per task created in `predict`; and `rule_reaches` recomputes static
+   grammar reachability inside selection. Aggressive optimization pushes toward
+   identity-only items + a side forest — i.e. unwinding this decision.
 2. **Correctness under reordering.** Which derivation survives dedup, and which
    `filter_completed_trace` picks, both depend on queue order. Perf changes that
    reorder work can silently change the emitted tree (see the synthesized-rule
@@ -157,4 +167,5 @@ simplicity and debuggability and fights back in three places:
 A plausible incremental path: promote `families` from signature-set to a real (even
 minimal) forest by retaining the child edges per signature, move disambiguation into
 an explicit walk over that forest (decoupled from scheduling), then intern symbols
-and index completed items. This is a retrofit of the existing engine, not a rewrite.
+(the remaining `SmolStr`-as-identity cost — see below). Completed-item indexing is
+already done. This is a retrofit of the existing engine, not a rewrite.
