@@ -12,6 +12,7 @@ use std::{
     hash::{Hash, Hasher},
 };
 use string_builder::Builder;
+use std::rc::Rc;
 
 const DOTSEP: &str = "•";
 
@@ -102,14 +103,18 @@ impl fmt::Display for ParseSession {
 /// Instead of just calling next(), For completed terms, it tracks positions and specifically-matched chars
 /// `matched_so_far.len`() is the cursor position
 pub struct DotNotation {
-    iteratee: Rule,
+    /// The rule being matched. Shared via `Rc` so `advance_dot` (called once per cursor
+    /// advance, i.e. per scanned terminal / completed child) is a refcount bump rather
+    /// than a deep clone of the whole `Vec<Factor>` — see TODO.txt "Stop cloning grammar
+    /// fragments in the hot loop".
+    iteratee: Rc<Rule>,
     matched_so_far: Vec<MatchRec>,
 }
 
 impl DotNotation {
     pub fn new(rule: &Rule) -> Self {
         Self {
-            iteratee: rule.clone(),
+            iteratee: Rc::new(rule.clone()),
             matched_so_far: Vec::new(),
         }
     }
@@ -117,6 +122,8 @@ impl DotNotation {
     /// record a new match. Intnded for literal character data
     /// this returns an entirely new `DotNotation`
     fn advance_dot(&self, rec: MatchRec) -> Self {
+        // `self.clone()` clones the `Rc` (cheap bump) plus `matched_so_far`; the rule
+        // itself is shared, not re-cloned.
         let mut clo = self.clone();
         clo.matched_so_far.push(rec);
         clo
