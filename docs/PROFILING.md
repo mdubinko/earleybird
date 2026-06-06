@@ -397,6 +397,29 @@ cargo run --release -- bench --heavy --filter ixml_self --stats
 cargo run --release -- parse -g grammar.ixml -i input.txt --stats
 ```
 
+### Exact allocation counts (`alloc-count` feature)
+
+For clone-removal work, wall-time is noisy but allocation counts are exact and
+diffable. Build with the optional `alloc-count` feature to install a counting
+global allocator (`src/alloc_count.rs`); it is off by default and zero-cost when
+off. With it on, `--stats` adds an `≈ alloc` line (allocs / reallocs / deallocs /
+bytes) to the per-parse phase breakdown, and `suite` prints a whole-suite
+allocation total in its `=== TIMING ===` block.
+
+```bash
+# Per-parse allocation delta (e.g. the unicode_version grammar-build loop)
+cargo run --release --features alloc-count -- bench --heavy --filter unicode_version --stats
+
+# Whole-suite allocation total
+cargo run --release --features alloc-count -- suite --console SUMMARY --file NONE
+```
+
+Report clone-removal changes as an allocation delta (`6,145,836 -> N allocs`)
+in the commit message alongside the ns/call numbers — it is the honest signal
+when the wall-time delta is within run-to-run noise. For per-call-site
+attribution (which clone dominates), reach for `dhat` or `cargo instruments -t
+alloc` below.
+
 ## Memory Profiling
 
 ```bash

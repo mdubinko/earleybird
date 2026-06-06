@@ -1,3 +1,4 @@
+pub mod alloc_count;
 pub mod debug;
 pub mod grammar;
 pub mod ixml_bootstrap;

@@ -13,6 +13,13 @@ path = "src/eb.rs"
 [lib]
 name = "earleybird"
 
+[features]
+# Install a counting global allocator (see src/alloc_count.rs) and print
+# per-parse allocation deltas under `--stats`. Off by default (zero-cost: the
+# system allocator is used and the counters stay at zero). Build the measuring
+# binary with `cargo run --release --features alloc-count -- ...`.
+alloc-count = []
+
 [dependencies]
 quick-xml = "0.24"
 smol_str = "0.3.2"

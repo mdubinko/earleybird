@@ -40,6 +40,11 @@ pub struct ParseSession {
     pub phase_calls: [u64; 4],
     /// Wall-time in nanoseconds for tree extraction (`unpack_parse_tree`).
     pub unpack_ns: u128,
+    /// Allocation-counter snapshot taken at the start of the parse, as
+    /// `[allocs, deallocs, reallocs, bytes]`. Only captured when phase reporting
+    /// is on; the `--stats` breakdown subtracts it from a fresh snapshot to print
+    /// the parse's allocation delta (no-op unless built with `--features alloc-count`).
+    pub alloc_start: [u64; 4],
 }
 
 impl Default for ParseSession {
@@ -55,6 +60,7 @@ impl Default for ParseSession {
             phase_ns: [0; 4],
             phase_calls: [0; 4],
             unpack_ns: 0,
+            alloc_start: [0; 4],
         }
     }
 }
@@ -789,6 +795,11 @@ impl Parser {
         let mut input = InputIter::new(input);
         session.input_length = input.tokens.len();
         self.last_input_len = session.input_length;
+        // Baseline the allocation counters so `--stats` can report this parse's
+        // allocation delta (only meaningful when built with `--features alloc-count`).
+        if self.phase_report {
+            session.alloc_start = crate::alloc_count::snapshot();
+        }
         // Long comments can produce many finite completions at one position; keep
         // the small-input floor but scale enough to avoid false loop reports.
         session.infinite_loop_threshold = session
@@ -993,6 +1004,22 @@ impl Parser {
             "═ total",
             grand_ns as f64 / 1e6,
         );
+        // Allocation delta for this parse (loop + unpack). Only printed when the
+        // counting allocator is installed (`--features alloc-count`); otherwise the
+        // counters never move and the line would be a misleading row of zeros.
+        if crate::alloc_count::enabled() {
+            use crate::alloc_count::{ALLOCS_IDX, BYTES_IDX, DEALLOCS_IDX, REALLOCS_IDX};
+            let now = crate::alloc_count::snapshot();
+            let d = |i: usize| now[i].saturating_sub(session.alloc_start[i]);
+            eprintln!(
+                "   {:<9} {:>9} allocs  {:>9} reallocs  {:>9} deallocs  {:>8.2} MiB",
+                "≈ alloc",
+                d(ALLOCS_IDX),
+                d(REALLOCS_IDX),
+                d(DEALLOCS_IDX),
+                d(BYTES_IDX) as f64 / (1024.0 * 1024.0),
+            );
+        }
     }
 
     /// COMPLETER: Handle completed tasks by continuing their parent tasks

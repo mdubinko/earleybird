@@ -204,6 +204,9 @@ fn run(
     const SLOW_TEST_MS: u128 = 500;
     let mut timings: Vec<(String, u128)> = Vec::new();
     let suite_start = Instant::now();
+    // Baseline allocation counters for a whole-suite total (no-op unless built
+    // with `--features alloc-count`); reported in the TIMING block below.
+    let alloc_start = earleybird::alloc_count::snapshot();
 
     // Compiled grammars are keyed by their source text (or "__bootstrap_ixml__").
     // Many test-sets share the same grammar file; recompiling on each test is wasteful.
@@ -483,6 +486,16 @@ fn run(
         }
         if wrote_csv {
             println!("Timings written to: {}", timings_path.display());
+        }
+        if earleybird::alloc_count::enabled() {
+            use earleybird::alloc_count::{ALLOCS_IDX, BYTES_IDX, REALLOCS_IDX};
+            let now = earleybird::alloc_count::snapshot();
+            println!(
+                "Allocations (whole suite): {} allocs, {} reallocs, {:.1} MiB",
+                now[ALLOCS_IDX].saturating_sub(alloc_start[ALLOCS_IDX]),
+                now[REALLOCS_IDX].saturating_sub(alloc_start[REALLOCS_IDX]),
+                now[BYTES_IDX].saturating_sub(alloc_start[BYTES_IDX]) as f64 / (1024.0 * 1024.0),
+            );
         }
     }
 }

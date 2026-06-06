@@ -1,4 +1,12 @@
 use argh::FromArgs;
+
+// When built with `--features alloc-count`, tally every heap allocation so the
+// `--stats` output can report per-parse allocation deltas. Zero-cost otherwise
+// (the system allocator is used and the counters stay at zero).
+#[cfg(feature = "alloc-count")]
+#[global_allocator]
+static GLOBAL: earleybird::alloc_count::Counting = earleybird::alloc_count::Counting;
+
 mod cmd_bench;
 mod cmd_parse;
 mod cmd_suite;

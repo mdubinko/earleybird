@@ -87,6 +87,28 @@ Benchmark CSV columns are:
 Synthetic rows fill the parse timing columns; heavy rows fill `build_ms` and
 `parse_ms` separately.
 
+### Count allocations (`alloc-count` feature)
+
+For clone-removal and other allocation-sensitive work, build with the optional
+`alloc-count` feature to install a counting global allocator. It is **off by
+default and zero-cost** when off (the system allocator is used and the counters
+stay at zero). When on, `--stats` prints a per-parse allocation delta (allocs /
+reallocs / deallocs / bytes) under the phase breakdown, and `suite` prints a
+whole-suite allocation total in its `=== TIMING ===` block:
+
+```bash
+# Per-parse allocation delta beneath the --stats phase breakdown
+cargo run --release --features alloc-count -- \
+  bench --heavy --filter unicode_version --stats
+
+# Whole-suite allocation total
+cargo run --release --features alloc-count -- \
+  suite --console SUMMARY --file NONE
+```
+
+Allocation counts are exact and diffable, which makes them a more reliable
+before/after signal than wall-time for clone removal. See `docs/PROFILING.md`.
+
 Alternatively, build the `eb` binary first:
 
 ```bash

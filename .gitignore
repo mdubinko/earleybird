@@ -29,3 +29,6 @@ debug_hand_coded_test.rs
 
 # Keep reference files in docs/archive regardless of extension
 !docs/archive/**
+
+# Claude Code local state
+.claude/
