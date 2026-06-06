@@ -151,6 +151,17 @@ impl DotNotation {
         let cursor = self.matched_so_far.len();
         self.iteratee.factors[cursor].clone()
     }
+
+    /// Borrow the next term to parse without cloning it. Returns the shared
+    /// `Rc<Rule>` (a refcount bump) plus the cursor, so the caller can hold
+    /// `&rule.factors[cursor]` independently of the `TraceArena` borrow. This lets
+    /// the hot dispatch loop reach the `&mut self` scan/predict paths without
+    /// cloning a `Factor` per pop — and, for terminals, without cloning a heap
+    /// `TerminalDefn { Vec<CharMatcher> }`. See TODO.txt "Stop cloning grammar
+    /// fragments in the hot loop" (b).
+    fn next_unparsed_shared(&self) -> (Rc<Rule>, usize) {
+        (Rc::clone(&self.iteratee), self.matched_so_far.len())
+    }
 }
 
 impl fmt::Display for DotNotation {
@@ -866,12 +877,17 @@ impl Parser {
                 // ELSE:
                 //    PUT next.symbol task, position task IN sym, pos
                 //    SELECT:
-                let factor = self.traces.get(tid).dot.next_unparsed();
-                match factor {
+                // Borrow the next factor through the rule's shared `Rc` instead of
+                // cloning it: the factor lives inside the `Rc<Rule>`, so bumping the
+                // refcount decouples the borrow from `self.traces` and lets us reach
+                // the `&mut self` scan/predict paths below while holding `&factor`.
+                // Avoids a per-pop `Factor` clone (heap `TerminalDefn` for terminals).
+                let (rule, cursor) = self.traces.get(tid).dot.next_unparsed_shared();
+                match &rule.factors[cursor] {
                     // grammar nonterminal sym:
                     //    START grammar FOR sym AT pos
                     Factor::Nonterm(mark, name, _alias) => {
-                        self.predict(&g, tid, mark, name)?;
+                        self.predict(&g, tid, *mark, name)?;
                         if let Some(t) = phase_timer {
                             session.phase_ns[1] += t.elapsed().as_nanos();
                             session.phase_calls[1] += 1;
@@ -883,7 +899,7 @@ impl Parser {
                     // ELSE:
                     //    PASS \Terminal, doesn't match
                     Factor::Terminal(tmark, matcher) => {
-                        self.scan(tid, tmark, matcher, &mut input, session)?;
+                        self.scan(tid, *tmark, matcher, &mut input, session)?;
                         if let Some(t) = phase_timer {
                             session.phase_ns[2] += t.elapsed().as_nanos();
                             session.phase_calls[2] += 1;
@@ -892,7 +908,7 @@ impl Parser {
                     // Insertion: advance without consuming input
                     Factor::Insertion(tmark, text) => {
                         let current_pos = self.traces.get(tid).pos;
-                        let match_rec = MatchRec::Insertion(current_pos, text.clone(), tmark);
+                        let match_rec = MatchRec::Insertion(current_pos, text.clone(), *tmark);
                         let maybe_id = self.traces.task_advance_cursor(tid, match_rec);
                         // Queue at front for immediate processing
                         self.queue_front(maybe_id);
@@ -1055,7 +1071,7 @@ impl Parser {
         g: &Grammar,
         tid: TraceId,
         mark: Mark,
-        name: SmolStr,
+        name: &SmolStr,
     ) -> Result<(), ParseError> {
         let current_pos = self.traces.get(tid).pos;
         debug!("PREDICTOR: Nonterm {mark}{name}");
@@ -1072,13 +1088,13 @@ impl Parser {
         // position we're predicting at. A single entry per (name, position) suffices;
         // every completion of `name` starting here resumes this parent.
         self.traces
-            .register_waiting_parent_task(&name, current_pos, tid);
+            .register_waiting_parent_task(name, current_pos, tid);
 
         // We can have a Mark at the point of definition,
         // as well as at the point of reference...
         // Figure out what to do with all possible combinations
-        let defn_mark = g.get_definition_mark(&name)?;
-        let defn_alias = g.get_definition_alias(&name)?;
+        let defn_mark = g.get_definition_mark(name)?;
+        let defn_alias = g.get_definition_alias(name)?;
         let effective_mark = match (defn_mark, mark) {
             (Mark::Default, Mark::Default) => Mark::Default,
             (Mark::Default, Mark::Mute) => Mark::Mute,
@@ -1098,9 +1114,9 @@ impl Parser {
             (Mark::Unmute, Mark::Unmute) => Mark::Unmute,
         };
 
-        for (alt_index, alt) in g.get_definition(&name)?.iter().enumerate() {
+        for (alt_index, alt) in g.get_definition(name)?.iter().enumerate() {
             let maybe_id = self.traces.task(
-                &name,
+                name,
                 alt_index,
                 effective_mark,
                 defn_alias.clone(),
@@ -1111,7 +1127,7 @@ impl Parser {
 
             // CRITICAL FIX: Handle nullable alternatives immediately whether new or deduplicated
             // Check if this alternative is nullable (can produce epsilon) - use efficient cached method
-            if g.is_alternative_nullable_by_index(&name, alt_index)? {
+            if g.is_alternative_nullable_by_index(name, alt_index)? {
                 debug_earley_pos!(DebugLevel::Trace, current_pos, "PREDICTOR: Nullable rule {}[{}] - triggering immediate completion (Bpredict/complete)", name, alt_index);
 
                 // For truly empty rules (zero factors), add to completed_trace here
@@ -1137,7 +1153,7 @@ impl Parser {
                 // this nonterminal at current_pos (the (name, current_pos) key).
                 let waiting_parents = self
                     .traces
-                    .waiting_parents_at(&name, current_pos);
+                    .waiting_parents_at(name, current_pos);
 
                 for continue_id in waiting_parents {
                     debug!(
@@ -1187,7 +1203,7 @@ impl Parser {
         &mut self,
         tid: TraceId,
         tmark: TMark,
-        matcher: TerminalDefn,
+        matcher: &TerminalDefn,
         input: &mut InputIter,
         session: &ParseSession,
     ) -> Result<(), ParseError> {
