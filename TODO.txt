@@ -112,21 +112,31 @@ optimizes structures that should first be made the right shape.
     interning, but the real lever is #2.
   - Files: src/parser.rs (TraceArena.continuations, register_waiting_parent_task,
     waiting_parents_at, complete, predict)
-- [ ] Bound the item set / cut task explosion #HIGH  <-- NOW THE DOMINANT COST (confirmed by profile after #1)
-  - Problem: ~6,900 items per character position (578k @ n=84); correct Earley is O(n)
-    per set. The profile after #1 isolates the driver: items carry matched_so_far so
-    "same Earley item, different children" are materialized as full Tasks (allocated +
-    SipHashed over the name + matched vec) BEFORE dedup (which keys on cursor length)
-    collapses them. The k-fold fan-out (#1) is now gone yet task count is identical, so
-    THIS is what produces the 577k tasks. Also: eager duplicated nullable handling (see
-    the nullable item below).
-  - Solution direction: stop putting matched_so_far / children in Task identity. Make an
-    Earley item (name, alt, dot, origin, pos) the dedup key and materialize/allocate the
-    Task only once per distinct item; attach derivation children to that single item
-    (this is the SPPF-shaped change, and also what g12.c05 needs). Pair with interning
-    so the dedup key is (NonTermId, u32, u32, u32) ints, not a SipHash over name bytes.
+- [ ] Cut the O(n^2) Earley item count (right-recursion blowup) #HIGH  <-- NOW THE DOMINANT COST (confirmed by profile after #1)
+  - Evidence (2026-06-06, branch perf/item-set-dedup): the synthetic right_recursion
+    grammar (`doc = "a", doc | "a".`, single-char terminals, no char-classes, no
+    fan-out) has DISTINCT tasks created of 2274 @ n=64 -> 8642 @ 128 -> 33666 @ 256:
+    ~3.8-3.9x per 2x input = ~O(n^2) item count, with 0% dedup. Time tracks the count.
+    So the blowup is NOT "duplicate tasks materialized then deduped" (dedup is zero
+    here) and NOT the #1 completer scan — it is the textbook Earley right-recursion
+    O(n^2) DISTINCT-item count: completing the innermost nonterminal chains back through
+    a waiting item at every origin.
+  - Distinct cost center, same priority: the unicode_version "build" (parsing a 12KB
+    grammar) is instead ~47 items/position (near-linear count) but ~96us/operation,
+    i.e. per-OP constant cost bound — likely the #3 clones (Factor/TerminalDefn cloned
+    per pop) and/or scanner char-class matching, NOT item count. So profile/attribute
+    BEFORE coding: synthetic completer-stress cases want the algorithmic fix below;
+    unicode wants #3.
+  - Solution direction (algorithmic): Joop Leo's right-recursion optimization
+    (deterministic-reduction "transitive" items) to make right/indirect recursion O(n),
+    and/or proper SPPF item sharing so each (name, alt, dot, origin, pos) Earley item is
+    materialized once with children attached to it (this is also what g12.c05 needs).
+    Pair with NonTermId interning so the dedup key is ints, not a SipHash over name
+    bytes. Note today's hash already keys dot by cursor length (matched_so_far.len()),
+    so identity is (name, alt, origin, pos, cursor) — the O(n^2) is genuine distinct
+    (origin, pos) items, not a hashing artifact.
   - Files: src/parser.rs (Task, MatchRec, task_advance_cursor, have_we_seen, predict,
-    complete)
+    complete; new Leo/transitive-item machinery)
 - [ ] Stop cloning grammar fragments in the hot loop #MED
   - Problem: `DotNotation::next_unparsed() -> Factor` clones a Factor on every queue pop
     of a non-completed item; for terminals that's a heap `TerminalDefn { Vec<CharMatcher> }`
