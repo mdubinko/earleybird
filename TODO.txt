@@ -140,7 +140,24 @@ per-op, change one thing, re-measure.
     interning, but the real lever is #2.
   - Files: src/parser.rs (TraceArena.continuations, register_waiting_parent_task,
     waiting_parents_at, complete, predict)
-- [ ] Cut the O(n^2) Earley item count (right-recursion blowup) #MED  <-- dominant cost WITHIN the parse loop, but the loop is only ~2-17% of real wall-time (see extractor item above). Real, but smaller than the extractor fix. Leo's optimization is the tool (SPPF will NOT reduce this distinct-item count); also helps X+/X* via the right-recursive desugaring.
+- [ ] Native repeat operators (?/*/+/**/++) in the Earley engine #HIGH  <-- see docs/design-native-repeat.md (branch feat/native-repeat-operators)
+  - The repeat operators are currently DESUGARED into synthesized right-recursive rules
+    (--r.f-star etc.), which is exactly Earley's O(n^2) item pathology. Measured prize
+    (2026-06-06): synth (--) rules are 51.4% of items on unicode_version, 50.5% on
+    ixml_self, 97.7% on repeat_plus n=128. Handling repetition natively keeps the dot on
+    one looping factor slot so per-iteration items share identity and dedup collapses the
+    chain toward O(n) for the common case.
+  - This is the REAL item-count lever (every per-op constant-cost opt this cycle measured
+    flat — interning hash, continuations key construction, synth-name length all 0 effect;
+    the cost is item COUNT). Targeted fix for the desugared-repeat subset; Leo (below)
+    remains the general right-recursion fallback. Supersedes interning's perf case.
+  - Plan: add Factor::Repeat, keep desugaring as a fallback (hybrid, suite stays green),
+    do single-factor */+ first and MEASURE repeat_plus item count (O(n^2)->O(n)) before
+    extending to ?, separators, then groups. Full design + phased gates in the design note.
+  - Files: src/grammar.rs (Factor::Repeat + build, retire desugaring), src/parser.rs
+    (DotNotation repeat sub-state, predict/complete loop, unpack flattening, dedup
+    identity, drop the `--` disambiguator special-casing)
+- [ ] Cut the O(n^2) Earley item count (right-recursion blowup) #MED  <-- dominant cost WITHIN the parse loop, but the loop is only ~2-17% of real wall-time (see extractor item above). Real, but smaller than the extractor fix. Leo's optimization is the tool (SPPF will NOT reduce this distinct-item count); also helps X+/X* via the right-recursive desugaring. NOTE 2026-06-06: native repeat operators (item above) cover the COMMON subset (desugared */+); Leo is now the fallback for user-written right recursion (A = A, x).
   - Evidence (2026-06-06, branch perf/item-set-dedup): the synthetic right_recursion
     grammar (`doc = "a", doc | "a".`, single-char terminals, no char-classes, no
     fan-out) has DISTINCT tasks created of 2274 @ n=64 -> 8642 @ 128 -> 33666 @ 256:
