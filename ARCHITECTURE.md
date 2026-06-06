@@ -62,12 +62,12 @@ indexed by `TraceId`).
   `Vec<Task>` and a task is *named by its offset* — `TraceId(usize)` — not by an
   allocated key. References between items are plain integers; there is no per-item
   identity allocation, and a slot, once written, is stable for the whole parse. The
-  same lifecycle holds for nonterminal **definitions** (fixed at grammar-build time,
-  never removed), so the design generalizes the principle to them: nonterminals are
-  being interned to a bare `defn_order` offset, `NonTermId(u32)`, collapsing the
-  `SmolStr` identity keys used in `continuations` / `families` / `completed_by_span` /
-  task dedup to integers (in progress — see [Paths not taken](#paths-not-taken)). The
   unifying rule: stable, monotonic data is addressed by offset, not by a hashed key.
+  Nonterminal **definitions** have the same lifecycle (fixed at grammar-build time,
+  never removed), so they are a candidate to extend the principle to — interning names
+  to a bare `defn_order` offset. That was prototyped and reverted: it measured flat
+  (rule names are short and already unique-by-`HashMap`), so it is recorded only as a
+  possible future change — see [Paths not taken](#paths-not-taken).
 - **Decision: scannerless, character-level.** Terminals match `char`s directly;
   there is no separate lexer. Fits ixml (which is defined over characters and has
   no token layer) at the cost of more items than a tokenized parser.
@@ -152,14 +152,19 @@ Discernible from the repo and history:
 - **tree-sitter / external engines.** `experimental/treesitter-ixml/` and
   `docs/archive/xrust_experiment.rs` are abandoned scaffolds; the project committed
   to a from-scratch Earley core.
-- **Integer-interned symbols** *(now underway, no longer "not taken")*. Nonterminals
-  were keyed by `SmolStr` throughout (`continuations`, `families`, task identity,
-  `completed_by_span`). With the tree-extractor scan fixed (the prior dominant cost)
-  and the hot-loop clones removed, interning to a bare `defn_order` offset
-  `NonTermId(u32)` is the highest-leverage change *within the now-dominant parse loop*
-  — it removes the per-item SipHash over name bytes and the composite-key
-  allocations. This is the offset-identity principle from
-  [Stage 2](#2-earley-recognition--parserparse--tracearena) applied to symbols.
+- **Integer-interned symbols** *(prototyped, measured flat, reverted)*. Nonterminals
+  are keyed by `SmolStr` throughout (`continuations`, `families`, task identity,
+  `completed_by_span`). Interning to a bare `defn_order` offset `NonTermId(u32)` — the
+  offset-identity principle from [Stage 2](#2-earley-recognition--parserparse--tracearena)
+  applied to symbols — was the obvious candidate once the tree-extractor scan and
+  hot-loop clones were fixed. It was tried (2026-06-06): swapping the per-item dedup
+  hash from the name to the id was **flat**. Rule names are short (`SmolStr`, usually
+  inline) and already unique-by-`HashMap`, so SipHash over the name was never the
+  dominant per-item cost — and a half-interned state even *adds* a name→id lookup. A
+  real win would require going all the way (definitions as a `Vec<BranchingRule>`,
+  `Factor` carrying the id, no name lookups at all), which is an architectural cleanup,
+  not a measured speedup. Not pursued; the algorithmic lever (Leo, the O(n²) item
+  count) is the better next target.
 
 ## Known tension: single derivation vs. forest
 

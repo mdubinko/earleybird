@@ -228,7 +228,18 @@ per-op, change one thing, re-measure.
   - Files: src/grammar.rs (split)
 
 ## Lower Priority - Architecture
-- [ ] Intern nonterminals to NonTermId(u32) at grammar-build time (performance) #MED
+- [~] Intern nonterminals to NonTermId(u32) at grammar-build time (performance) #LOW
+  - TRIED & REVERTED 2026-06-06 (was d17d087/2fb909a, reset out): the perf premise below
+    does NOT hold for this codebase. Swapping the per-item dedup hash (the MOST frequent
+    hashing site) from the name to a u32 id measured FLAT — rule names are short (SmolStr,
+    usually inline) and already unique-by-HashMap, so SipHash over name bytes was never
+    the dominant per-item cost. A half-interned state even ADDS a name->id lookup. The
+    less-frequent maps (continuations/families/completed_by_span) would show even less.
+    Only revisit as an ARCHITECTURAL cleanup done ALL THE WAY: definitions become a
+    Vec<BranchingRule> indexed by id, Factor::Nonterm carries the id, name dropped from
+    Task (display via grammar.nonterm_name(id)) — i.e. no name lookups anywhere — and
+    measure THAT directly. Expect flat perf; justify on readability/architecture only.
+    The real next perf lever is Leo's optimization (O(n^2) item count), not interning.
   - NOTE: do this AFTER the completer-indexing fix above — interning the global
     name-keyed continuations map optimizes a structure that should first be replaced
     with position-indexed Earley sets.
