@@ -83,11 +83,39 @@
 
 ## Performance & Soundness Defects (High Priority)
 
-These were identified in the 2026-06-06 architecture review. #1 is DONE (branch
-perf/completer-position-index); the profile after #1 shows #2 — NOT the completer
-scan — is the dominant cost. Do these BEFORE the interning item below — interning
-optimizes structures that should first be made the right shape.
+These were identified in the 2026-06-06 architecture review. #1 (completer position-
+index) is DONE. A BROADER re-profile on 2026-06-06 (release `bench --stats` with the
+new per-phase wall-time breakdown) overturned the priority order: across REAL grammars
+the dominant cost is NOT the Earley parse loop at all — it is TREE EXTRACTION
+(`unpack_parse_tree` / `filter_completed_trace`). See the new top item below. The
+parse-loop fixes (the O(n^2) item count, clone removal) target only ~2–17% of real
+wall-time and drop below the extractor fix in priority. Do the extractor fix BEFORE
+the interning item — interning optimizes structures that should first be made the
+right shape. Methodology reminder (docs/PROFILING.md): measure, attribute count-vs-
+per-op, change one thing, re-measure.
 
+- [ ] De-quadratic the tree extractor (`filter_completed_trace` linear scan) #HIGH  <-- THE DOMINANT REAL-WORLD COST (2026-06-06 broad profile)
+  - Evidence (release `bench --stats`, per-phase wall-time): tree extraction
+    (`unpack_parse_tree`) is ~98% of the unicode_version grammar build (50.6s of 51.8s;
+    the Earley loop is ~1.2s / 2.3%) and ~82% of ixml_self (both build and parse). The
+    grammar COMPILE step (`from_parse_tree`) is 0.8ms — negligible. So the single largest
+    time sink in the whole suite is the extractor, not the parser core.
+  - Mechanism: `filter_completed_trace(name, origin, pos)` LINEAR-SCANS the entire
+    `completed_trace` Vec on every call, and is called once per output-tree node; for
+    each candidate it may call the recursive `rule_reaches`. Measured on ixml_self (a
+    2KB grammar): 9,576 calls × ~48,144-entry trace = 461,026,944 comparisons. Cost is
+    O(tree_nodes × |completed_trace| × reach). This is NONE of the parse-loop defects
+    (Leo / clones / SPPF all target the loop, ~2–17%).
+  - Fix: index `completed_trace` once into `HashMap<(SmolStr,usize,usize), Vec<TraceId>>`
+    (or `(NonTermId,usize,usize)` after interning) so each lookup hits a tiny span bucket
+    instead of scanning ~48k entries; and memoize/precompute `rule_reaches` (it depends
+    only on the grammar, not the parse — a precomputable reachability relation/bitset).
+    Expect the heaviest builds to drop from tens of seconds to ~1s. Self-contained, low
+    risk; lives in the same extractor machinery g12.c05/SPPF will later touch, so it is
+    foundational. Guardrail: full release suite must stay 889/890.
+  - Files: src/parser.rs (filter_completed_trace, unpack_parse_tree_internal,
+    span_is_ambiguous which has the same scan shape; rule_reaches memo; a completed-
+    trace span index built once before extraction)
 - [x] Position-index the completer; remove the per-alt continuation fan-out (2026-06-06) #HIGH
   - Problem: there were no per-position Earley sets. `continuations: MultiMap<SmolStr,
     TraceId>` was keyed by nonterminal NAME with no position. On every completion,
@@ -112,7 +140,7 @@ optimizes structures that should first be made the right shape.
     interning, but the real lever is #2.
   - Files: src/parser.rs (TraceArena.continuations, register_waiting_parent_task,
     waiting_parents_at, complete, predict)
-- [ ] Cut the O(n^2) Earley item count (right-recursion blowup) #HIGH  <-- NOW THE DOMINANT COST (confirmed by profile after #1)
+- [ ] Cut the O(n^2) Earley item count (right-recursion blowup) #MED  <-- dominant cost WITHIN the parse loop, but the loop is only ~2-17% of real wall-time (see extractor item above). Real, but smaller than the extractor fix. Leo's optimization is the tool (SPPF will NOT reduce this distinct-item count); also helps X+/X* via the right-recursive desugaring.
   - Evidence (2026-06-06, branch perf/item-set-dedup): the synthetic right_recursion
     grammar (`doc = "a", doc | "a".`, single-char terminals, no char-classes, no
     fan-out) has DISTINCT tasks created of 2274 @ n=64 -> 8642 @ 128 -> 33666 @ 256:

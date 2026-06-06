@@ -91,6 +91,10 @@ pub struct Parse {
     /// debug only at specific input position (for trace mode)
     #[argh(option, long = "debug-pos")]
     debug_pos: Option<usize>,
+
+    /// print run statistics broken out by major phase (grammar build, parse loop, tree extraction)
+    #[argh(switch, long = "stats")]
+    stats: bool,
 }
 
 impl Parse {
@@ -189,7 +193,15 @@ impl Parse {
         };
 
         // 2. Parse ixml grammar file and generate target grammar
-        let target_grammar = match Grammar::from_ixml_str(&grammar_content) {
+        let stats = self.stats;
+        let build_start = std::time::Instant::now();
+        let build_result = if stats {
+            Grammar::from_ixml_str_profiled(&grammar_content)
+        } else {
+            Grammar::from_ixml_str(&grammar_content)
+        };
+        let build_ms = build_start.elapsed().as_secs_f64() * 1000.0;
+        let target_grammar = match build_result {
             Ok(grammar) => {
                 debug_detailed!("✓ Grammar parsed successfully");
                 debug_detailed!("  Rules: {}", grammar.get_rule_count());
@@ -243,6 +255,8 @@ impl Parse {
 
         // 4. Parse input file against target grammar
         let mut parser = Parser::new(target_grammar);
+        parser.set_phase_report(stats);
+        let parse_start = std::time::Instant::now();
         let parse_tree = match parser.parse(&input_content) {
             Ok(tree) => {
                 debug_detailed!("✓ Input parsed successfully");
@@ -257,7 +271,15 @@ impl Parse {
                 std::process::exit(1);
             }
         };
+        let parse_ms = parse_start.elapsed().as_secs_f64() * 1000.0;
         let ambiguous = parser.is_ambiguous();
+
+        if stats {
+            eprintln!(
+                "⏱ Run totals: grammar build {:.1} ms, input parse {:.1} ms (per-phase breakdowns above)",
+                build_ms, parse_ms
+            );
+        }
 
         // 5. Format and output results
         match self.out_format.as_str() {

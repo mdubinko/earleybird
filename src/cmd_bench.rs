@@ -152,6 +152,7 @@ impl Bench {
                     // deliberately outside the timed region so we measure parsing only.
                     let mut parser = Parser::new(grammar.clone());
                     parser.set_stats_enabled(self.stats);
+                    parser.set_phase_report(self.stats);
                     let start = Instant::now();
                     let res = parser.parse(&input);
                     durations.push(start.elapsed());
@@ -232,6 +233,7 @@ impl Bench {
             let input_len = input.chars().count();
             let mut parser = Parser::new(grammar);
             parser.set_stats_enabled(self.stats);
+            parser.set_phase_report(self.stats);
             let parse_start = Instant::now();
             let status = if parser.parse(&input).is_err() {
                 "ERR"
@@ -287,7 +289,9 @@ fn parse_sizes(s: &str) -> Vec<usize> {
 
 fn build_grammar(source: &str, stats: bool) -> Result<Grammar, earleybird::parser::ParseError> {
     if stats {
-        Grammar::from_ixml_str(source)
+        // Profiled build prints the bootstrap parse's per-phase breakdown — on heavy
+        // grammars this build is the dominant cost (see docs/PROFILING.md).
+        Grammar::from_ixml_str_profiled(source)
     } else {
         Grammar::from_ixml_str_quiet(source)
     }

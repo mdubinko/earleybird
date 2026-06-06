@@ -32,6 +32,13 @@ pub struct ParseSession {
     pub infinite_loop_threshold: u32,
     /// Count of tasks that were deduplicated (not created)
     pub tasks_deduplicated: u32,
+    /// Per-phase wall-time in nanoseconds for the parse loop arms, indexed by
+    /// [complete, predict, scan, insertion]. Only populated when phase reporting is on.
+    pub phase_ns: [u128; 4],
+    /// Per-phase invocation counts, same index order as `phase_ns`.
+    pub phase_calls: [u64; 4],
+    /// Wall-time in nanoseconds for tree extraction (`unpack_parse_tree`).
+    pub unpack_ns: u128,
 }
 
 impl Default for ParseSession {
@@ -44,6 +51,9 @@ impl Default for ParseSession {
             max_queue_size: 0,
             infinite_loop_threshold: 1000,
             tasks_deduplicated: 0,
+            phase_ns: [0; 4],
+            phase_calls: [0; 4],
+            unpack_ns: 0,
         }
     }
 }
@@ -691,9 +701,20 @@ pub struct Parser {
     /// the permanent owner of all tasks, referenced by TraceId
     traces: TraceArena,
     completed_trace: Vec<TraceId>,
+    /// `completed_trace` indexed by completed-item span `(name, origin, pos)`, built once
+    /// before tree extraction. `filter_completed_trace` is called per output-tree node;
+    /// without this index it linear-scanned the whole `completed_trace` every call
+    /// (O(nodes × |trace|) — the dominant real-world cost, see docs/PROFILING.md). Each
+    /// bucket preserves trace insertion order so synthesized-rule first-match still holds.
+    completed_by_span: HashMap<(SmolStr, usize, usize), Vec<TraceId>>,
     /// Length of the most recent input, used by is_ambiguous() to filter root-rule completions
     last_input_len: usize,
     stats_enabled: bool,
+    /// When set, accumulate and print a per-phase wall-time breakdown (predict/scan/
+    /// complete/insertion loop arms + tree unpack). Opt-in via the CLI `--stats` flag
+    /// only — deliberately NOT enabled by `Grammar::from_ixml_str*`, so running the
+    /// test suite (which builds a grammar per test) is not flooded with phase tables.
+    phase_report: bool,
 }
 
 /// Earley parser with LIFO prediction strategy and modified completion strategy
@@ -714,13 +735,20 @@ impl Parser {
             grammar,
             traces: TraceArena::new(),
             completed_trace: Vec::new(),
+            completed_by_span: HashMap::new(),
             last_input_len: 0,
             stats_enabled: true,
+            phase_report: false,
         }
     }
 
     pub fn set_stats_enabled(&mut self, enabled: bool) {
         self.stats_enabled = enabled;
+    }
+
+    /// Enable the per-phase wall-time breakdown (see [`Parser::phase_report`]).
+    pub fn set_phase_report(&mut self, enabled: bool) {
+        self.phase_report = enabled;
     }
 
     /// Successful return value is an indextree over Content. Consider this temporary
@@ -816,8 +844,14 @@ impl Parser {
             // SELECT:
             //    finished task:
             //       CONTINUE PARENTS task
+            // Phase timing (opt-in via --stats); `None` => zero-cost no-op when disabled.
+            let phase_timer = self.phase_report.then(std::time::Instant::now);
             if self.traces.get(tid).dot.is_completed() {
                 self.complete(tid, &mut input)?;
+                if let Some(t) = phase_timer {
+                    session.phase_ns[0] += t.elapsed().as_nanos();
+                    session.phase_calls[0] += 1;
+                }
             } else {
                 // ELSE:
                 //    PUT next.symbol task, position task IN sym, pos
@@ -828,6 +862,10 @@ impl Parser {
                     //    START grammar FOR sym AT pos
                     Factor::Nonterm(mark, name, _alias) => {
                         self.predict(&g, tid, mark, name)?;
+                        if let Some(t) = phase_timer {
+                            session.phase_ns[1] += t.elapsed().as_nanos();
+                            session.phase_calls[1] += 1;
+                        }
                     }
                     // sym starts (input, pos): \Terminal, matches
                     //    RECORD TERMINAL input FOR task
@@ -836,6 +874,10 @@ impl Parser {
                     //    PASS \Terminal, doesn't match
                     Factor::Terminal(tmark, matcher) => {
                         self.scan(tid, tmark, matcher, &mut input, session)?;
+                        if let Some(t) = phase_timer {
+                            session.phase_ns[2] += t.elapsed().as_nanos();
+                            session.phase_calls[2] += 1;
+                        }
                     }
                     // Insertion: advance without consuming input
                     Factor::Insertion(tmark, text) => {
@@ -844,6 +886,10 @@ impl Parser {
                         let maybe_id = self.traces.task_advance_cursor(tid, match_rec);
                         // Queue at front for immediate processing
                         self.queue_front(maybe_id);
+                        if let Some(t) = phase_timer {
+                            session.phase_ns[3] += t.elapsed().as_nanos();
+                            session.phase_calls[3] += 1;
+                        }
                     }
                 }
             }
@@ -872,7 +918,55 @@ impl Parser {
                 session.max_queue_size
             );
         }
-        self.unpack_parse_tree(session)
+
+        // Tree extraction is the dominant cost on real grammars (see docs/PROFILING.md);
+        // time it as its own major phase when phase reporting is on.
+        let unpack_timer = self.phase_report.then(std::time::Instant::now);
+        let result = self.unpack_parse_tree(session);
+        if let Some(t) = unpack_timer {
+            session.unpack_ns = t.elapsed().as_nanos();
+            self.print_phase_breakdown(session);
+        }
+        result
+    }
+
+    /// Print the per-phase wall-time breakdown (parse-loop arms + tree unpack) to stderr.
+    /// Gated by the opt-in `--stats` flag via [`Parser::set_phase_report`].
+    fn print_phase_breakdown(&self, session: &ParseSession) {
+        let labels = ["complete", "predict", "scan", "insert"];
+        let loop_ns: u128 = session.phase_ns.iter().sum();
+        let grand_ns = (loop_ns + session.unpack_ns).max(1);
+        eprintln!("⏱ Phase breakdown:");
+        for i in 0..4 {
+            if session.phase_calls[i] == 0 {
+                continue;
+            }
+            eprintln!(
+                "   {:<9} {:>9.1} ms ({:>4.1}%)  {:>9} calls  {:>6.0} ns/call",
+                labels[i],
+                session.phase_ns[i] as f64 / 1e6,
+                session.phase_ns[i] as f64 / grand_ns as f64 * 100.0,
+                session.phase_calls[i],
+                session.phase_ns[i] as f64 / session.phase_calls[i].max(1) as f64,
+            );
+        }
+        eprintln!(
+            "   {:<9} {:>9.1} ms ({:>4.1}%)  parse loop subtotal",
+            "─ loop",
+            loop_ns as f64 / 1e6,
+            loop_ns as f64 / grand_ns as f64 * 100.0,
+        );
+        eprintln!(
+            "   {:<9} {:>9.1} ms ({:>4.1}%)  tree extraction",
+            "unpack",
+            session.unpack_ns as f64 / 1e6,
+            session.unpack_ns as f64 / grand_ns as f64 * 100.0,
+        );
+        eprintln!(
+            "   {:<9} {:>9.1} ms             total (loop + unpack)",
+            "═ total",
+            grand_ns as f64 / 1e6,
+        );
     }
 
     /// COMPLETER: Handle completed tasks by continuing their parent tasks
@@ -1227,15 +1321,20 @@ impl Parser {
     ///   Self-referential alts rank below non-self-referential ones; within each category
     ///   lowest alt_index wins.  If all alts are self-referential, fall back to first-match.
     fn filter_completed_trace(&self, name: &str, origin: usize, pos: usize) -> Option<&Task> {
+        // Span-indexed bucket of completed items for this exact (name, origin, pos),
+        // in trace insertion order. Built once in unpack_parse_tree; avoids the former
+        // per-node linear scan of the whole completed_trace.
+        let bucket = self
+            .completed_by_span
+            .get(&(SmolStr::from(name), origin, pos));
+        let bucket = match bucket {
+            Some(b) => b.as_slice(),
+            None => return None,
+        };
+
         if name.starts_with("--") {
-            // Synthesized rules: return the first match.
-            for &tid in &self.completed_trace {
-                let t = self.traces.get(tid);
-                if t.name == name && t.origin == origin && t.pos == pos {
-                    return Some(t);
-                }
-            }
-            return None;
+            // Synthesized rules: return the first match (trace order).
+            return bucket.first().map(|&tid| self.traces.get(tid));
         }
 
         // A task is "self-referential" if its first matched NonTerm child re-enters the
@@ -1255,11 +1354,8 @@ impl Parser {
         };
 
         let mut best: Option<&Task> = None;
-        for &tid in &self.completed_trace {
+        for &tid in bucket {
             let t = self.traces.get(tid);
-            if t.name != name || t.origin != origin || t.pos != pos {
-                continue;
-            }
             let is_better = match best {
                 None => true,
                 Some(b) => {
@@ -1319,6 +1415,18 @@ impl Parser {
     fn unpack_parse_tree(&mut self, session: &ParseSession) -> Result<Arena<Content>, ParseError> {
         debug!("TRACE...");
         debug!("COMPLETED TASKS ({} total):", self.completed_trace.len());
+
+        // Index completed items by span once, so per-node `filter_completed_trace`
+        // lookups are O(bucket) instead of O(|completed_trace|). Insertion order within
+        // each bucket mirrors trace order (synthesized-rule first-match relies on it).
+        self.completed_by_span.clear();
+        for &tid in &self.completed_trace {
+            let t = self.traces.get(tid);
+            self.completed_by_span
+                .entry((t.name.clone(), t.origin, t.pos))
+                .or_default()
+                .push(tid);
+        }
         for tid in &self.completed_trace {
             let task = self.traces.get(*tid);
             debug!(

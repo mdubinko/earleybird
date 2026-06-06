@@ -336,32 +336,66 @@ cargo run --release -- suite ambiguous --console NONE --file NONE
 - No function inlining
 - Full debug symbols
 
-## Current Performance Baseline (2026-06-06, after completer position-indexing)
+## Current Performance Baseline (2026-06-06, after the tree-extractor span-index fix)
 
 ```
 Conformance: 889/890 passing (906 total; 16 skipped, Unicode version ≠ 14.0).
   Sole failure: misc/sample.grammar.12/g12.c05 (needs SPPF/forest sharing).
-Full release suite: ~790s wall across 890 tests.
-Slowest suite tests:
-  misc/sample.grammar.41ter/grammar-test: ~204s   (highly ambiguous; ~O(n^3))
-  misc/sample.grammar.41bis/grammar-test: ~156s
-  misc/sample.grammar.41/grammar-test:    ~122s
-  correct/ixml tests/unicode-version-check/unicode-version-14-diagnostic: ~52s
-  correct/ixml tests/xpath/xpath: ~33s
+Full release suite: 29.6s wall across 890 tests  (was ~790s — ~27x, extractor fix).
+Slowest suite tests (were 122-204s; the grammar.41 trio was extraction-bound too):
+  misc/sample.grammar.41ter/grammar-test: 2.13s   (was ~204s)
+  misc/sample.grammar.41bis/grammar-test: 1.84s   (was ~156s)
+  misc/sample.grammar.41/grammar-test:    1.45s   (was ~122s)
+  unicode-version-14-diagnostic:          1.45s   (was ~52s)
+  correct/ixml tests/xpath/xpath:         1.02s   (was ~33s)
 
-Heavy benchmark sample:
-  unicode_version: build ~52384ms / parse 3.1ms   (577,883 tasks, 543,186 ops)
-  ixml_self:       build ~1461ms / parse ~1394ms   (not re-measured this date)
+Heavy benchmark sample (release `bench --heavy --stats`):
+  unicode_version: build 1450ms / parse 3.1ms   (was 51794ms; unpack 50.6s -> 114ms)
+  ixml_self:       build 284ms  / parse 252ms    (was 1295/1264ms; unpack 1046 -> 17ms)
+  Phase split now: parse loop ~91% of unicode build, ~93% of ixml_self — i.e. the
+  remaining cost has moved INTO the Earley loop (where Leo/clone fixes apply).
 
-Synthetic scaling (med_ms, --reps 3): super-linear on completer-stress families.
+Synthetic scaling (med_ms, --reps 3): super-linear on completer-stress families
+(unchanged by the extractor fix — these are loop-bound, not extraction-bound).
   right_recursion: ~O(n^2.6)   repeat_plus: ~O(n^2.5)
   left_recursion / nested: ~linear   ambiguous: ~O(n^3) (inherent)
 ```
 
-The dominant remaining cost is the O(n^2) Earley item count on right/indirect
-recursion (see the methodology worked example above), *not* the completer scan that
-was already fixed. Use the exact invocations above when refreshing the baseline, and
-write outputs under `log/` so the project root stays clean.
+The extractor fix (span-indexed `completed_trace`; see TODO.txt) removed the dominant
+real-world cost. The next lever is the Earley parse loop itself (now ~91% of the heavy
+builds): the O(n^2) right-recursion item count (Leo's optimization) and per-op clones.
+
+The dominant remaining cost is TREE EXTRACTION (`unpack_parse_tree` /
+`filter_completed_trace`), *not* the Earley parse loop. A broad re-profile on
+2026-06-06 (release `bench --stats`, per-phase wall-time) found:
+
+```
+unicode_version build 51.8s:  parse loop ~1.2s (2.3%),  unpack ~50.6s (97.7%),  compile 0.8ms
+ixml_self    build/parse:      parse loop ~17-18%,        unpack ~82%
+```
+
+`filter_completed_trace` linear-scans the whole `completed_trace` per output-tree node
+(461M comparisons on a 2KB grammar) — see TODO.txt "De-quadratic the tree extractor".
+The parse-loop algorithmic fixes (O(n^2) item count via Leo; clone removal) target only
+the ~2–17% that is the loop. This is the methodology's worked example a SECOND time: the
+plausible target (parser core) was not the measured-dominant one (extractor). Use the
+exact invocations above when refreshing the baseline, and write outputs under `log/` so
+the project root stays clean.
+
+### Per-phase wall-time breakdown (`--stats`)
+
+`--stats` (on `bench` and `parse`) now prints a per-phase wall-time breakdown in
+addition to task counts: the parse-loop arms (predict/scan/complete/insert), a loop
+subtotal, and the `unpack` (tree-extraction) phase. On heavy `bench` cases the grammar
+build is itself a bootstrap parse, so its breakdown prints too (via
+`Grammar::from_ixml_str_profiled`). Phase timing is opt-in and zero-cost when off, and
+is deliberately NOT enabled by `from_ixml_str_detailed`, so `suite` is not flooded.
+Example:
+
+```bash
+cargo run --release -- bench --heavy --filter ixml_self --stats
+cargo run --release -- parse -g grammar.ixml -i input.txt --stats
+```
 
 ## Memory Profiling
 
