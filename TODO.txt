@@ -81,7 +81,94 @@
   - repeat_plus n=128:     median=66ms
   - nested n=128:          median=1.5ms
 
+## Performance & Soundness Defects (High Priority)
+
+These were identified in the 2026-06-06 architecture review. #1 and #2 are the same
+root problem and dominate everything else: an 84-byte input creates ~578k tasks and
+takes ~35s (see bench unicode_version). Do these BEFORE the interning item below —
+interning optimizes structures that should first be made the right shape.
+
+- [ ] Position-index the completer; remove the per-alt continuation fan-out #HIGH
+  - Problem: there are no per-position Earley sets. `continuations: MultiMap<SmolStr,
+    TraceId>` is keyed by nonterminal NAME with no position. On every completion,
+    `get_waiting_parent_tasks_by_name` gathers EVERY parent that ever waited on that
+    nonterminal anywhere in the whole input, then linearly filters `pos == origin`.
+    So completion is O(all historical references to this NT) per event, not
+    O(|S[origin]|). For pervasive nonterminals (ixml `s` whitespace, expr) the registry
+    grows ~O(n) and there are ~O(n) completions → O(n^2)+ blowup.
+  - Extra waste: `predict` registers each parent under k separate `name[alt]` keys (one
+    per child alternative) and the getter unions them all, so each parent is stored and
+    processed k times — saved from incorrectness only by task dedup. The `[alt]`
+    subscript is dead complexity: register-per-alt then retrieve-all-and-union does
+    nothing the bare name wouldn't.
+  - Solution: key waiting parents by `(nonterminal, origin_position)` (reintroduce
+    Earley-set indexing); drop the per-alt fan-out and the format!("{}[{}]") key.
+  - Files: src/parser.rs (TraceArena.continuations, register_waiting_parent_task,
+    get_waiting_parent_tasks_by_name, complete, predict)
+- [ ] Bound the item set / cut task explosion #HIGH
+  - Problem: ~6,900 items per character position (578k @ n=84); correct Earley is O(n)
+    per set. Driven by: the k-fold parent fan-out (#1 above); items carrying
+    matched_so_far so "same Earley item, different children" are materialized as full
+    Tasks (allocated + SipHashed) before dedup (which keys on cursor length) collapses
+    them; eager duplicated nullable handling (see below).
+  - First step: instrument the dedup ratio (deduplicated_count is already tracked) and
+    profile before/after #1 — much of this may fall out once #1 lands. Confirm with a
+    profile rather than guessing the split between #1/#2/#3.
+  - Files: src/parser.rs (task_advance_cursor, have_we_seen, predict, complete)
+- [ ] Stop cloning grammar fragments in the hot loop #MED
+  - Problem: `DotNotation::next_unparsed() -> Factor` clones a Factor on every queue pop
+    of a non-completed item; for terminals that's a heap `TerminalDefn { Vec<CharMatcher> }`
+    clone per scan attempt, and `scan` takes `matcher: TerminalDefn` by value.
+    `task_advance_cursor` also clones name/alias/mark and the whole matched_so_far vec
+    per advance (O(k) per advance, O(k^2) to build a k-child item).
+  - Solution: have items reference the rule (e.g. &Rule / rule index + dot) instead of
+    cloning Factors/TerminalDefns; pass matchers by reference.
+  - Files: src/parser.rs (DotNotation, next_unparsed, scan, task_advance_cursor)
+- [ ] Deduplicate the nullable-rule handling #MED
+  - Problem: the "child completed immediately, advance the parent" logic — MatchRec
+    construction and the two panic!("INTERNAL ERROR") arms — is duplicated nearly
+    verbatim in BOTH predict and complete. Prior bugs (g05/g10/g20: families recorded in
+    one path but not the other) came from exactly this split. Epsilon handling in two
+    places is a standing bug magnet.
+  - Solution: extract one shared "advance waiting parents" routine used by both sites.
+  - Files: src/parser.rs (predict, complete)
+- [ ] Replace stringly-typed ParseError with a structured error enum #MED
+  - Problem: ixml defines a precise taxonomy (S02-S10 static, D01-D07 dynamic) and we
+    implement most of it, but ParseError carries codes as formatted strings
+    (static_err/dynamic_err/uncategorized_err) with no code/span/context. Hurts
+    conformance reporting (suite cares WHICH error), the planned "expected token"
+    diagnostics, and the future wasm/JS API (wants structured errors, not messages).
+  - Solution: ParseError enum with a variant per spec code + source span + context.
+  - Files: src/parser.rs (ParseError), src/validator.rs, cmd_* (error formatting)
+- [ ] Split grammar.rs into runtime-repr vs grammar-compiler modules #LOW
+  - Problem: ~2,500 lines mix four concerns: the runtime Grammar/BranchingRule/Rule/
+    Factor representation; the builder DSL (SeqBuilder/LitBuilder/RuleContext +
+    operator desugaring repeat0/repeat1/opt/siphon/mint_internal_id); the parse-tree ->
+    Grammar compiler (from_parse_tree + helpers); and tests.
+  - Solution: separate the "grammar compiler" (builder DSL + from_parse_tree) from the
+    runtime representation the parser consumes; makes the --/__eb_ desugaring (which
+    leaks into the parser and disambiguator) one auditable surface.
+  - Files: src/grammar.rs (split)
+
 ## Lower Priority - Architecture
+- [ ] Intern nonterminals to NonTermId(u32) at grammar-build time (performance) #MED
+  - NOTE: do this AFTER the completer-indexing fix above — interning the global
+    name-keyed continuations map optimizes a structure that should first be replaced
+    with position-indexed Earley sets.
+  - Problem: nonterminal names are used as identity keys pervasively (dedup hash in
+    task_advance_cursor, continuations map, families map, visited sets, rule_reaches).
+    SmolStr makes clones cheap but does NOT help the dominant cost: O(len) SipHash over
+    name bytes on every item creation, byte-wise equality, and format!("{}[{}]")
+    composite continuation keys rebuilt per lookup.
+  - Solution: assign each definition a NonTermId(u32) when the Grammar is built; key all
+    maps and Task/MatchRec identity on the id, not the string. Keep the name only for
+    display/serialization.
+  - Benefits: clone becomes Copy; hashing O(1) on u32 (can drop SipHash for these keys);
+    equality a single int compare; smaller Task/MatchRec; continuation key collapses to
+    (NonTermId, u32) with no allocation; rule_reaches reachability becomes a precomputable
+    bitset.
+  - Files: src/grammar.rs (id assignment + name<->id tables), src/parser.rs (Task,
+    MatchRec, TraceArena maps, dedup hash, continuations, families, rule_reaches)
 - [ ] Implement Grammar::to_string() method for bootstrap self-validation #MED
   - Goal: Serialize internal Grammar representation back to valid iXML syntax
   - Use case: Ultimate bootstrap smoke test - parse bootstrap grammar with itself
