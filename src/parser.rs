@@ -104,6 +104,95 @@ impl fmt::Display for ParseSession {
     }
 }
 
+/// One edge of a [`MatchStack`], newest at the head.
+#[derive(Debug, Eq, PartialEq)]
+struct MatchNode {
+    rec: MatchRec,
+    next: Option<Rc<MatchNode>>,
+}
+
+/// Immutable, structurally-shared stack of matched edges (newest at the head).
+///
+/// `advance_dot` runs once per cursor advance (every scanned terminal / completed
+/// child), of which there are O(n^2) on right-recursive grammars. The old
+/// `Vec<MatchRec>` representation cloned the whole vector and then re-grew it
+/// (one allocation + one reallocation) on each advance. Prepending a node here is
+/// a single fixed-size allocation with no reallocation, and distinct continuations
+/// of the same dotted item share the common prefix via `Rc`. The matched length
+/// is bounded by the rule's RHS arity (small), so the O(len) accessors below are
+/// cheap. `len` is cached so the cursor / `is_completed` checks stay O(1). See
+/// TODO.txt "Stop cloning grammar fragments in the hot loop" (c).
+#[derive(Debug, Clone, Eq, PartialEq, Default)]
+struct MatchStack {
+    head: Option<Rc<MatchNode>>,
+    len: usize,
+}
+
+/// Iterator over a [`MatchStack`] in newest-first (head -> tail) order.
+struct MatchStackIter<'a> {
+    node: Option<&'a MatchNode>,
+}
+
+impl<'a> Iterator for MatchStackIter<'a> {
+    type Item = &'a MatchRec;
+    fn next(&mut self) -> Option<&'a MatchRec> {
+        let n = self.node?;
+        self.node = n.next.as_deref();
+        Some(&n.rec)
+    }
+}
+
+impl MatchStack {
+    /// Return a new stack with `rec` prepended (newest). O(1): one node allocation
+    /// plus a refcount bump on the shared tail.
+    fn push(&self, rec: MatchRec) -> Self {
+        Self {
+            head: Some(Rc::new(MatchNode {
+                rec,
+                next: self.head.clone(),
+            })),
+            len: self.len + 1,
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Iterate newest-first (head -> tail).
+    fn iter_rev(&self) -> MatchStackIter<'_> {
+        MatchStackIter {
+            node: self.head.as_deref(),
+        }
+    }
+
+    /// Borrow the matched edges oldest-first — the historical `matched_so_far`
+    /// order the tree extractor walks. Collects borrows (no `MatchRec` clones) and
+    /// reverses; `len` is the rule arity, so this is cheap.
+    fn in_order(&self) -> Vec<&MatchRec> {
+        let mut v: Vec<&MatchRec> = self.iter_rev().collect();
+        v.reverse();
+        v
+    }
+
+    /// The first (oldest) matched edge, i.e. the bottom of the stack. O(len).
+    fn first(&self) -> Option<&MatchRec> {
+        self.iter_rev().last()
+    }
+}
+
+// Hash the logical sequence (length + newest-first edges) so equal stacks hash
+// equal. The absolute value is irrelevant — family signatures are only compared
+// within a single parse — but it must be consistent with the derived `Eq`.
+impl std::hash::Hash for MatchStack {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.len.hash(state);
+        for rec in self.iter_rev() {
+            rec.hash(state);
+        }
+    }
+}
+
 #[derive(Debug, Clone, Eq, PartialEq)]
 /// A sort of iterator for a Rule.
 /// Instead of just calling next(), For completed terms, it tracks positions and specifically-matched chars
@@ -114,7 +203,9 @@ pub struct DotNotation {
     /// than a deep clone of the whole `Vec<Factor>` — see TODO.txt "Stop cloning grammar
     /// fragments in the hot loop".
     iteratee: Rc<Rule>,
-    matched_so_far: Vec<MatchRec>,
+    /// Edges matched so far, as an immutable shared stack (see [`MatchStack`]) so
+    /// each advance is one node allocation, not a `Vec` clone + regrow.
+    matched_so_far: MatchStack,
 }
 
 impl DotNotation {
@@ -124,18 +215,19 @@ impl DotNotation {
     pub fn new(rule: Rc<Rule>) -> Self {
         Self {
             iteratee: rule,
-            matched_so_far: Vec::new(),
+            matched_so_far: MatchStack::default(),
         }
     }
 
     /// record a new match. Intnded for literal character data
     /// this returns an entirely new `DotNotation`
     fn advance_dot(&self, rec: MatchRec) -> Self {
-        // `self.clone()` clones the `Rc` (cheap bump) plus `matched_so_far`; the rule
-        // itself is shared, not re-cloned.
-        let mut clo = self.clone();
-        clo.matched_so_far.push(rec);
-        clo
+        // Bump the rule `Rc` and prepend one shared `MatchStack` node — no `Vec`
+        // clone or regrow; the matched prefix is shared with sibling continuations.
+        Self {
+            iteratee: Rc::clone(&self.iteratee),
+            matched_so_far: self.matched_so_far.push(rec),
+        }
     }
 
     fn is_completed(&self) -> bool {
@@ -143,12 +235,17 @@ impl DotNotation {
     }
 
     fn _is_at_start(&self) -> bool {
-        self.matched_so_far.is_empty()
+        self.matched_so_far.len() == 0
     }
 
-    /// retrieve the match info for trace processing
-    fn matches_iter(&self) -> std::slice::Iter<'_, MatchRec> {
-        self.matched_so_far.iter()
+    /// retrieve the match info (oldest-first) for trace processing
+    fn matches_in_order(&self) -> Vec<&MatchRec> {
+        self.matched_so_far.in_order()
+    }
+
+    /// the first (oldest) matched edge, if any
+    fn first_match(&self) -> Option<&MatchRec> {
+        self.matched_so_far.first()
     }
 
     /// next term to parse. A.k.a. "What's next after the dot?"
@@ -177,7 +274,8 @@ impl fmt::Display for DotNotation {
         // handled rules
         let done: String = self
             .matched_so_far
-            .iter()
+            .in_order()
+            .into_iter()
             .map(|i| match i {
                 MatchRec::Term(ch, pos, tmark) => format!("{tmark}'{ch}'@{pos}"),
                 MatchRec::NonTerm(name, pos, mark, alias) => {
@@ -1398,7 +1496,7 @@ impl Parser {
         // alternatives that reach terminals without re-entering the rule. The empty alt (L→•)
         // is not self-referential.
         let is_self_ref = |t: &Task| -> bool {
-            match t.dot.matches_iter().next() {
+            match t.dot.first_match() {
                 Some(MatchRec::NonTerm(n, ..)) => {
                     n.as_str() == name || self.rule_reaches(n, name, &mut HashSet::new())
                 }
@@ -1700,7 +1798,7 @@ impl Parser {
                 // CHILDREN
                 let mut new_origin = origin;
                 let dot = &task.dot;
-                for match_rec in dot.matches_iter() {
+                for match_rec in dot.matches_in_order() {
                     match match_rec {
                         MatchRec::Term(ch, pos, tmark) => {
                             if *tmark != TMark::Mute {
@@ -1794,7 +1892,7 @@ impl Parser {
             None => return false,
         };
         let mut child_origin = origin;
-        for rec in task.dot.matches_iter() {
+        for rec in task.dot.matches_in_order() {
             match rec {
                 MatchRec::NonTerm(nt, pos, _, _) => {
                     if self.span_is_ambiguous(nt, child_origin, *pos, visited) {
