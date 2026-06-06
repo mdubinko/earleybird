@@ -1234,11 +1234,10 @@ impl Parser {
     ///   Their alt ordering is implementation-defined; for repeat0/opt the empty alt
     ///   completes first (zero-factor, pushed immediately at prediction time), so
     ///   first-match gives the correct empty choice.
-    /// - User-defined rules: prefer the lowest alt_index UNLESS that alt is directly
-    ///   self-referential (its first matched child is the same nonterminal as the rule
-    ///   itself, e.g. `L: L, M; .`).  Self-referential alts rank below non-self-referential
-    ///   ones; within each category lowest alt_index wins.  If all alts are self-referential,
-    ///   fall back to first-match.
+    /// - User-defined rules: prefer the lowest alt_index UNLESS that alt is self-referential
+    ///   (its first matched child re-enters the rule — see [`Self::rule_reaches`]).
+    ///   Self-referential alts rank below non-self-referential ones; within each category
+    ///   lowest alt_index wins.  If all alts are self-referential, fall back to first-match.
     fn filter_completed_trace(&self, name: &str, origin: usize, pos: usize) -> Option<&Task> {
         if name.starts_with("--") {
             // Synthesized rules: return the first match.
@@ -1251,13 +1250,20 @@ impl Parser {
             return None;
         }
 
-        // A task is "directly self-referential" if its first matched NonTerm child is
-        // the rule itself — e.g. L→L•,M satisfies this, but L→• (empty) does not.
+        // A task is "self-referential" if its first matched NonTerm child re-enters the
+        // rule itself — directly (L→L•,M), through the desugaring of a repeat/option/group
+        // operator (A→--A.f-plus• where `--A.f-plus` derives A), or indirectly through other
+        // named rules (B→A• where A can derive B). Such alternatives produce needless nesting
+        // or, for cyclic grammars, derivations cut short by the visited-guard; they rank below
+        // alternatives that reach terminals without re-entering the rule. The empty alt (L→•)
+        // is not self-referential.
         let is_self_ref = |t: &Task| -> bool {
-            matches!(
-                t.dot.matches_iter().next(),
-                Some(MatchRec::NonTerm(n, ..)) if n.as_str() == name
-            )
+            match t.dot.matches_iter().next() {
+                Some(MatchRec::NonTerm(n, ..)) => {
+                    n.as_str() == name || self.rule_reaches(n, name, &mut HashSet::new())
+                }
+                _ => false,
+            }
         };
 
         let mut best: Option<&Task> = None;
@@ -1280,6 +1286,32 @@ impl Parser {
             }
         }
         best
+    }
+
+    /// True if nonterminal `from` can reach a reference to nonterminal `target` by
+    /// following nonterminal references through the grammar (both user-defined and
+    /// synthesized `--` rules). Used to detect self-embedding alternatives whose recursion
+    /// is direct (`L: L, M`), hidden behind the desugaring of a repeat/option/group operator
+    /// (`A: (A, A)+` mints `--A.f-plus` whose body references A), or indirect through other
+    /// named rules (`B: A; "b"` where `A: "a"; B`, so B→A→B). `seen` guards against cycles.
+    fn rule_reaches(&self, from: &str, target: &str, seen: &mut HashSet<SmolStr>) -> bool {
+        if !seen.insert(SmolStr::new(from)) {
+            return false;
+        }
+        let branching = match self.grammar.get_definition(from) {
+            Ok(b) => b,
+            Err(_) => return false,
+        };
+        for rule in branching.iter() {
+            for factor in rule.iter() {
+                if let Factor::Nonterm(_, n, _) = factor {
+                    if n.as_str() == target || self.rule_reaches(n, target, seen) {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
     }
 
     /// Only for use in test sutes. Not guaranteed to be stable...

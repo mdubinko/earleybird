@@ -18,30 +18,34 @@
 - [ ] Interactive parser stepper (step through one operation at a time)
 - [ ] Export parse states to JSON/GraphViz formats
 
-## Current Test Suite Status (Updated 2026-06-05)
+## Current Test Suite Status (Updated 2026-06-06)
 - **Full catalog**: **889/890 loaded passing** (906 in catalog; 16 not loaded — Unicode version ≠ 14.0)
-  - **889 PASS / 1 FAIL** — confirmed with current working-tree binary (fixes not yet committed)
-  - Previous baseline (post-tmark+bnf fix): 881/890 passing (9 failures)
-  - This session fixed 8 more failures: whitespace trim, app-info grammar leak,
-    ambiguity detection (family recording), parse tree selection via `filter_completed_trace` rewrite
+  - **889 PASS / 1 FAIL** — verified with full release suite (2026-06-06 working tree).
+  - CORRECTION: the committed binary at `901fe7f` was actually **888/2**, not 889/1. g06.c03 was
+    a SECOND hidden failure: `S: A; B. A: "a"; B. B: A; "b".` on input "b" produced `<A><B/></A>`
+    (empty B — dropped the "b") because B[alt0]=A was chosen, sending B→A→B into the visited-guard.
+  - 2026-06-06 fix (UNCOMMITTED in working tree): generalized self-ref detection in
+    `filter_completed_trace` via new `Parser::rule_reaches` → g06.c03 now `<A><B>b</B></A>` ✓,
+    no regressions. See memory/project_filter_completed_trace.md.
 
   ### Remaining 1 failure:
 
   **misc/sample.grammar.12/g12.c05** — "aaaaaaaa" (8 a's) with grammar `S: A+. A: (A, A)+; "a"+.`
-  - Expected: `<S ixml:state="ambiguous"><A>aaaaaaaa</A></S>` (simple flat text in A)
-  - Actual: deeply nested tree with `(A,A)+` recursive structure
-  - Root cause (deep): `A: (A,A)+; "a"+.` means A[alt=0]=(A,A)+ and A[alt=1]="a"+.
-    A[alt=0]'s first child is synthesized rule `--A.f-plus` (not "A" directly).
-    `filter_completed_trace` checks if the first matched child == rule name to detect
-    direct self-reference. `--A.f-plus` ≠ "A" → not flagged as self-ref → alt=0 is preferred
-    (non-self-ref + lower alt_index wins) → recursive structure selected.
-  - Fix approaches:
-    (a) Trace through synthesized `--` rules to detect TRANSITIVE self-reference back to parent
-    (b) Add special case: when alt=0 uses a synthesized rule that contains the parent's name
-        in its name (e.g., `--A.f-plus` contains "A"), treat it as effectively self-referential
-    (c) Add a "penalize left-recursion-via-synthesized-rules" heuristic in filter_completed_trace
-    (d) Swap alt order in the conformance test grammar (changes the grammar, not preferred)
-  - Approach (b) is simplest: check if name starts with `--{rule_name}.` in is_self_ref closure
+  - Expected (first of many acceptable trees): `<S ixml:state="ambiguous"><A>aaaaaaaa</A></S>`
+  - Actual: `<A>aaaaaaa</A><A>a</A>` — an unlisted `7+1` split at the S=A+ level.
+  - After the rule_reaches fix, A[0,8] correctly renders flat `"a"+`. The remaining problem is
+    NOT alt selection: the single-A decomposition of `--S.f-plus[0,8]` (A spanning all 8 + empty
+    tail) is DESTROYED at Earley dedup. `task_advance_cursor` keys on
+    `(name, alt_index, origin, pos, matched_so_far.len())` = the canonical Earley item identity;
+    both `[A@7, tail@8]` and `[A@8, empty@8]` share that key, so `A@8` hits `have_we_seen` and is
+    discarded. The alternate derivation survives only as a `family_signature`, never a selectable
+    Task. No `filter_completed_trace` policy can recover it.
+  - Correct fix = SPPF / packed-node retention (Scott, "SPPF-Style Parsing From Earley
+    Recognisers"): dedup the ITEM, but on every completion reaching an already-seen item still
+    record the back-pointer `(predecessor_id, child_rec)` as an additional packed node; have tree
+    extraction choose one packed node per ambiguous node. Do NOT add child spans to the dedup key
+    (explodes item count). Substantial change to the parse-forest repr + extractor; watch
+    grammar.41/51/53 perf (forest is cubic worst-case — binarize to stay cubic).
 
   ### Previous failures fixed in this session:
   - g24.r02, g27.r02: whitespace-only test input was being trimmed by quick-xml trim_text(true)
@@ -53,12 +57,15 @@
   - defn1/defn2: bootstrap quoted rule used `mark` (includes `@`) instead of `tmark` (excludes `@`)
   - ixml/bnf/bnf: false S06 error on bare `#` in charset range `["#"-"~"]`
 
-  ### filter_completed_trace rewrite summary (src/parser.rs:1242)
+  ### filter_completed_trace rewrite summary (src/parser.rs)
   The previous first-match strategy returned the highest alt_index for nullable rules because
   `queue_front` (LIFO) means last-queued alt lands at deque front and completes first.
-  New strategy for user-defined rules: prefer non-directly-self-referential alts, then lower
-  alt_index. For synthesized rules (`--` prefix): still first-match (empty zero-factor alt
-  completes at prediction time, always first in trace). See memory/project_filter_completed_trace.md.
+  Strategy for user-defined rules: prefer non-self-referential alts, then lower alt_index.
+  "Self-referential" (as of 2026-06-06) = first matched NonTerm child can reach the rule name via
+  `Parser::rule_reaches` (follows user AND `--` rules): direct (`L:L,M`), operator-desugared
+  (`(A,A)+`), or indirect (`B→A→B`). For synthesized rules (`--` prefix): still first-match (empty
+  zero-factor alt completes at prediction time, always first in trace).
+  See memory/project_filter_completed_trace.md.
 
   ### Caution: synthesized rule dependency
   If X*/X+/X? equivalence rules are refactored (different alt structure), first-match for
