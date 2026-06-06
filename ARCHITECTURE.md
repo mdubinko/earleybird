@@ -57,17 +57,31 @@ A classic Earley loop (`predict` / `scan` / `complete`) driven by a
 processing. Each Earley item is a `Task` in `TraceArena.arena` (a `Vec<Task>`
 indexed by `TraceId`).
 
+- **Decision: identity is a bare arena offset (allocate once, never shrink).** The
+  set of Earley items only grows during a parse, so `arena` is a single append-only
+  `Vec<Task>` and a task is *named by its offset* — `TraceId(usize)` — not by an
+  allocated key. References between items are plain integers; there is no per-item
+  identity allocation, and a slot, once written, is stable for the whole parse. The
+  same lifecycle holds for nonterminal **definitions** (fixed at grammar-build time,
+  never removed), so the design generalizes the principle to them: nonterminals are
+  being interned to a bare `defn_order` offset, `NonTermId(u32)`, collapsing the
+  `SmolStr` identity keys used in `continuations` / `families` / `completed_by_span` /
+  task dedup to integers (in progress — see [Paths not taken](#paths-not-taken)). The
+  unifying rule: stable, monotonic data is addressed by offset, not by a hashed key.
 - **Decision: scannerless, character-level.** Terminals match `char`s directly;
   there is no separate lexer. Fits ixml (which is defined over characters and has
   no token layer) at the cost of more items than a tokenized parser.
 - **Decision: the item carries its own partial parse tree.** `Task.dot`
-  (`DotNotation`) holds `matched_so_far: Vec<MatchRec>` — the concrete children
-  matched so far (terminal char, nonterminal span, or insertion). The item *is* the
-  partial derivation.
+  (`DotNotation`) holds `matched_so_far` — the concrete children matched so far
+  (terminal char, nonterminal span, or insertion). The item *is* the partial
+  derivation.
   - *Tradeoff:* superb debuggability (an item shows exactly what it ate) and a
-    simple unpacker, but items are large and `matched_so_far` is cloned on every dot
-    advance. This is the central design decision; its consequences appear in
-    Stages 3–4 and in [Known tension](#known-tension-single-derivation-vs-forest).
+    simple unpacker, but items are large. The cloning this once implied is now
+    structurally shared: the dotted rule is an `Rc<Rule>` and `matched_so_far` is an
+    immutable `Rc` cons-stack (`MatchStack`), so a dot advance is one small node
+    allocation plus refcount bumps, not a vector clone. This is the central design
+    decision; its consequences appear in Stages 3–4 and in
+    [Known tension](#known-tension-single-derivation-vs-forest).
 - **Decision: dedup by identity hash** (`task_by_hash`). Items sharing
   `(name, alt_index, origin, pos, cursor_len)` are merged. The hash deliberately
   uses the cursor *length*, not the child contents, so it is cheap — but it means a
@@ -138,24 +152,30 @@ Discernible from the repo and history:
 - **tree-sitter / external engines.** `experimental/treesitter-ixml/` and
   `docs/archive/xrust_experiment.rs` are abandoned scaffolds; the project committed
   to a from-scratch Earley core.
-- **Integer-interned symbols.** Nonterminals are keyed by `SmolStr` throughout
-  (`continuations`, `families`, task identity, `completed_by_span`). Interning to
-  integer ids was not done. With the tree-extractor scan fixed (the prior dominant
-  cost), interning is the highest-leverage change *within the now-dominant parse loop*
-  — it removes the per-item SipHash over name bytes and the composite-key allocations.
+- **Integer-interned symbols** *(now underway, no longer "not taken")*. Nonterminals
+  were keyed by `SmolStr` throughout (`continuations`, `families`, task identity,
+  `completed_by_span`). With the tree-extractor scan fixed (the prior dominant cost)
+  and the hot-loop clones removed, interning to a bare `defn_order` offset
+  `NonTermId(u32)` is the highest-leverage change *within the now-dominant parse loop*
+  — it removes the per-item SipHash over name bytes and the composite-key
+  allocations. This is the offset-identity principle from
+  [Stage 2](#2-earley-recognition--parserparse--tracearena) applied to symbols.
 
 ## Known tension: single derivation vs. forest
 
 The keystone decision — *the Earley item is the (one) partial parse tree* — buys
 simplicity and debuggability and fights back in three places:
 
-1. **Performance.** The dotted rule is now shared via `Rc<Rule>` (advance is a
-   refcount bump), and `completed_trace` is span-indexed for extraction (both done
-   2026-06-06). What remains of this decision's tax: `matched_so_far` is still cloned
-   on every advance (O(k²) to build a k-child item); `DotNotation::new` still clones
-   the `Rule` per task created in `predict`; and `rule_reaches` recomputes static
-   grammar reachability inside selection. Aggressive optimization pushes toward
-   identity-only items + a side forest — i.e. unwinding this decision.
+1. **Performance.** Most of this decision's tax has been paid down (all 2026-06-06):
+   the dotted rule is shared via `Rc<Rule>` (advance and `predict`'s per-alt task
+   creation are refcount bumps, not `Rule` clones); `matched_so_far` is an immutable
+   `Rc` cons-stack (one node per advance, no vector regrow); the per-pop `Factor`
+   clone and the per-`complete` waiting-parents `Vec` clone are gone; and
+   `completed_trace` is span-indexed for extraction. What remains: nonterminal
+   identity is still `SmolStr` (interning to `NonTermId` is the next lever), and
+   `rule_reaches` recomputes static grammar reachability inside selection. Aggressive
+   optimization pushes toward identity-only items + a side forest — i.e. unwinding
+   this decision.
 2. **Correctness under reordering.** Which derivation survives dedup, and which
    `filter_completed_trace` picks, both depend on queue order. Perf changes that
    reorder work can silently change the emitted tree (see the synthesized-rule
