@@ -1,5 +1,60 @@
 # Performance Profiling Guide for Earleybird
 
+## Methodology: Profile Before Taking Action
+
+**Measure first. Do not optimize from a story about where the time goes.** The tooling
+below is only useful in service of this one rule: every performance change must be
+preceded by a measurement that *names the dominant cost*, and followed by a measurement
+that *confirms the change moved it*. A plausible complexity argument in a code comment,
+a TODO, or your own head is a hypothesis, not evidence — and on this codebase those
+hypotheses have been wrong.
+
+### Worked example (why this rule exists)
+
+The architecture review confidently diagnosed the parser's #1 cost as an O(n^2) global
+completer scan (`continuations` keyed by name with no position). The fix — position-index
+the completer, drop the per-alt fan-out — was correct, landed cleanly, and kept
+conformance at 889/890. But the profile told a different story than the prose:
+
+| metric (bench `unicode_version`) | before | after |
+| -------------------------------- | ------ | ----- |
+| tasks created                    | 577,883 | 577,883 (unchanged) |
+| operations                       | 543,186 | 543,186 (unchanged) |
+| deduplicated (rejected attempts) | 296,836 (33%) | 117,946 (16%) |
+| build time                       | ~56.2 s | ~52.4 s (~7%) |
+
+The scan was *not* the time-dominant cost. A follow-up `--stats` run across input sizes
+found the real driver: distinct Earley items grow ~O(n^2) on right-recursive grammars
+(2,274 → 8,642 → 33,666 tasks at n = 64/128/256, **0% dedup** — genuinely distinct
+items), with time tracking the count. Two different workloads turned out to have two
+different bottlenecks (algorithmic item count vs. per-operation constant cost). Guessing
+would have optimized the wrong one.
+
+### The loop
+
+1. **Reproduce** the cost with a repeatable command (`bench`, or a focused `suite`
+   filter). Pick the *smallest* input that still shows the pathology.
+2. **Attribute** it before writing any fix:
+   - Is it count or per-unit cost? Compare `--stats` (tasks/operations) across two input
+     sizes. If counts grow super-linearly, it's algorithmic; if counts are ~linear but
+     time isn't, it's per-operation constant cost (clones, hashing, scanning).
+   - Where in the call graph? `cargo instruments -t time` or `cargo flamegraph` (below).
+   - Confirm the split between candidate causes with numbers, not ratios of intuition.
+3. **Change** the single thing the measurement implicated.
+4. **Re-measure** the same command. State the delta honestly — including "no change" or
+   "smaller than expected." A fix that doesn't move the metric it targeted is a signal
+   the diagnosis was wrong, not a rounding error to wave away.
+5. **Record** the before/after numbers in the commit message and, for architectural
+   findings, in `TODO.txt` / the project notes — so the next person inherits evidence,
+   not a story.
+
+### Tells that you're guessing, not profiling
+
+- The justification is a complexity claim (`O(n^2)`) with no measured input-size curve.
+- You can't say which is bigger: item count or per-item cost.
+- "This clone is obviously expensive" — without an allocation profile or `llvm-lines`.
+- The plan optimizes a structure you haven't seen dominate a flamegraph.
+
 ## Quick Performance Checks
 
 ### Conformance Suite Baseline
@@ -281,22 +336,32 @@ cargo run --release -- suite ambiguous --console NONE --file NONE
 - No function inlining
 - Full debug symbols
 
-## Current Performance Baseline (2026-06-05)
+## Current Performance Baseline (2026-06-06, after completer position-indexing)
 
 ```
-Current local Codeberg catalog: 872/890 loaded passing (906 total; 16 skipped, Unicode version ≠ 14.0)
-Full release suite: 638.83s suite wall time (~10.6 min)
+Conformance: 889/890 passing (906 total; 16 skipped, Unicode version ≠ 14.0).
+  Sole failure: misc/sample.grammar.12/g12.c05 (needs SPPF/forest sharing).
+Full release suite: ~790s wall across 890 tests.
 Slowest suite tests:
-  correct/ixml tests/unicode-version-check/unicode-version-14-diagnostic: ~59s
-  correct/ixml tests/xpath/xpath: ~26s
+  misc/sample.grammar.41ter/grammar-test: ~204s   (highly ambiguous; ~O(n^3))
+  misc/sample.grammar.41bis/grammar-test: ~156s
+  misc/sample.grammar.41/grammar-test:    ~122s
+  correct/ixml tests/unicode-version-check/unicode-version-14-diagnostic: ~52s
+  correct/ixml tests/xpath/xpath: ~33s
 
 Heavy benchmark sample:
-  unicode_version: build 59437ms / parse 3.1ms
-  ixml_self: build 1461ms / parse 1394ms
+  unicode_version: build ~52384ms / parse 3.1ms   (577,883 tasks, 543,186 ops)
+  ixml_self:       build ~1461ms / parse ~1394ms   (not re-measured this date)
+
+Synthetic scaling (med_ms, --reps 3): super-linear on completer-stress families.
+  right_recursion: ~O(n^2.6)   repeat_plus: ~O(n^2.5)
+  left_recursion / nested: ~linear   ambiguous: ~O(n^3) (inherent)
 ```
 
-Use the exact invocations above when refreshing the baseline, and write outputs
-under `log/` so the project root stays clean.
+The dominant remaining cost is the O(n^2) Earley item count on right/indirect
+recursion (see the methodology worked example above), *not* the completer scan that
+was already fixed. Use the exact invocations above when refreshing the baseline, and
+write outputs under `log/` so the project root stays clean.
 
 ## Memory Profiling
 
@@ -354,7 +419,7 @@ cargo llvm-lines --bin eb --release | head -50
 - Number of copies (generic instantiations)
 - Identifies expensive clones
 
-See `CLONE_ANALYSIS.md` for detailed clone analysis of earleybird.
+See `archive/CLONE_ANALYSIS.md` for detailed clone analysis of earleybird.
 
 **Key Findings:**
 - Grammar::clone - 102 lines (used in parse loop)
