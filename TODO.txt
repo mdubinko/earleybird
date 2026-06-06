@@ -165,7 +165,7 @@ per-op, change one thing, re-measure.
     (origin, pos) items, not a hashing artifact.
   - Files: src/parser.rs (Task, MatchRec, task_advance_cursor, have_we_seen, predict,
     complete; new Leo/transitive-item machinery)
-- [ ] Stop cloning grammar fragments in the hot loop #MED
+- [x] Stop cloning grammar fragments in the hot loop #MED  (DONE 2026-06-06: a/b/c/d)
   - Problem: `DotNotation::next_unparsed() -> Factor` clones a Factor on every queue pop
     of a non-completed item; for terminals that's a heap `TerminalDefn { Vec<CharMatcher> }`
     clone per scan attempt, and `scan` takes `matcher: TerminalDefn` by value.
@@ -173,23 +173,34 @@ per-op, change one thing, re-measure.
     per advance (O(k) per advance, O(k^2) to build a k-child item).
   - Solution: have items reference the rule (e.g. &Rule / rule index + dot) instead of
     cloning Factors/TerminalDefns; pass matchers by reference.
-  - PARTIAL (2026-06-06): `DotNotation.iteratee` is now `Rc<Rule>`, so `advance_dot`
+  - DONE (2026-06-06): `DotNotation.iteratee` is now `Rc<Rule>`, so `advance_dot`
     (per scanned terminal / completed child) is a refcount bump, not a whole-`Vec<Factor>`
     clone. Wins: right_recursion ~28-31%, repeat_plus ~27% (deep items = many advances);
     real grammars only ~5-7% (shallow items). Conformance unchanged 889/890.
-  - PARTIAL (2026-06-06, #3a): `BranchingRule.alts` is now `Vec<Rc<Rule>>` and
+  - DONE (2026-06-06, #3a): `BranchingRule.alts` is now `Vec<Rc<Rule>>` and
     `DotNotation::new` takes an `Rc<Rule>` (refcount bump), so `predict` no longer
     deep-clones each alternative's `Vec<Factor>` per created task. Measured on
     unicode_version build loop: predict 2470 -> 2179 ns/call (-12%), loop subtotal
     1182 -> 1123 ms (-5%), build 1378 -> 1299 ms. Conformance unchanged 889/890.
-  - STILL TO DO (per-pop clones; dominate unicode's loop where items are shallow):
-    (b) `next_unparsed()` clones a `Factor` (heap `TerminalDefn`) per queue pop —
-    return `&Factor` / pass matcher by ref (needs borrow restructuring vs the
-    `&mut self.traces` calls that follow). (c) `matched_so_far` Vec cloned per advance
-    (O(k^2) per k-child item). (d) `waiting_parents_at` clones the parent
-    `Vec<TraceId>` per `complete`.
-  - Files: src/parser.rs (DotNotation, next_unparsed, scan, task_advance_cursor,
-    waiting_parents_at)
+  - DONE (2026-06-06, #3b, 44b04ae): `next_unparsed_shared()` returns `(Rc<Rule>, cursor)`
+    so the dispatch loop borrows `&rule.factors[cursor]` (Rc bump) instead of cloning a
+    Factor per pop; `scan` takes `matcher: &TerminalDefn`, `predict` takes `name: &SmolStr`.
+    unicode build loop: scan ~1543 -> ~1466 ns/call (-5%), predict ~2159 -> ~2100 (-3%).
+  - DONE (2026-06-06, #3c, d8d8d6d): `matched_so_far` is now `MatchStack`, an immutable
+    Rc cons-stack (newest at head); each advance prepends one fixed-size node (no Vec
+    clone or regrow) and shares the prefix. NOTE the O(k^2) framing was wrong: matched
+    length == rule arity (small); the real cost was the per-advance Vec churn. unicode
+    build loop ~1100 -> ~1074 ms; reallocs -5%, bytes -8%; repeat_plus n=128 med -9%;
+    right_recursion flat. Alloc *count* +5-9% (one node/advance), offset by realloc drop.
+  - DONE (2026-06-06, #3d, 47b6410): `collect_waiting_parents(.., &mut out)` + reusable
+    `Parser::parents_scratch` (mem::take/refill/restore) removes the per-complete
+    `Vec<TraceId>` clone. unicode build: allocs 6,461,713 -> 6,179,608 (-282,105, -4.4%);
+    complete ~2200 -> ~2110 ns/call. Conformance unchanged 889/890.
+  - TOOLING (2026-06-06, 62f3102): added the off-by-default `alloc-count` feature
+    (counting global allocator) so #3c/#3d could be measured as exact allocation deltas
+    rather than noisy wall-time. `--stats` prints per-parse allocs; `suite` prints a total.
+  - Files: src/parser.rs (DotNotation/MatchStack, next_unparsed_shared, scan, predict,
+    collect_waiting_parents, parents_scratch), src/alloc_count.rs
 - [ ] Deduplicate the nullable-rule handling #MED
   - Problem: the "child completed immediately, advance the parent" logic — MatchRec
     construction and the two panic!("INTERNAL ERROR") arms — is duplicated nearly
