@@ -91,6 +91,25 @@ pub struct Grammar {
     declared_version: Option<EarleyStr>,
 }
 
+/// Two grammars are equal when their *content* matches: the rule definitions,
+/// their declaration order (the first definition is the root), and any declared
+/// version. This is a manual impl, NOT derived, so it deliberately IGNORES
+/// `nullability_cache` — a lazily-populated memo of facts derivable from the
+/// rules. Otherwise two grammars with identical rules would compare unequal
+/// merely because one had been used for parsing (cache populated) and the other
+/// had not. `definitions` is a `HashMap` so it compares order-independently;
+/// `defn_order` is compared as an ordered `Vec` (rule order, including the root,
+/// is significant).
+impl PartialEq for Grammar {
+    fn eq(&self, other: &Self) -> bool {
+        self.definitions == other.definitions
+            && self.defn_order == other.defn_order
+            && self.declared_version == other.declared_version
+    }
+}
+
+impl Eq for Grammar {}
+
 impl Grammar {
     pub fn new() -> Self {
         Self {
@@ -1747,6 +1766,58 @@ impl SeqBuilder {
 mod tests {
     use super::*;
     use crate::parser::Parser;
+
+    // ---- Grammar PartialEq ------------------------------------------------
+
+    fn sample_grammar() -> Grammar {
+        let ctx = RuleContext::new("test");
+        let mut g = Grammar::new();
+        g.define("doc", ctx.seq().nt("a").ch('b'));
+        g.define("a", ctx.seq().ch('x'));
+        g
+    }
+
+    #[test]
+    fn grammar_eq_reflexive_and_clone() {
+        let g = sample_grammar();
+        assert_eq!(g, g.clone());
+    }
+
+    #[test]
+    fn grammar_eq_ignores_nullability_cache() {
+        // THE reason this is a manual impl: equality must not depend on whether
+        // the lazily-populated nullability cache has been computed.
+        let g1 = sample_grammar();
+        let g2 = g1.clone();
+        let _ = g2.is_nullable("a").unwrap(); // populates g2's cache only
+        assert!(g1.nullability_cache.get().is_none(), "g1 cache must be empty");
+        assert!(g2.nullability_cache.get().is_some(), "g2 cache must be populated");
+        assert_eq!(g1, g2, "differing cache state must not affect equality");
+    }
+
+    #[test]
+    fn grammar_eq_detects_rule_difference() {
+        let g1 = sample_grammar();
+        let ctx = RuleContext::new("test");
+        let mut g2 = Grammar::new();
+        g2.define("doc", ctx.seq().nt("a").ch('b'));
+        g2.define("a", ctx.seq().ch('y')); // 'y' vs 'x'
+        assert_ne!(g1, g2);
+    }
+
+    #[test]
+    fn grammar_eq_is_definition_order_sensitive() {
+        // Rule order is significant (the first definition is the root), so two
+        // grammars with the same rules in a different order are not equal.
+        let ctx = RuleContext::new("test");
+        let mut g1 = Grammar::new();
+        g1.define("doc", ctx.seq().nt("a"));
+        g1.define("a", ctx.seq().ch('x'));
+        let mut g2 = Grammar::new();
+        g2.define("a", ctx.seq().ch('x'));
+        g2.define("doc", ctx.seq().nt("a"));
+        assert_ne!(g1, g2);
+    }
 
     #[test]
     fn parse_ixml() -> Result<(), crate::parser::ParseError> {
