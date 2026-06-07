@@ -7,7 +7,12 @@ Experimental implementation of ixml in Rust. Targeting the 2026-02-03 Editorial 
 - 16 of those declare `<dependencies Unicode-version="..."/>` for a version other than 14.0
   and are not loaded — earleybird is compiled against Unicode 14.0
   (`unicode-character-database` 0.1.0).
-- **890 tests loaded; 872 pass, 18 fail** (16 misc/sample.grammar corpus, 2 S-error edge cases).
+- **890 tests loaded; 889 pass, 1 fail.**
+- The single failure is `misc/sample.grammar.12/g12.c05`, a genuinely ambiguous
+  grammar whose spec-canonical tree requires a packed parse forest (SPPF). The
+  engine currently retains one derivation per Earley item, so that tree is not
+  reachable by selection alone. Tracked as a known limitation; see the
+  "single derivation vs. forest" tension in `ARCHITECTURE.md`.
 
 # Usage
 

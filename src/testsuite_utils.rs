@@ -9,7 +9,6 @@ use quick_xml::events::attributes::Attributes;
 use quick_xml::events::Event;
 use quick_xml::name::QName;
 use quick_xml::reader::Reader;
-use string_builder::Builder;
 
 use crate::grammar::Grammar;
 use crate::parser::Content;
@@ -202,8 +201,8 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
     //println!("{file}");
 
     let mut reader = Reader::from_str(&file);
-    reader.trim_text(true);
-    reader.expand_empty_elements(true);
+    reader.config_mut().trim_text(true);
+    reader.config_mut().expand_empty_elements = true;
 
     let mut buf = Vec::new();
     let mut test_set_nesting: Vec<String> = Vec::new();
@@ -243,12 +242,14 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                     b"ixml-grammar" => {
                         let grammar = reader.read_text(e.to_end().name());
                         let raw_grammar = grammar.expect("parse error reading inline grammar");
-                        // quick-xml's read_text() doesn't decode entities, so we use unescape()
+                        // read_text yields raw BytesText; unescape() decodes the charset and
+                        // resolves XML entities in one step.
                         // Ignore grammars inside app-info blocks (those are processor hints,
                         // e.g., parse-forest grammars, not the grammar under test).
                         if !in_app_info {
+                            let decoded = raw_grammar.decode().expect("Failed to decode inline grammar");
                             current_grammar = TestGrammar::Unparsed(
-                                unescape(&raw_grammar)
+                                unescape(&decoded)
                                     .expect("Failed to unescape inline grammar")
                                     .to_string(),
                             );
@@ -339,13 +340,15 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                     b"test-string" => {
                         // Disable trim_text so whitespace-only inputs (e.g. " ") are preserved;
                         // trim_text(true) would collapse them to empty string.
-                        reader.trim_text(false);
+                        reader.config_mut().trim_text(false);
                         let input = reader.read_text(e.to_end().name());
-                        reader.trim_text(true);
+                        reader.config_mut().trim_text(true);
                         let raw_input = input.expect("parse error reading inline test-string");
-                        // quick-xml's read_text() doesn't decode entities, so we use unescape()
+                        // read_text yields raw BytesText: decode() handles the charset,
+                        // then unescape() resolves XML entities.
+                        let decoded = raw_input.decode().expect("Failed to decode test-string");
                         builder.input = Some(
-                            unescape(&raw_input)
+                            unescape(&decoded)
                                 .expect("Failed to unescape test-string")
                                 .to_string(),
                         );
@@ -393,6 +396,11 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                     b"assert-xml" => {
                         if !in_app_info {
                             enable_accum = true;
+                            // Capture the expected XML verbatim. In quick-xml 0.40 entity
+                            // references split the text into separate events; trimming would
+                            // drop spaces adjacent to them. Canonicalization normalizes
+                            // layout whitespace later, so capturing untrimmed is safe.
+                            reader.config_mut().trim_text(false);
                         }
                     }
                     b"assert-xml-ref" => {
@@ -488,6 +496,7 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                     }
                     b"assert-xml" => {
                         enable_accum = false;
+                        reader.config_mut().trim_text(true);
                         let xml_string = from_utf8(&raw_xml_accum)
                             .expect("UTF-8 error in assert-xml")
                             .to_string();
@@ -532,6 +541,16 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
             Ok(Event::PI(_b)) => (),
             Ok(Event::Decl(_b)) => (),
             Ok(Event::DocType(_b)) => (),
+            Ok(Event::GeneralRef(r)) => {
+                // quick-xml 0.40 emits entity references in text as their own events;
+                // keep the literal `&name;` in the accumulated assert-xml so that
+                // canonicalization later resolves it the same way as the actual output.
+                if enable_accum {
+                    raw_xml_accum.push(b'&');
+                    raw_xml_accum.extend(r.iter());
+                    raw_xml_accum.push(b';');
+                }
+            }
         }
         // if we don't keep a borrow elsewhere, we can clear the buffer to keep memory usage low
         buf.clear();
@@ -554,7 +573,7 @@ fn vxml_to_arena(xml: &str) -> Arena<Content> {
     let root = arena.new_node(Content::Root);
     let mut stack: Vec<NodeId> = vec![root];
     let mut reader = Reader::from_str(xml);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
 
     let mut buf = Vec::new();
     loop {
@@ -576,9 +595,21 @@ fn vxml_to_arena(xml: &str) -> Arena<Content> {
                 stack.pop();
             }
             Ok(Event::Text(t)) => {
-                if let Ok(text) = t.unescape() {
-                    if !text.trim().is_empty() {
-                        let text_node = arena.new_node(Content::Text(text.to_string()));
+                if let Ok(decoded) = t.decode() {
+                    if let Ok(text) = unescape(&decoded) {
+                        if !text.trim().is_empty() {
+                            let text_node = arena.new_node(Content::Text(text.to_string()));
+                            stack.last().unwrap().append(text_node, &mut arena);
+                        }
+                    }
+                }
+            }
+            Ok(Event::GeneralRef(r)) => {
+                // Resolve the entity reference and keep its (non-whitespace) text.
+                let name = r.decode().expect("decode entity reference");
+                if let Ok(resolved) = unescape(&format!("&{};", name)) {
+                    if !resolved.trim().is_empty() {
+                        let text_node = arena.new_node(Content::Text(resolved.to_string()));
                         stack.last().unwrap().append(text_node, &mut arena);
                     }
                 }
@@ -617,13 +648,28 @@ fn append_vxml_element<'a>(
 /// Formats an XML document in a conveniently-diffable format
 /// Not namespace-aware, and does its own thing with newlines
 pub fn xml_canonicalize(input_xml: &str) -> String {
-    let mut builder = Builder::default();
+    let mut builder = String::new();
+    // Accumulates a run of consecutive text and entity-reference events. quick-xml 0.40
+    // emits entity references (`&lt;`, `&#xD7;`, …) as their own events, splitting the
+    // text around them. Buffering the run and flushing it at the next structural event
+    // lets us trim leading/trailing layout whitespace from the *logical* text as a whole,
+    // while preserving spaces that sit next to an entity reference.
+    let mut pending_text = String::new();
 
     let mut reader = Reader::from_str(input_xml);
-    reader.trim_text(true);
-    reader.expand_empty_elements(true);
+    reader.config_mut().trim_text(false);
+    reader.config_mut().expand_empty_elements = true;
 
     let mut buf = Vec::new();
+
+    // Trim the buffered text run and, if any content remains, escape `&`/`<` and emit it.
+    fn flush(builder: &mut String, pending: &mut String) {
+        let trimmed = pending.trim();
+        if !trimmed.is_empty() {
+            builder.push_str(&trimmed.replace('&', "&amp;").replace('<', "&lt;"));
+        }
+        pending.clear();
+    }
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -636,65 +682,65 @@ pub fn xml_canonicalize(input_xml: &str) -> String {
                 return input_xml.to_string();
             }
             // exits the loop when reaching end of file
-            Ok(Event::Eof) => break,
+            Ok(Event::Eof) => {
+                flush(&mut builder, &mut pending_text);
+                break;
+            }
 
             Ok(Event::Start(e)) => {
+                flush(&mut builder, &mut pending_text);
                 let attrs = all_attrs(e.attributes());
-                builder.append("<");
-                builder.append(
+                builder.push('<');
+                builder.push_str(
                     from_utf8(e.name().into_inner()).expect("UTF-8 parse error on element start"),
                 );
                 if !attrs.is_empty() {
                     for (k, v) in attrs.into_iter().sorted() {
-                        builder.append(" ");
-                        builder.append(k);
-                        builder.append("=\"");
-                        builder.append(
-                            v.replace('&', "&amp;")
+                        builder.push(' ');
+                        builder.push_str(&k);
+                        builder.push_str("=\"");
+                        builder.push_str(
+                            &v.replace('&', "&amp;")
                                 .replace('<', "&lt;")
                                 .replace('"', "&quot;"),
                         );
-                        builder.append("\"")
+                        builder.push('"')
                     }
                 }
-                builder.append("\n>");
+                builder.push_str("\n>");
             }
             Ok(Event::Text(t)) => {
-                match t.unescape() {
-                    Ok(unescaped) => {
-                        builder.append(
-                            unescaped
-                                .to_string()
-                                .replace('&', "&amp;")
-                                .replace('<', "&lt;"),
-                        );
-                    }
+                let decoded = t.decode().unwrap_or_else(|_| String::from_utf8_lossy(&t));
+                match unescape(&decoded) {
+                    Ok(unescaped) => pending_text.push_str(&unescaped),
                     Err(e) => {
-                        eprintln!("Warning: Failed to unescape text content, using raw text: `{}` error: {}", String::from_utf8_lossy(&t).to_string(), e);
-                        // Fall back to raw text without unescaping
-                        builder.append(
-                            String::from_utf8_lossy(&t)
-                                .to_string()
-                                .replace('&', "&amp;")
-                                .replace('<', "&lt;"),
-                        );
+                        eprintln!("Warning: Failed to unescape text content, using raw text: `{}` error: {}", decoded, e);
+                        // Fall back to decoded text without entity unescaping
+                        pending_text.push_str(&decoded);
                     }
                 }
             }
+            Ok(Event::GeneralRef(r)) => {
+                // Resolve the entity reference and add its character(s) to the text run.
+                let name = r.decode().expect("decode entity reference");
+                let entity = format!("&{};", name);
+                let resolved = unescape(&entity).map(|c| c.to_string()).unwrap_or(entity);
+                pending_text.push_str(&resolved);
+            }
             Ok(Event::End(e)) => {
-                builder.append("</");
-                builder.append(
+                flush(&mut builder, &mut pending_text);
+                builder.push_str("</");
+                builder.push_str(
                     from_utf8(&e.into_owned()).expect("UTF-8 parse error on element close"),
                 );
-                builder.append("\n>");
+                builder.push_str("\n>");
             }
-            _ => (),
+            // Any other structural event ends the current text run.
+            Ok(_) => flush(&mut builder, &mut pending_text),
         }
         buf.clear();
     } // loop
-    let rs = builder.string();
-
-    rs.unwrap()
+    builder
 }
 
 /// Helper function to get one particular attribute and return its value
@@ -720,14 +766,16 @@ fn all_attrs(attrs: Attributes) -> HashMap<String, String> {
                     .expect("UTF-8 error parsing attribute name")
                     .to_string();
                 if name != "xmlns" && !name.starts_with("xmlns:") {
-                    match a.unescape_value() {
+                    let raw_value =
+                        from_utf8(&a.value).expect("UTF-8 error in attribute value");
+                    match unescape(raw_value) {
                         Ok(value) => {
                             hashmap.insert(name, value.to_string());
                         }
                         Err(e) => {
-                            eprintln!("Warning: Failed to unescape attribute '{}' value, using raw value: `{}` error: {}", name, String::from_utf8_lossy(&a.value).to_string(), e);
-                            // Fall back to raw value without unescaping
-                            hashmap.insert(name, String::from_utf8_lossy(&a.value).to_string());
+                            eprintln!("Warning: Failed to unescape attribute '{}' value, using raw value: `{}` error: {}", name, raw_value, e);
+                            // Fall back to raw value without entity unescaping
+                            hashmap.insert(name, raw_value.to_string());
                         }
                     }
                 };

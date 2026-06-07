@@ -5,13 +5,12 @@ use crate::{debug_earley_fail, debug_earley_pos};
 use indextree::{Arena, NodeId};
 use log::{debug, info, trace};
 use multimap::MultiMap;
-use smol_str::SmolStr;
+use crate::EarleyStr;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt,
     hash::{Hash, Hasher},
 };
-use string_builder::Builder;
 use std::rc::Rc;
 
 const DOTSEP: &str = "•";
@@ -308,9 +307,9 @@ impl fmt::Display for DotNotation {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 enum MatchRec {
     Term(char, usize, TMark),
-    NonTerm(SmolStr, usize, Mark, Option<SmolStr>),
+    NonTerm(EarleyStr, usize, Mark, Option<EarleyStr>),
     /// Insertion: text inserted without consuming input (position, text, mark)
-    Insertion(usize, SmolStr, TMark),
+    Insertion(usize, EarleyStr, TMark),
 }
 
 impl MatchRec {
@@ -337,10 +336,10 @@ fn family_signature(alt_index: usize, dot: &DotNotation) -> u64 {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Task {
     id: TraceId,      // unique id, as handled by TraceArena
-    name: SmolStr,    // BranchingRule name
+    name: EarleyStr,    // BranchingRule name
     alt_index: usize, // which alt of this BranchingRule (0-based)
     mark: Mark,       // effective mark for this task
-    alias: Option<SmolStr>,
+    alias: Option<EarleyStr>,
     origin: usize,    // starting position in the input
     pos: usize,       // current position in the input
     dot: DotNotation, // progress
@@ -498,7 +497,7 @@ pub struct TraceArena {
     /// ("S", 0) -> (TraceId for doc=(• S))
     /// ("S", 0) -> (TraceId for S=(• S "+" T))
     /// so completing an "S" that started at 0 resumes exactly those two parents.
-    continuations: MultiMap<(SmolStr, usize), TraceId>,
+    continuations: MultiMap<(EarleyStr, usize), TraceId>,
 
     /// Map Earley item identity to its stored task for fast deduplication.
     task_by_hash: HashMap<u64, TraceId>,
@@ -507,7 +506,7 @@ pub struct TraceArena {
     /// derivation-family signatures `hash(alt_index, matched_so_far)` that produced it.
     /// Two or more entries at a span reachable from the accepting root means there are
     /// two genuinely distinct derivations of that span — i.e. structural ambiguity.
-    families: HashMap<(SmolStr, usize, usize), HashSet<u64>>,
+    families: HashMap<(EarleyStr, usize, usize), HashSet<u64>>,
 
     /// Count of tasks that were deduplicated
     pub deduplicated_count: u32,
@@ -542,7 +541,7 @@ impl TraceArena {
     /// family. Idempotent: re-recording an identical derivation is a no-op.
     fn record_family(
         &mut self,
-        name: &SmolStr,
+        name: &EarleyStr,
         origin: usize,
         pos: usize,
         alt_index: usize,
@@ -571,7 +570,7 @@ impl TraceArena {
             position
         );
         self.continuations
-            .insert((SmolStr::from(target_nt), position), waiting_parent_tid);
+            .insert((EarleyStr::from(target_nt), position), waiting_parent_tid);
     }
 
     /// Fill `out` with the parent tasks waiting for a completion of `rule_name` that
@@ -581,7 +580,7 @@ impl TraceArena {
     /// buffer so the per-`complete` parent list does not allocate a fresh `Vec`.
     fn collect_waiting_parents(&self, rule_name: &str, origin: usize, out: &mut Vec<TraceId>) {
         out.clear();
-        if let Some(parents) = self.continuations.get_vec(&(SmolStr::from(rule_name), origin)) {
+        if let Some(parents) = self.continuations.get_vec(&(EarleyStr::from(rule_name), origin)) {
             out.extend_from_slice(parents);
         }
         debug!(
@@ -599,7 +598,7 @@ impl TraceArena {
         name: &str,
         alt_index: usize,
         mark: Mark,
-        alias: Option<SmolStr>,
+        alias: Option<EarleyStr>,
         origin: usize,
         pos: usize,
         dot: DotNotation,
@@ -613,7 +612,7 @@ impl TraceArena {
 
         let task = Task {
             id,
-            name: SmolStr::new(name),
+            name: EarleyStr::new(name),
             alt_index,
             mark,
             alias,
@@ -830,7 +829,7 @@ pub struct Parser {
     /// without this index it linear-scanned the whole `completed_trace` every call
     /// (O(nodes × |trace|) — the dominant real-world cost, see docs/PROFILING.md). Each
     /// bucket preserves trace insertion order so synthesized-rule first-match still holds.
-    completed_by_span: HashMap<(SmolStr, usize, usize), Vec<TraceId>>,
+    completed_by_span: HashMap<(EarleyStr, usize, usize), Vec<TraceId>>,
     /// Length of the most recent input, used by is_ambiguous() to filter root-rule completions
     last_input_len: usize,
     stats_enabled: bool,
@@ -1212,7 +1211,7 @@ impl Parser {
         g: &Grammar,
         tid: TraceId,
         mark: Mark,
-        name: &SmolStr,
+        name: &EarleyStr,
     ) -> Result<(), ParseError> {
         let current_pos = self.traces.get(tid).pos;
         debug!("PREDICTOR: Nonterm {mark}{name}");
@@ -1496,7 +1495,7 @@ impl Parser {
         // per-node linear scan of the whole completed_trace.
         let bucket = self
             .completed_by_span
-            .get(&(SmolStr::from(name), origin, pos));
+            .get(&(EarleyStr::from(name), origin, pos));
         let bucket = match bucket {
             Some(b) => b.as_slice(),
             None => return None,
@@ -1548,8 +1547,8 @@ impl Parser {
     /// is direct (`L: L, M`), hidden behind the desugaring of a repeat/option/group operator
     /// (`A: (A, A)+` mints `--A.f-plus` whose body references A), or indirect through other
     /// named rules (`B: A; "b"` where `A: "a"; B`, so B→A→B). `seen` guards against cycles.
-    fn rule_reaches(&self, from: &str, target: &str, seen: &mut HashSet<SmolStr>) -> bool {
-        if !seen.insert(SmolStr::new(from)) {
+    fn rule_reaches(&self, from: &str, target: &str, seen: &mut HashSet<EarleyStr>) -> bool {
+        if !seen.insert(EarleyStr::new(from)) {
             return false;
         }
         let branching = match self.grammar.get_definition(from) {
@@ -1569,7 +1568,7 @@ impl Parser {
     }
 
     /// Only for use in test sutes. Not guaranteed to be stable...
-    pub fn test_inspect_trace(&self, filter: Option<SmolStr>) -> Vec<Task> {
+    pub fn test_inspect_trace(&self, filter: Option<EarleyStr>) -> Vec<Task> {
         match filter {
             Some(str) => self
                 .traces
@@ -1755,13 +1754,13 @@ impl Parser {
 
     /// Recurse down through the tree to assemble all the text literals that comprise an attribute value
     fn unpack_attr_value(&self, attr_nid: NodeId, arena: &mut Arena<Content>) -> String {
-        let mut attr_value = Builder::default();
+        let mut attr_value = String::new();
         for descendant in attr_nid.descendants(arena) {
             if let Content::Text(txt) = arena.get(descendant).unwrap().get() {
-                attr_value.append(txt.as_str());
+                attr_value.push_str(txt.as_str());
             }
         }
-        attr_value.string().unwrap()
+        attr_value
     }
 
     fn unpack_parse_tree_internal(
@@ -1769,15 +1768,15 @@ impl Parser {
         arena: &mut Arena<Content>,
         name: &str,
         mark: Mark,
-        alias: Option<&SmolStr>,
+        alias: Option<&EarleyStr>,
         origin: usize,
         end: usize,
         root: NodeId,
-        visited: &mut HashSet<(SmolStr, usize, usize)>,
+        visited: &mut HashSet<(EarleyStr, usize, usize)>,
     ) {
         // Skip nonterminals already on the current path — cyclic grammar derivations would
         // otherwise recurse infinitely through the same (name, span) triple.
-        let key = (SmolStr::new(name), origin, end);
+        let key = (EarleyStr::new(name), origin, end);
         if !visited.insert(key.clone()) {
             return;
         }
@@ -1883,7 +1882,7 @@ impl Parser {
             Some(n) => n,
             None => return false,
         };
-        let mut visited: HashSet<(SmolStr, usize, usize)> = HashSet::new();
+        let mut visited: HashSet<(EarleyStr, usize, usize)> = HashSet::new();
         self.span_is_ambiguous(&root_name, 0, self.last_input_len, &mut visited)
     }
 
@@ -1897,9 +1896,9 @@ impl Parser {
         name: &str,
         origin: usize,
         end: usize,
-        visited: &mut HashSet<(SmolStr, usize, usize)>,
+        visited: &mut HashSet<(EarleyStr, usize, usize)>,
     ) -> bool {
-        let key = (SmolStr::from(name), origin, end);
+        let key = (EarleyStr::from(name), origin, end);
         if !visited.insert(key.clone()) {
             return false; // cycle / already-explored guard
         }
@@ -1942,7 +1941,7 @@ impl Parser {
         version_mismatch: bool,
         ambiguous: bool,
     ) -> String {
-        let mut builder = Builder::default();
+        let mut builder = String::new();
         let root = arena.iter().next().unwrap(); // first item == root
         let root_id = arena.get_node_id(root).unwrap();
 
@@ -1964,7 +1963,7 @@ impl Parser {
         for child in root_id.children(arena) {
             Self::tree_to_test_format_recurse(arena, &mut builder, child, extra_attrs.as_deref());
         }
-        builder.string().unwrap()
+        builder
     }
 
     pub fn validate_xml_output(arena: &Arena<Content>) -> Result<(), ParseError> {
@@ -2112,7 +2111,7 @@ impl Parser {
 
     fn tree_to_test_format_recurse(
         arena: &Arena<Content>,
-        builder: &mut Builder,
+        builder: &mut String,
         nid: NodeId,
         extra_attrs: Option<&[(&str, &str)]>,
     ) {
@@ -2123,39 +2122,39 @@ impl Parser {
         match arena.get(nid).unwrap().get() {
             Content::Root => {}
             Content::Element(name) => {
-                builder.append("<");
-                builder.append(name.to_string());
+                builder.push('<');
+                builder.push_str(&name.to_string());
 
                 for attr_child in nid
                     .children(arena)
                     .filter(|n| arena.get(*n).unwrap().get().is_attr())
                 {
-                    builder.append(" ");
+                    builder.push(' ');
                     let attr_desc = arena.get(attr_child).unwrap().get();
                     let (attr_name, attr_value) = match attr_desc {
                         Content::Attribute(attr_name, attr_value) => (attr_name, attr_value),
                         _ => unreachable!("Filter on Attribute children() somewhow didn't work..."),
                     };
-                    builder.append(attr_name.to_string());
-                    builder.append("=\"");
+                    builder.push_str(&attr_name.to_string());
+                    builder.push_str("=\"");
                     // Escape XML entities in attribute values - order matters! & must be first
-                    builder.append(
-                        attr_value
+                    builder.push_str(
+                        &attr_value
                             .replace('&', "&amp;")
                             .replace('<', "&lt;")
                             .replace('"', "&quot;"),
                     );
-                    builder.append("\"");
+                    builder.push('"');
                 }
 
                 // Add extra attributes (e.g., for version mismatch on root element)
                 if let Some(attrs) = extra_attrs {
                     for (attr_name, attr_value) in attrs {
-                        builder.append(" ");
-                        builder.append(attr_name.to_string());
-                        builder.append("=\"");
-                        builder.append(attr_value.to_string());
-                        builder.append("\"");
+                        builder.push(' ');
+                        builder.push_str(attr_name);
+                        builder.push_str("=\"");
+                        builder.push_str(attr_value);
+                        builder.push('"');
                     }
                 }
 
@@ -2165,20 +2164,22 @@ impl Parser {
                     .any(|n| !arena.get(n).unwrap().get().is_attr());
 
                 if has_content {
-                    builder.append(">");
+                    builder.push('>');
                     for child in nid.children(arena) {
                         Self::tree_to_test_format_recurse(arena, builder, child, None);
                     }
-                    builder.append("</");
-                    builder.append(name.to_string());
-                    builder.append(">");
+                    builder.push_str("</");
+                    builder.push_str(&name.to_string());
+                    builder.push('>');
                 } else {
                     // Self-closing tag for empty elements
-                    builder.append("/>");
+                    builder.push_str("/>");
                 }
             }
             Content::Attribute(..) => {} // handled above
-            Content::Text(utf8) => builder.append(utf8.replace('&', "&amp;").replace('<', "&lt;")),
+            Content::Text(utf8) => {
+                builder.push_str(&utf8.replace('&', "&amp;").replace('<', "&lt;"))
+            }
         }
     }
 

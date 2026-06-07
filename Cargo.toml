@@ -2,6 +2,8 @@
 name = "earleybird"
 version = "0.1.0"
 edition = "2021"
+# Minimum supported Rust version. Floor is set by smol_str 0.3.6 (requires 1.89).
+rust-version = "1.89"
 default-run = "eb"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -21,18 +23,13 @@ name = "earleybird"
 alloc-count = []
 
 [dependencies]
-quick-xml = "0.24"
-smol_str = "0.3.2"
-indextree = "4.7.4"
-log = "0.4.27"
-env_logger = "0.9"
+quick-xml = "0.40"
+smol_str = "0.3.6"
+indextree = "4.8.1"
+log = "0.4.32"
+env_logger = "0.11"
 multimap = "0.10.1"
-argh = "0.1.13"
-string-builder = "0.2.0"
+argh = "0.1.19"
 unicode-character-database = "0.1.0"
 itertools = "0.14.0"
-indoc = "2.0.6"
-# The quick-xml crate is kept at 0.24 for compatibility with the existing code
-# Other dependencies have been updated to their latest versions
-# pest = "2.2"
-# pest_derive = "2.1"
+indoc = "2.0.7"

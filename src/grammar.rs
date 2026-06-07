@@ -5,8 +5,8 @@
 //! A simple example ixml grammar might be:
 //! doc = "A", "B" | "C", "D".
 //!
-//! A grammar is encoded as a map of definitions: `SmolStr` -> `BranchingRule`
-//! (`SmolStr` is a O(1)-to-clone immutable string type)
+//! A grammar is encoded as a map of definitions: `EarleyStr` -> `BranchingRule`
+//! (`EarleyStr` is a O(1)-to-clone immutable string type)
 //! The first definition is taken to be the "root" rule of the grammar
 //!
 //! In the example gramamr there are two possible branches for the "doc" rule - either ("A","B") or ("C","D")
@@ -18,7 +18,7 @@
 //! A Factor is an enum of either
 //! `Terminal`(TMark, Lit)  (a `TMark` is like a Mark, except there is no @ prefix)
 //! or
-//! `Nonterm`(Mark, `SmolStr`, alias) which is a reference to a different definition (which must exist elsewhere in the grammar)
+//! `Nonterm`(Mark, `EarleyStr`, alias) which is a reference to a different definition (which must exist elsewhere in the grammar)
 //!
 //! More complicated structures like x? or x+ or x* or x++y or x**y
 //! are built from the existing primitives and recursive definitions
@@ -33,7 +33,7 @@ use crate::{
 };
 use crate::{debug_grammar, ixml_bootstrap::bootstrap_ixml_grammar};
 use indextree::{Arena, NodeId};
-use smol_str::SmolStr;
+use crate::EarleyStr;
 use std::{
     cell::{Cell, OnceCell},
     collections::HashMap,
@@ -45,9 +45,9 @@ use std::{
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 enum NullabilityKey {
     /// Entire BranchingRule (true if any alternative is nullable)
-    BranchingRule(SmolStr),
+    BranchingRule(EarleyStr),
     /// Specific alternative within a BranchingRule
-    Alternative(SmolStr, usize),
+    Alternative(EarleyStr, usize),
 }
 
 /// Detailed error types for the three-phase grammar parsing process
@@ -81,14 +81,14 @@ struct NamingAttributes {
 /// the primary owner of all grammar data structures
 #[derive(Debug, Clone)]
 pub struct Grammar {
-    definitions: HashMap<SmolStr, BranchingRule>,
+    definitions: HashMap<EarleyStr, BranchingRule>,
     /// remember insertion order of rules (used for tests & comparing grammars)
-    pub defn_order: Vec<SmolStr>,
+    pub defn_order: Vec<EarleyStr>,
     /// unified cache for all nullability information - computed on demand
     nullability_cache: OnceCell<HashMap<NullabilityKey, bool>>,
     /// version declared in grammar prolog (if any). Our implementation version is always "1.0"
     /// NOTE: Future versions may support renaming syntax (rule>newname) and require version-specific parsing
-    declared_version: Option<SmolStr>,
+    declared_version: Option<EarleyStr>,
 }
 
 impl Grammar {
@@ -143,7 +143,7 @@ impl Grammar {
         // Note: OnceCell nullable cache will be computed on first access
 
         // 1) the main rule
-        let name_smol = SmolStr::new(name);
+        let name_smol = EarleyStr::new(name);
         let main_rule = Rule::new(sb.factors);
         let branching_rule = self
             .definitions
@@ -153,7 +153,7 @@ impl Grammar {
                 BranchingRule::new(mark)
             });
         if let Some(alias) = alias {
-            branching_rule.alias = Some(SmolStr::new(alias));
+            branching_rule.alias = Some(EarleyStr::new(alias));
         }
         branching_rule.add_alt_branch(main_rule);
 
@@ -172,7 +172,7 @@ impl Grammar {
     }
 
     pub fn get_root_definition_name(&self) -> Option<String> {
-        self.defn_order.get(0).map(smol_str::SmolStr::to_string)
+        self.defn_order.get(0).map(EarleyStr::to_string)
     }
 
     pub fn get_root_definition(&self) -> Result<Option<&BranchingRule>, crate::parser::ParseError> {
@@ -194,7 +194,7 @@ impl Grammar {
     pub fn get_definition_alias(
         &self,
         name: &str,
-    ) -> Result<Option<SmolStr>, crate::parser::ParseError> {
+    ) -> Result<Option<EarleyStr>, crate::parser::ParseError> {
         if !self.definitions.contains_key(name) {
             return Err(crate::parser::ParseError::static_err(&format!(
                 "missing rule named {name}"
@@ -220,7 +220,7 @@ impl Grammar {
             .nullability_cache
             .get()
             .expect("Cache should be initialized");
-        let key = NullabilityKey::BranchingRule(SmolStr::new(name));
+        let key = NullabilityKey::BranchingRule(EarleyStr::new(name));
 
         Ok(cache.get(&key).copied().unwrap_or(false))
     }
@@ -255,7 +255,7 @@ impl Grammar {
             .nullability_cache
             .get()
             .expect("Cache should be initialized");
-        let key = NullabilityKey::Alternative(SmolStr::new(rule_name), alt_index);
+        let key = NullabilityKey::Alternative(EarleyStr::new(rule_name), alt_index);
 
         Ok(cache.get(&key).copied().unwrap_or(false))
     }
@@ -560,7 +560,7 @@ impl Grammar {
                     // Version text is stored in the "string" attribute of the version element
                     let attrs = Parser::get_attributes(arena, nid);
                     if let Some(version_text) = attrs.get("string") {
-                        g.declared_version = Some(SmolStr::new(version_text));
+                        g.declared_version = Some(EarleyStr::new(version_text));
                         debug_grammar!(
                             DebugLevel::Basic,
                             "GRAMMAR|phase=version_extraction|declared_version={}",
@@ -592,7 +592,7 @@ impl Grammar {
         }
 
         // S03: track top-level rule names to detect duplicates
-        let mut seen_rule_names: std::collections::HashSet<SmolStr> =
+        let mut seen_rule_names: std::collections::HashSet<EarleyStr> =
             std::collections::HashSet::new();
 
         for rule in all_rules {
@@ -609,7 +609,7 @@ impl Grammar {
             };
 
             // S03: duplicate rule definition
-            let rule_name_smol = SmolStr::new(rule_name.as_str());
+            let rule_name_smol = EarleyStr::new(rule_name.as_str());
             if !seen_rule_names.insert(rule_name_smol) {
                 return Err(crate::parser::ParseError::static_err(&format!(
                     "S03: grammar contains more than one rule for nonterminal '{rule_name}'"
@@ -1100,27 +1100,27 @@ impl Grammar {
 
 impl fmt::Display for Grammar {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut builder = string_builder::Builder::default();
+        let mut out = String::new();
         // iterate in insertion order...
         for name in &self.defn_order {
             let branching_rule = &self.definitions[name];
-            builder.append(branching_rule.mark.to_string());
-            builder.append(name.to_string());
+            out.push_str(&branching_rule.mark.to_string());
+            out.push_str(name);
             if let Some(alias) = &branching_rule.alias {
-                builder.append(">");
-                builder.append(alias.to_string());
+                out.push('>');
+                out.push_str(alias);
             }
-            builder.append("= ");
+            out.push_str("= ");
             let rules: Vec<String> = branching_rule
                 .alts
                 .clone()
                 .iter()
                 .map(std::string::ToString::to_string)
                 .collect();
-            builder.append(rules.join(" | "));
-            builder.append(".\n");
+            out.push_str(&rules.join(" | "));
+            out.push_str(".\n");
         }
-        write!(f, "{}", builder.string().unwrap())
+        write!(f, "{}", out)
     }
 }
 
@@ -1154,7 +1154,7 @@ impl<'a> Iterator for TermIter<'a> {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct BranchingRule {
     mark: Mark,
-    alias: Option<SmolStr>,
+    alias: Option<EarleyStr>,
     /// Each alternative is held behind an `Rc` so the predict path can hand a shared
     /// rule to `DotNotation` (a refcount bump) instead of deep-cloning the whole
     /// `Vec<Factor>` once per predicted alternative — see TODO.txt "Stop cloning
@@ -1278,10 +1278,10 @@ impl fmt::Display for Rule {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum Factor {
     Terminal(TMark, TerminalDefn),
-    Nonterm(Mark, SmolStr, Option<SmolStr>),
+    Nonterm(Mark, EarleyStr, Option<EarleyStr>),
     /// Insertion: text to insert in output without consuming input
     /// Can be marked with TMark for exclusion or hex representation
-    Insertion(TMark, SmolStr),
+    Insertion(TMark, EarleyStr),
 }
 
 impl Factor {
@@ -1363,9 +1363,9 @@ impl fmt::Display for TerminalDefn {
 #[derive(Debug, Clone, Eq, PartialEq)]
 enum CharMatcher {
     Exact(char),
-    OneOf(SmolStr),
+    OneOf(EarleyStr),
     Range(char, char),
-    UnicodeRange(SmolStr),
+    UnicodeRange(EarleyStr),
 }
 
 impl CharMatcher {
@@ -1411,7 +1411,7 @@ impl LitBuilder {
 
     /// accept a single char out of a list
     pub fn ch_in(mut self, chrs: &str) -> Self {
-        let matcher = CharMatcher::OneOf(SmolStr::new(chrs));
+        let matcher = CharMatcher::OneOf(EarleyStr::new(chrs));
         self.lit.matchers.push(matcher);
         self
     }
@@ -1424,7 +1424,7 @@ impl LitBuilder {
     }
 
     pub fn ch_unicode(mut self, range: &str) -> Self {
-        let matcher = CharMatcher::UnicodeRange(SmolStr::new(range));
+        let matcher = CharMatcher::UnicodeRange(EarleyStr::new(range));
         self.lit.matchers.push(matcher);
         self
     }
@@ -1479,8 +1479,8 @@ pub struct SeqBuilder {
 
     /// in the course of building a rule, we may end up synthesizing additional rules.
     /// These need to eventually get added into the resulting grammar
-    syn_rules: HashMap<SmolStr, Vec<SeqBuilder>>,
-    defn_order: Vec<SmolStr>,
+    syn_rules: HashMap<EarleyStr, Vec<SeqBuilder>>,
+    defn_order: Vec<EarleyStr>,
 
     context: Rc<RuleContext>,
 }
@@ -1575,14 +1575,14 @@ impl SeqBuilder {
 
     /// nonterminal, with specified Mark
     pub fn mark_nt(mut self, name: &str, mark: Mark) -> Self {
-        let term = Factor::Nonterm(mark, SmolStr::new(name), None);
+        let term = Factor::Nonterm(mark, EarleyStr::new(name), None);
         self.factors.push(term);
         self
     }
 
     /// nonterminal, with specified Mark and output alias
     pub fn mark_nt_alias(mut self, name: &str, mark: Mark, alias: Option<&str>) -> Self {
-        let term = Factor::Nonterm(mark, SmolStr::new(name), alias.map(SmolStr::new));
+        let term = Factor::Nonterm(mark, EarleyStr::new(name), alias.map(EarleyStr::new));
         self.factors.push(term);
         self
     }
@@ -1594,7 +1594,7 @@ impl SeqBuilder {
 
     /// insertion with specified TMark
     pub fn mark_insertion(mut self, text: String, tmark: TMark) -> Self {
-        let factor = Factor::Insertion(tmark, SmolStr::new(&text));
+        let factor = Factor::Insertion(tmark, EarleyStr::new(&text));
         self.factors.push(factor);
         self
     }
@@ -1604,10 +1604,10 @@ impl SeqBuilder {
         self = self.siphon(&mut rb);
         let vec = self
             .syn_rules
-            .entry(SmolStr::new(name))
+            .entry(EarleyStr::new(name))
             .or_insert(Vec::new());
         vec.push(rb);
-        let smol_name = SmolStr::new(name);
+        let smol_name = EarleyStr::new(name);
         if !self.defn_order.contains(&smol_name) {
             self.defn_order.push(smol_name); // maintain insertion order
         }
@@ -2354,11 +2354,11 @@ mod tests {
             .expect("Cache should be populated");
 
         // Check that both BranchingRule and Alternative entries exist
-        assert!(cache.contains_key(&NullabilityKey::BranchingRule(SmolStr::new("empty"))));
-        assert!(cache.contains_key(&NullabilityKey::Alternative(SmolStr::new("empty"), 0)));
+        assert!(cache.contains_key(&NullabilityKey::BranchingRule(EarleyStr::new("empty"))));
+        assert!(cache.contains_key(&NullabilityKey::Alternative(EarleyStr::new("empty"), 0)));
 
-        assert!(cache.contains_key(&NullabilityKey::BranchingRule(SmolStr::new("terminal"))));
-        assert!(cache.contains_key(&NullabilityKey::Alternative(SmolStr::new("terminal"), 0)));
+        assert!(cache.contains_key(&NullabilityKey::BranchingRule(EarleyStr::new("terminal"))));
+        assert!(cache.contains_key(&NullabilityKey::Alternative(EarleyStr::new("terminal"), 0)));
 
         // Check synthetic rule from alts()
         let synthetic_name = cache
