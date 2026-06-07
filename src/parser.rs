@@ -1941,29 +1941,10 @@ impl Parser {
         version_mismatch: bool,
         ambiguous: bool,
     ) -> String {
-        let mut builder = String::new();
-        let root = arena.iter().next().unwrap(); // first item == root
-        let root_id = arena.get_node_id(root).unwrap();
-
-        let extra_attrs: Option<Vec<(&str, &str)>> = if version_mismatch {
-            Some(vec![
-                ("xmlns", ""),
-                ("xmlns:ixml", "http://invisiblexml.org/NS"),
-                ("ixml:state", "version-mismatch"),
-            ])
-        } else if ambiguous {
-            Some(vec![
-                ("xmlns:ixml", "http://invisiblexml.org/NS"),
-                ("ixml:state", "ambiguous"),
-            ])
-        } else {
-            None
-        };
-
-        for child in root_id.children(arena) {
-            Self::tree_to_test_format_recurse(arena, &mut builder, child, extra_attrs.as_deref());
-        }
-        builder
+        // Serialization now lives on the owned treebird tree; convert at the
+        // boundary and serialize from there. The indextree arena stays private.
+        crate::treebird::Document::from_content_arena(arena)
+            .to_xml_with_state(version_mismatch, ambiguous)
     }
 
     pub fn validate_xml_output(arena: &Arena<Content>) -> Result<(), ParseError> {
@@ -2107,80 +2088,6 @@ impl Parser {
                 ch as u32,
                 0x2D | 0x2E | 0x30..=0x39 | 0xB7 | 0x0300..=0x036F | 0x203F..=0x2040
             )
-    }
-
-    fn tree_to_test_format_recurse(
-        arena: &Arena<Content>,
-        builder: &mut String,
-        nid: NodeId,
-        extra_attrs: Option<&[(&str, &str)]>,
-    ) {
-        let maybe_node = arena.get(nid);
-        if maybe_node.is_none() {
-            return;
-        }
-        match arena.get(nid).unwrap().get() {
-            Content::Root => {}
-            Content::Element(name) => {
-                builder.push('<');
-                builder.push_str(&name.to_string());
-
-                for attr_child in nid
-                    .children(arena)
-                    .filter(|n| arena.get(*n).unwrap().get().is_attr())
-                {
-                    builder.push(' ');
-                    let attr_desc = arena.get(attr_child).unwrap().get();
-                    let (attr_name, attr_value) = match attr_desc {
-                        Content::Attribute(attr_name, attr_value) => (attr_name, attr_value),
-                        _ => unreachable!("Filter on Attribute children() somewhow didn't work..."),
-                    };
-                    builder.push_str(&attr_name.to_string());
-                    builder.push_str("=\"");
-                    // Escape XML entities in attribute values - order matters! & must be first
-                    builder.push_str(
-                        &attr_value
-                            .replace('&', "&amp;")
-                            .replace('<', "&lt;")
-                            .replace('"', "&quot;"),
-                    );
-                    builder.push('"');
-                }
-
-                // Add extra attributes (e.g., for version mismatch on root element)
-                if let Some(attrs) = extra_attrs {
-                    for (attr_name, attr_value) in attrs {
-                        builder.push(' ');
-                        builder.push_str(attr_name);
-                        builder.push_str("=\"");
-                        builder.push_str(attr_value);
-                        builder.push('"');
-                    }
-                }
-
-                // Check if element has any non-attribute children for self-closing tag
-                let has_content = nid
-                    .children(arena)
-                    .any(|n| !arena.get(n).unwrap().get().is_attr());
-
-                if has_content {
-                    builder.push('>');
-                    for child in nid.children(arena) {
-                        Self::tree_to_test_format_recurse(arena, builder, child, None);
-                    }
-                    builder.push_str("</");
-                    builder.push_str(&name.to_string());
-                    builder.push('>');
-                } else {
-                    // Self-closing tag for empty elements
-                    builder.push_str("/>");
-                }
-            }
-            Content::Attribute(..) => {} // handled above
-            Content::Text(utf8) => {
-                builder.push_str(&utf8.replace('&', "&amp;").replace('<', "&lt;"))
-            }
-        }
     }
 
     /// Helper function for working with indextree

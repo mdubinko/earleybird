@@ -11,6 +11,7 @@ pub mod ixml_bootstrap;
 pub mod parser;
 pub mod test_grammars;
 pub mod testsuite_utils;
+pub mod treebird;
 pub mod unicode_ranges;
 pub mod utils;
 pub mod validator;
