@@ -890,6 +890,19 @@ impl Parser {
         self.parse_with_session(input, &mut session)
     }
 
+    /// Parse `input` and return the owned public output tree ([`crate::treebird::Document`]).
+    ///
+    /// This is the structured, indextree-free entry point for consumers. The
+    /// internal indextree build representation stays private behind the
+    /// conversion at the boundary.
+    pub fn parse_to_document(
+        &mut self,
+        input: &str,
+    ) -> Result<crate::treebird::Document, ParseError> {
+        let arena = self.parse(input)?;
+        Ok(crate::treebird::Document::from_content_arena(&arena))
+    }
+
     /// Parse with explicit session for statistics tracking and infinite loop detection
     fn parse_with_session(
         &mut self,
