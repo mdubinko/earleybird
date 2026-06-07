@@ -144,7 +144,24 @@ fn run(
     let (catalog_path, filter) = resolve_suite_spec(suite_spec);
     println!("Running tests from: {}", catalog_path);
 
-    let all_tests = testsuite_utils::read_test_catalog(catalog_path.clone());
+    let mut all_tests = testsuite_utils::read_test_catalog(catalog_path.clone());
+
+    // Apply earleybird-owned local overrides (optional file; no-op if absent).
+    // Lets us judge named catalog tests correctly without editing the read-only
+    // upstream suite — e.g. hyper-ambiguous cases whose valid-tree set is too
+    // large for the catalog to enumerate. See tests/suite-overrides.xml.
+    let overrides = testsuite_utils::read_suite_overrides("tests/suite-overrides.xml");
+    let applied = testsuite_utils::apply_suite_overrides(&mut all_tests, &overrides);
+    if !applied.is_empty() {
+        println!(
+            "Applied {} local suite override(s) (see tests/suite-overrides.xml):",
+            applied.len()
+        );
+        for a in &applied {
+            println!("  • {}", a);
+        }
+    }
+
     let filtered_tests = match &filter {
         Some(filter_str) => {
             println!("Filtering tests containing: '{}'", filter_str);
@@ -626,6 +643,34 @@ fn run_single_test(
                         }
                         Err(e) => TestOutcome::Fail {
                             expected: xml_canonicalize(&expected_xml),
+                            actual: e.to_string(),
+                        },
+                    },
+                    Err(e) => TestOutcome::InputParseError(e.to_string()),
+                }
+            }
+            // Local-overlay assertion (see tests/suite-overrides.xml): the input must
+            // be accepted as a sentence and the serialization flagged ambiguous; the
+            // tree shape is intentionally not checked, because the spec leaves the
+            // choice of tree among ambiguous parses undefined.
+            AssertAmbiguousSentence => {
+                let mut parser = Parser::new(target_grammar.clone());
+                match parse_with_trace_limit(&mut parser, &test.input) {
+                    Ok(tree) => match Parser::validate_xml_output(&tree) {
+                        Ok(()) => {
+                            if parser.is_ambiguous() {
+                                TestOutcome::Pass
+                            } else {
+                                TestOutcome::Fail {
+                                    expected: "accepted sentence flagged ixml:state=ambiguous"
+                                        .to_string(),
+                                    actual: "parse succeeded but was not flagged ambiguous"
+                                        .to_string(),
+                                }
+                            }
+                        }
+                        Err(e) => TestOutcome::Fail {
+                            expected: "accepted sentence flagged ixml:state=ambiguous".to_string(),
                             actual: e.to_string(),
                         },
                     },

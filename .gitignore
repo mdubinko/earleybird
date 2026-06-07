@@ -27,6 +27,9 @@ log/
 *.xml
 debug_hand_coded_test.rs
 
+# ...but the local suite-override file is version-controlled (not scratch)
+!tests/suite-overrides.xml
+
 # Keep reference files in docs/archive regardless of extension
 !docs/archive/**
 

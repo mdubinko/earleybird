@@ -269,6 +269,27 @@ expected result. This is especially important for ambiguous grammars where the
 current parser may choose one valid tree while the catalog lists several valid
 serializations.
 
+### Local suite overrides (`tests/suite-overrides.xml`)
+
+The official suite (symlinked `./ixml`) is treated as **read-only**. When a
+catalog test cannot be judged correctly by exact tree match, adjust how that
+*named* test is scored in `tests/suite-overrides.xml` (earleybird-owned,
+version-controlled) — never by editing upstream. The suite runner loads this file
+automatically (no-op if absent) and prints which overrides were applied.
+
+Each `<override test="..." action="replace|augment" reason="...">` either replaces
+or augments a case's expected results with any assertions, including the
+local-only `<assert-ambiguous/>` (= pass iff the input is accepted as a sentence
+**and** the serialization is flagged `ixml:state="ambiguous"`; tree shape is not
+checked, because the spec leaves the choice of tree among ambiguous parses
+undefined).
+
+Rule of thumb: for a hyper-ambiguous case whose catalog answer key is only a
+truncated sample, use `replace` + `<assert-ambiguous/>`. Do **not** paste the
+parser's current tree into the answer key — that overfits the oracle to an
+incidental tree-selection order and re-breaks when that order changes. Currently
+one override exists (`misc/sample.grammar.12/g12.c05`); see `log/g12.c05-explained.md`.
+
 ### Debug Examples by Use Case
 
 ```bash

@@ -60,6 +60,14 @@ pub enum TestResult {
     AssertDynamicError(String), // error code, e.g. "D01", "D02", ...
     AssertXml(XmlString),
     AssertNotAGrammar, // the grammar source itself should fail to compile (S-errors)
+    /// Local-overlay-only assertion (never produced by the upstream catalog).
+    /// The input must be accepted as a sentence and the serialization must be
+    /// flagged `ixml:state="ambiguous"`; the specific parse-tree *shape* is NOT
+    /// checked, because the iXML spec leaves the choice of tree among ambiguous
+    /// parses undefined. Used for hyper-ambiguous grammars whose set of valid
+    /// trees is too large for the catalog to enumerate. See
+    /// `tests/suite-overrides.xml` and `log/g12.c05-explained.md`.
+    AssertAmbiguousSentence,
 }
 
 #[derive(Debug)]
@@ -557,6 +565,203 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
     }
     // println!("read {} cases", test_cases.len());
     test_cases
+}
+
+// ===========================================================================
+// Local suite overrides
+//
+// earleybird treats the official iXML conformance suite (symlinked at ./ixml)
+// as read-only. When a catalog test cannot be judged correctly by exact tree
+// match — most importantly hyper-ambiguous grammars whose set of valid parse
+// trees is too large to enumerate, so the catalog's answer list is only a
+// truncated sample — we adjust how that *named* test is judged here, in
+// earleybird-owned, version-controlled data, instead of editing upstream.
+//
+// The override file (`tests/suite-overrides.xml`, optional) is general-purpose:
+// any test case may have its expected results `replace`d or `augment`ed with
+// any combination of assertions, including the local-only `<assert-ambiguous/>`
+// (= accepted-and-flagged-ambiguous; tree shape unspecified). This is NOT a
+// place to paste one processor's arbitrary tree into the answer key; prefer
+// `replace` + `<assert-ambiguous/>` so the check tracks what the spec actually
+// requires and stays robust to earleybird's own tree-selection changes.
+// ===========================================================================
+
+#[derive(Clone, Debug)]
+pub enum OverrideAction {
+    /// Replace the catalog's expected results for this test entirely.
+    Replace,
+    /// Append these results to the catalog's existing expected results.
+    Augment,
+}
+
+#[derive(Clone, Debug)]
+pub struct SuiteOverride {
+    /// Full catalog test name to match (e.g. "misc/sample.grammar.12/g12.c05").
+    pub test: String,
+    pub action: OverrideAction,
+    /// Human-readable justification (kept for the audit trail; not used in matching).
+    pub reason: String,
+    pub results: Vec<TestResult>,
+}
+
+/// Read earleybird's local suite-override file. Returns an empty Vec if the file
+/// is absent (overrides are entirely optional). Parsing reuses the same
+/// quick-xml + raw-`assert-xml`-accumulation approach as `read_test_catalog`.
+pub fn read_suite_overrides(path: &str) -> Vec<SuiteOverride> {
+    let file = match fs::read_to_string(path) {
+        Ok(f) => f,
+        Err(_) => return Vec::new(), // optional file: silently no-op when missing
+    };
+
+    let mut reader = Reader::from_str(&file);
+    reader.config_mut().trim_text(true);
+    reader.config_mut().expand_empty_elements = true;
+
+    let mut buf = Vec::new();
+    let mut overrides: Vec<SuiteOverride> = Vec::new();
+
+    let mut cur_test: Option<String> = None;
+    let mut cur_action = OverrideAction::Replace;
+    let mut cur_reason = String::new();
+    let mut cur_results: Vec<TestResult> = Vec::new();
+
+    // Raw capture for <assert-xml> bodies (mirrors read_test_catalog exactly).
+    let mut raw_xml_accum: Vec<u8> = Vec::new();
+    let mut enable_accum = false;
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Err(e) => panic!(
+                "Error parsing suite-overrides at position {}: {:?}",
+                reader.buffer_position(),
+                e
+            ),
+            Ok(Event::Eof) => break,
+            Ok(Event::Start(e)) => match e.name().local_name().as_ref() {
+                b"override" => {
+                    cur_test = Some(attr_by_name(&e.attributes(), "test"));
+                    let action = attr_by_name(&e.attributes(), "action");
+                    cur_action = match action.as_str() {
+                        "augment" => OverrideAction::Augment,
+                        "replace" | "" => OverrideAction::Replace,
+                        other => {
+                            eprintln!(
+                                "⚠️  suite override: unknown action '{}' (using 'replace')",
+                                other
+                            );
+                            OverrideAction::Replace
+                        }
+                    };
+                    cur_reason = attr_by_name(&e.attributes(), "reason");
+                    cur_results.clear();
+                }
+                b"assert-ambiguous" => cur_results.push(TestResult::AssertAmbiguousSentence),
+                b"assert-not-a-sentence" => cur_results.push(TestResult::AssertNotASentence),
+                b"assert-not-a-grammar" => cur_results.push(TestResult::AssertNotAGrammar),
+                b"assert-dynamic-error" => {
+                    let code = attr_by_name(&e.attributes(), "code");
+                    cur_results.push(TestResult::AssertDynamicError(code));
+                }
+                b"assert-xml" => {
+                    raw_xml_accum.clear();
+                    enable_accum = true;
+                    reader.config_mut().trim_text(false);
+                }
+                _ => {
+                    if enable_accum {
+                        raw_xml_accum.push(b'<');
+                        raw_xml_accum.extend(e.iter());
+                        raw_xml_accum.push(b'>');
+                    }
+                }
+            },
+            Ok(Event::Text(t)) => {
+                if enable_accum {
+                    raw_xml_accum.extend(t.iter());
+                }
+            }
+            Ok(Event::GeneralRef(r)) => {
+                if enable_accum {
+                    raw_xml_accum.push(b'&');
+                    raw_xml_accum.extend(r.iter());
+                    raw_xml_accum.push(b';');
+                }
+            }
+            Ok(Event::End(e)) => match e.name().local_name().as_ref() {
+                b"assert-xml" => {
+                    enable_accum = false;
+                    reader.config_mut().trim_text(true);
+                    let xml_string = from_utf8(&raw_xml_accum)
+                        .expect("UTF-8 error in override assert-xml")
+                        .to_string();
+                    cur_results.push(TestResult::AssertXml(xml_string));
+                    raw_xml_accum.clear();
+                }
+                b"override" => {
+                    if let Some(test) = cur_test.take() {
+                        if cur_results.is_empty() {
+                            eprintln!(
+                                "⚠️  suite override for '{}' has no assertions; ignored",
+                                test
+                            );
+                        } else {
+                            overrides.push(SuiteOverride {
+                                test,
+                                action: cur_action.clone(),
+                                reason: std::mem::take(&mut cur_reason),
+                                results: std::mem::take(&mut cur_results),
+                            });
+                        }
+                    }
+                }
+                _ => {
+                    if enable_accum {
+                        raw_xml_accum.push(b'<');
+                        raw_xml_accum.push(b'/');
+                        raw_xml_accum.extend(e.iter());
+                        raw_xml_accum.push(b'>');
+                    }
+                }
+            },
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    overrides
+}
+
+/// Apply overrides in place to a set of loaded test cases. Returns a short
+/// description of each override that matched at least one test, for transparent
+/// reporting; warns (to stderr) about overrides whose target name matched no
+/// loaded test (so stale entries don't silently rot).
+pub fn apply_suite_overrides(tests: &mut [TestCase], overrides: &[SuiteOverride]) -> Vec<String> {
+    let mut applied = Vec::new();
+    for ov in overrides {
+        let mut matched = 0usize;
+        for tc in tests.iter_mut() {
+            if tc.name == ov.test {
+                match ov.action {
+                    OverrideAction::Replace => tc.expected = ov.results.clone(),
+                    OverrideAction::Augment => tc.expected.extend(ov.results.iter().cloned()),
+                }
+                matched += 1;
+            }
+        }
+        let verb = match ov.action {
+            OverrideAction::Replace => "replace",
+            OverrideAction::Augment => "augment",
+        };
+        if matched > 0 {
+            applied.push(format!("{} [{}]", ov.test, verb));
+        } else {
+            eprintln!(
+                "⚠️  suite override targets unknown/unloaded test: '{}'",
+                ov.test
+            );
+        }
+    }
+    applied
 }
 
 fn read_vxml_grammar(path: PathBuf) -> TestGrammar {
