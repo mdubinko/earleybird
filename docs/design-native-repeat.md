@@ -149,7 +149,7 @@ outer repeat. This is effectively inlining the synth rule's *body* without the s
 *nonterminal* (no separate Earley set, no right-recursion) — still a win, but it is the
 fiddliest piece and should come after single-factor repeats prove out.
 
-## Phased plan (each phase: build, full release suite 889/890, `cargo test`, measure, commit)
+## Phased plan (each phase: build, full release suite 890/890, `cargo test`, measure, commit)
 1. **Design spike:** add `Factor::Repeat` repr + grammar build for single-factor `*`/`+`
    only; keep desugaring fallback for everything else (hybrid). No engine changes yet —
    just confirm the grammar carries the construct and round-trips.
