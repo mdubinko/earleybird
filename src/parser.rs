@@ -2238,6 +2238,127 @@ mod tests {
     use super::*;
     use crate::grammar::Grammar;
 
+    // ---- Serializer characterization goldens -------------------------------
+    // Lock the CURRENT `Arena<Content>` -> XML string output before the treebird
+    // refactor relocates serialization onto an owned Document/Node tree. These
+    // exercise `Parser::tree_to_test_format*` end-to-end and MUST stay green while
+    // the implementation is ported (the public fns will delegate to the new
+    // serializer). They are deliberately built from hand-assembled arenas so they
+    // pin the mapping itself, independent of the parse path.
+
+    fn g_root() -> (Arena<Content>, NodeId) {
+        let mut arena = Arena::new();
+        let r = arena.new_node(Content::Root);
+        (arena, r)
+    }
+    fn g_el(arena: &mut Arena<Content>, parent: NodeId, name: &str) -> NodeId {
+        let n = arena.new_node(Content::Element(name.to_string()));
+        parent.append(n, arena);
+        n
+    }
+    fn g_attr(arena: &mut Arena<Content>, parent: NodeId, k: &str, v: &str) {
+        let n = arena.new_node(Content::Attribute(k.to_string(), v.to_string()));
+        parent.append(n, arena);
+    }
+    fn g_text(arena: &mut Arena<Content>, parent: NodeId, s: &str) {
+        let n = arena.new_node(Content::Text(s.to_string()));
+        parent.append(n, arena);
+    }
+
+    #[test]
+    fn golden_element_with_text() {
+        let (mut a, r) = g_root();
+        let e = g_el(&mut a, r, "a");
+        g_text(&mut a, e, "hi");
+        assert_eq!(Parser::tree_to_test_format(&a), "<a>hi</a>");
+    }
+
+    #[test]
+    fn golden_attributes_in_document_order() {
+        let (mut a, r) = g_root();
+        let e = g_el(&mut a, r, "a");
+        g_attr(&mut a, e, "x", "1");
+        g_attr(&mut a, e, "y", "2");
+        g_text(&mut a, e, "hi");
+        assert_eq!(Parser::tree_to_test_format(&a), r#"<a x="1" y="2">hi</a>"#);
+    }
+
+    #[test]
+    fn golden_empty_element_self_closes() {
+        let (mut a, r) = g_root();
+        g_el(&mut a, r, "a");
+        assert_eq!(Parser::tree_to_test_format(&a), "<a/>");
+    }
+
+    #[test]
+    fn golden_attribute_only_element_self_closes() {
+        // An element with attributes but no element/text children still self-closes.
+        let (mut a, r) = g_root();
+        let e = g_el(&mut a, r, "a");
+        g_attr(&mut a, e, "x", "1");
+        assert_eq!(Parser::tree_to_test_format(&a), r#"<a x="1"/>"#);
+    }
+
+    #[test]
+    fn golden_attribute_value_escaping() {
+        // Attribute values escape & < " (in that order); > is NOT escaped.
+        let (mut a, r) = g_root();
+        let e = g_el(&mut a, r, "a");
+        g_attr(&mut a, e, "k", r#"a&b<c"d>e"#);
+        assert_eq!(
+            Parser::tree_to_test_format(&a),
+            r#"<a k="a&amp;b&lt;c&quot;d>e"/>"#
+        );
+    }
+
+    #[test]
+    fn golden_text_escaping() {
+        // Text escapes only & and < ; > and " are left literal.
+        let (mut a, r) = g_root();
+        let e = g_el(&mut a, r, "a");
+        g_text(&mut a, e, r#"a&b<c>d"e"#);
+        assert_eq!(
+            Parser::tree_to_test_format(&a),
+            r#"<a>a&amp;b&lt;c>d"e</a>"#
+        );
+    }
+
+    #[test]
+    fn golden_nested_elements() {
+        let (mut a, r) = g_root();
+        let e = g_el(&mut a, r, "a");
+        let b = g_el(&mut a, e, "b");
+        g_text(&mut a, b, "x");
+        g_el(&mut a, e, "c");
+        assert_eq!(Parser::tree_to_test_format(&a), "<a><b>x</b><c/></a>");
+    }
+
+    #[test]
+    fn golden_ambiguous_state_attrs_on_root_child_only() {
+        // ixml:state="ambiguous" extra attrs apply to the top-level element only,
+        // never to descendants.
+        let (mut a, r) = g_root();
+        let e = g_el(&mut a, r, "a");
+        g_el(&mut a, e, "b");
+        assert_eq!(
+            Parser::tree_to_test_format_with_state(&a, false, true),
+            r#"<a xmlns:ixml="http://invisiblexml.org/NS" ixml:state="ambiguous"><b/></a>"#
+        );
+    }
+
+    #[test]
+    fn golden_version_mismatch_state_appends_after_real_attrs() {
+        // Real attributes come first; version-mismatch extra attrs follow, unescaped.
+        let (mut a, r) = g_root();
+        let e = g_el(&mut a, r, "a");
+        g_attr(&mut a, e, "x", "1");
+        assert_eq!(
+            Parser::tree_to_test_format_with_state(&a, true, false),
+            r#"<a x="1" xmlns="" xmlns:ixml="http://invisiblexml.org/NS" ixml:state="version-mismatch"/>"#
+        );
+    }
+    // ---- end serializer characterization goldens --------------------------
+
     #[test]
     fn test_offset_bounds_violation_protection() {
         // Test that parser doesn't advance beyond input length
