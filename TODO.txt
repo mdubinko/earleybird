@@ -300,6 +300,30 @@ per-op, change one thing, re-measure.
   - [ ] Create verification that bootstrap implementation matches embedded iXML specification
   - [ ] Consider declarative grammar builder macro as alternative approach
 
+## treebird Output Tree (public API, 1.0 freeze)
+Core owned-tree work landed 2026-06-07 (src/treebird.rs: Document/Node, constructors,
+to_xml serializer, pub(crate) from_content_arena converter, additive
+Parser::parse_to_document). See docs/design notes in memory project_treebird_output_tree.
+These three remain open and gate the 1.0 public-surface freeze:
+- [ ] Decide the parse() output-type shape #HIGH
+  - Current: additive `Parser::parse_to_document() -> Document` sibling; `parse()` still
+    returns `Arena<Content>` (kept so the grammar bootstrap `from_parse_tree` can build a
+    Grammar from the arena).
+  - Decision: keep the sibling, OR make `parse() -> Document` the public entry and rename
+    the arena one to `pub(crate) parse_to_arena` for bootstrap-only use.
+  - This is the call that freezes the primary public signature for 1.0.
+- [ ] Port the remaining Arena-typed public surface onto Document/Node #MED
+  - `validate_xml_output` / `validate_xml_output_recurse` (D02/D03/D07 + char checks) still
+    take `&Arena<Content>`; move onto `Document`/`Node` (pure, testable).
+  - `get_attributes` / `get_child_elements` / `get_child_elements_named` still take
+    `&Arena<Content>` + `NodeId`; make them `Node` methods or drop (fields replace them).
+- [ ] Tighten the arena out of the public API, then extend serializers #MED
+  - Once nothing public takes `Arena<Content>`, narrow `Content` to `pub(crate)` so an
+    indextree bump is no longer a breaking change (the original motivation).
+  - Then additive: string-first `parse_to_xml` (serialize straight off the private arena,
+    no Node alloc on the common path) and a JSON serializer (needs a chosen XML->JSON
+    mapping convention — itself a user-visible 1.0 contract).
+
 ## iXML Draft 2025-09-01 Changes (Beyond 1.0 + Errata)
 
 This draft incorporates all 1.0 errata plus the following new features:
