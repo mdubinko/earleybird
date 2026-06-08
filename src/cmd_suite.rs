@@ -52,7 +52,7 @@ fn parse_categories(categories_str: Option<&String>) -> Result<Option<HashSet<St
 fn parse_with_trace_limit(
     parser: &mut Parser,
     input: &str,
-) -> Result<indextree::Arena<earleybird::parser::Content>, earleybird::parser::ParseError> {
+) -> Result<earleybird::treebird::Document, earleybird::parser::ParseError> {
     // The parser now has built-in trace size limit protection
     parser.parse(input)
 }
@@ -133,6 +133,8 @@ pub struct RunSuite {
     output: String,
 }
 
+#[allow(clippy::too_many_arguments)] // CLI plumbing: console/file levels + filters + output
+#[allow(clippy::unnecessary_unwrap)] // `is_some()` guards then `as_mut().unwrap()` on file_writer
 fn run(
     suite_spec: Option<String>,
     console: &str,
@@ -209,7 +211,7 @@ fn run(
         writeln!(file, "Test catalog: {}", catalog_path).unwrap();
         writeln!(file, "Filter: {:?}", filter).unwrap();
         writeln!(file, "Total tests: {}", filtered_tests.len()).unwrap();
-        writeln!(file, "").unwrap();
+        writeln!(file).unwrap();
     }
 
     // Statistics
@@ -313,7 +315,7 @@ fn run(
                     writeln!(file, "{}", expected).unwrap();
                     writeln!(file, "  Actual:").unwrap();
                     writeln!(file, "{}", actual).unwrap();
-                    writeln!(file, "").unwrap();
+                    writeln!(file).unwrap();
                 }
             }
             TestOutcome::ValidationError(err) => {
@@ -324,7 +326,7 @@ fn run(
                     let file = file_writer.as_mut().unwrap();
                     writeln!(file, "VALIDATION_ERROR {}", test_name).unwrap();
                     writeln!(file, "  Error: {}", err).unwrap();
-                    writeln!(file, "").unwrap();
+                    writeln!(file).unwrap();
                 }
             }
             TestOutcome::BootstrapParseError(err) => {
@@ -335,7 +337,7 @@ fn run(
                     let file = file_writer.as_mut().unwrap();
                     writeln!(file, "BOOTSTRAP_ERROR {}", test_name).unwrap();
                     writeln!(file, "  Error: {}", err).unwrap();
-                    writeln!(file, "").unwrap();
+                    writeln!(file).unwrap();
                 }
             }
             TestOutcome::ConversionError(err) => {
@@ -346,7 +348,7 @@ fn run(
                     let file = file_writer.as_mut().unwrap();
                     writeln!(file, "CONVERSION_ERROR {}", test_name).unwrap();
                     writeln!(file, "  Error: {}", err).unwrap();
-                    writeln!(file, "").unwrap();
+                    writeln!(file).unwrap();
                 }
             }
             #[allow(deprecated)]
@@ -358,7 +360,7 @@ fn run(
                     let file = file_writer.as_mut().unwrap();
                     writeln!(file, "GRAMMAR_ERROR {}", test_name).unwrap();
                     writeln!(file, "  Error: {}", err).unwrap();
-                    writeln!(file, "").unwrap();
+                    writeln!(file).unwrap();
                 }
             }
             TestOutcome::InputParseError(err) => {
@@ -369,7 +371,7 @@ fn run(
                     let file = file_writer.as_mut().unwrap();
                     writeln!(file, "PARSE_ERROR {}", test_name).unwrap();
                     writeln!(file, "  Error: {}", err).unwrap();
-                    writeln!(file, "").unwrap();
+                    writeln!(file).unwrap();
                 }
             }
             TestOutcome::Panic(err) => {
@@ -380,7 +382,7 @@ fn run(
                     let file = file_writer.as_mut().unwrap();
                     writeln!(file, "PANIC {}", test_name).unwrap();
                     writeln!(file, "  Error: {}", err).unwrap();
-                    writeln!(file, "").unwrap();
+                    writeln!(file).unwrap();
                 }
             }
             TestOutcome::Skip(reason) => {
@@ -391,7 +393,7 @@ fn run(
                     let file = file_writer.as_mut().unwrap();
                     writeln!(file, "SKIP {}", test_name).unwrap();
                     writeln!(file, "  Reason: {}", reason).unwrap();
-                    writeln!(file, "").unwrap();
+                    writeln!(file).unwrap();
                 }
             }
             TestOutcome::Todo(reason) => {
@@ -402,7 +404,7 @@ fn run(
                     let file = file_writer.as_mut().unwrap();
                     writeln!(file, "TODO {}", test_name).unwrap();
                     writeln!(file, "  Reason: {}", reason).unwrap();
-                    writeln!(file, "").unwrap();
+                    writeln!(file).unwrap();
                 }
             }
         }
@@ -410,7 +412,7 @@ fn run(
 
     // Write summary to file if enabled
     if let Some(ref mut file) = file_writer {
-        writeln!(file, "").unwrap();
+        writeln!(file).unwrap();
         writeln!(file, "=== SUMMARY ===").unwrap();
         writeln!(file, "Total tests: {}", count).unwrap();
         for (category, count) in &stats {
@@ -448,7 +450,7 @@ fn run(
             }
         }
         DebugLevel::Detailed | DebugLevel::Trace => {
-            println!("");
+            println!();
             println!("=== SUMMARY ===");
             println!("Total tests: {}", count);
             for (category, count) in &stats {
@@ -489,7 +491,7 @@ fn run(
     if console_level != DebugLevel::Off {
         let total = suite_start.elapsed();
         let mut slowest: Vec<&(String, u128)> = timings.iter().collect();
-        slowest.sort_by(|a, b| b.1.cmp(&a.1));
+        slowest.sort_by_key(|x| std::cmp::Reverse(x.1));
         println!();
         println!("=== TIMING ===");
         println!(
@@ -525,15 +527,13 @@ fn run_single_test(
     // Intentionally broken grammars are never cached.
     if test.expected.iter().any(|e| matches!(e, AssertNotAGrammar)) {
         return match test.grammars.into_iter().next() {
-            Some(TestGrammar::Unparsed(source)) => {
-                match Grammar::from_ixml_str_detailed(&source) {
-                    Ok(_) => TestOutcome::Fail {
-                        expected: "grammar compilation failure (S-error)".to_string(),
-                        actual: "grammar compiled successfully".to_string(),
-                    },
-                    Err(_) => TestOutcome::Pass,
-                }
-            }
+            Some(TestGrammar::Unparsed(source)) => match Grammar::from_ixml_str_detailed(&source) {
+                Ok(_) => TestOutcome::Fail {
+                    expected: "grammar compilation failure (S-error)".to_string(),
+                    actual: "grammar compiled successfully".to_string(),
+                },
+                Err(_) => TestOutcome::Pass,
+            },
             // VXML test grammars that failed S-error validation during loading
             Some(TestGrammar::FailedToLoad(_)) => TestOutcome::Pass,
             _ => TestOutcome::Skip(
@@ -592,34 +592,45 @@ fn run_single_test(
     for expected in test.expected {
         let outcome = match expected {
             AssertNotASentence => {
-                // Try to parse - this should fail
+                // The input should not be a sentence — i.e. parsing should fail to
+                // recognize it. A *coded* error (e.g. D05) means the input WAS a
+                // sentence but produced an unserializable tree, which is not the
+                // same as "not a sentence", so it still fails this assertion.
                 let mut parser = Parser::new(target_grammar.clone());
                 match parse_with_trace_limit(&mut parser, &test.input) {
                     Ok(_) => TestOutcome::Fail {
                         expected: "parse failure".to_string(),
                         actual: "parse succeeded".to_string(),
                     },
+                    Err(e) if e.code().is_some() => TestOutcome::Fail {
+                        expected: "not a sentence (recognition failure)".to_string(),
+                        actual: format!("recognized, but {e}"),
+                    },
                     Err(_) => TestOutcome::Pass,
                 }
             }
             AssertDynamicError(expected_code) => {
+                // Match on the structured spec code, not a substring of the rendered
+                // message (the message text is not part of the contract). The code
+                // may surface from `parse` itself (D05, caught at the arena boundary)
+                // or from `Document::validate` (D02/D03/D04/D06/D07).
+                let code_matches = |e: &earleybird::parser::ParseError| {
+                    e.code().is_some_and(|c| c.as_str() == expected_code)
+                };
                 let mut parser = Parser::new(target_grammar.clone());
                 match parse_with_trace_limit(&mut parser, &test.input) {
-                    Ok(tree) => match Parser::validate_xml_output(&tree) {
+                    Ok(doc) => match doc.validate() {
                         Ok(()) => TestOutcome::Fail {
                             expected: format!("dynamic error {expected_code}"),
                             actual: "parse and XML serialization succeeded".to_string(),
                         },
-                        // Match on the structured spec code, not a substring of the
-                        // rendered message (the message text is not part of the contract).
-                        Err(e) if e.code().is_some_and(|c| c.as_str() == expected_code) => {
-                            TestOutcome::Pass
-                        }
+                        Err(ref e) if code_matches(e) => TestOutcome::Pass,
                         Err(e) => TestOutcome::Fail {
                             expected: format!("dynamic error {expected_code}"),
                             actual: e.to_string(),
                         },
                     },
+                    Err(ref e) if code_matches(e) => TestOutcome::Pass,
                     Err(e) => TestOutcome::InputParseError(e.to_string()),
                 }
             }
@@ -627,13 +638,10 @@ fn run_single_test(
                 let version_mismatch = target_grammar.has_version_mismatch();
                 let mut parser = Parser::new(target_grammar.clone());
                 match parse_with_trace_limit(&mut parser, &test.input) {
-                    Ok(tree) => match Parser::validate_xml_output(&tree) {
+                    Ok(doc) => match doc.validate() {
                         Ok(()) => {
-                            let actual_xml = Parser::tree_to_test_format_with_state(
-                                &tree,
-                                version_mismatch,
-                                parser.is_ambiguous(),
-                            );
+                            let actual_xml =
+                                doc.to_xml_with_state(version_mismatch, parser.is_ambiguous());
                             if xml_canonicalize(&actual_xml) == xml_canonicalize(&expected_xml) {
                                 TestOutcome::Pass
                             } else {
@@ -658,7 +666,7 @@ fn run_single_test(
             AssertAmbiguousSentence => {
                 let mut parser = Parser::new(target_grammar.clone());
                 match parse_with_trace_limit(&mut parser, &test.input) {
-                    Ok(tree) => match Parser::validate_xml_output(&tree) {
+                    Ok(doc) => match doc.validate() {
                         Ok(()) => {
                             if parser.is_ambiguous() {
                                 TestOutcome::Pass
@@ -741,7 +749,7 @@ impl RunSuite {
             }
         };
 
-        let _result = run(
+        run(
             self.suite,
             &self.console,
             self.console_filter.as_ref(),

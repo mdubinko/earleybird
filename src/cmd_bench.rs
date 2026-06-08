@@ -119,8 +119,8 @@ impl Bench {
         let reps = self.reps.max(1);
 
         println!(
-            "{:<18} {:>6} {:>9} {:>10} {:>10}  {}",
-            "family", "n", "in_len", "min_ms", "med_ms", "status"
+            "{:<18} {:>6} {:>9} {:>10} {:>10}  status",
+            "family", "n", "in_len", "min_ms", "med_ms"
         );
         println!("{}", "-".repeat(66));
 

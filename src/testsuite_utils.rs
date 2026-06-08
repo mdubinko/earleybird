@@ -255,7 +255,9 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                         // Ignore grammars inside app-info blocks (those are processor hints,
                         // e.g., parse-forest grammars, not the grammar under test).
                         if !in_app_info {
-                            let decoded = raw_grammar.decode().expect("Failed to decode inline grammar");
+                            let decoded = raw_grammar
+                                .decode()
+                                .expect("Failed to decode inline grammar");
                             current_grammar = TestGrammar::Unparsed(
                                 unescape(&decoded)
                                     .expect("Failed to unescape inline grammar")
@@ -416,7 +418,8 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                             let href = attr_by_name(&e.attributes(), "href");
                             let mut fullpath = basepath.to_path_buf();
                             fullpath.push(href);
-                            let xml = fs::read_to_string(fullpath).expect("Error reading assert-xml file");
+                            let xml = fs::read_to_string(fullpath)
+                                .expect("Error reading assert-xml file");
                             if in_grammar_test {
                                 grammar_test_expected.push(TestResult::AssertXml(xml));
                             } else {
@@ -510,7 +513,11 @@ fn read_test_catalog_with_prefix(path: String, dir_prefix: Option<String>) -> Ve
                             .to_string();
 
                         // Warn about special ixml:state values
-                        let active_name = if in_grammar_test { &grammar_test_name } else { &builder.name };
+                        let active_name = if in_grammar_test {
+                            &grammar_test_name
+                        } else {
+                            &builder.name
+                        };
                         if let Some(ref name) = active_name {
                             if xml_string.contains("ixml:state") {
                                 if xml_string.contains("ambiguous") {
@@ -971,8 +978,7 @@ fn all_attrs(attrs: Attributes) -> HashMap<String, String> {
                     .expect("UTF-8 error parsing attribute name")
                     .to_string();
                 if name != "xmlns" && !name.starts_with("xmlns:") {
-                    let raw_value =
-                        from_utf8(&a.value).expect("UTF-8 error in attribute value");
+                    let raw_value = from_utf8(&a.value).expect("UTF-8 error in attribute value");
                     match unescape(raw_value) {
                         Ok(value) => {
                             hashmap.insert(name, value.to_string());

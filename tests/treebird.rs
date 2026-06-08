@@ -20,13 +20,13 @@ fn public_constructors_serialize_to_xml() {
     assert_eq!(doc.to_xml(), r#"<a x="1">hi<b/></a>"#);
 }
 
-/// `parse_to_document` yields a single top-level element for a single-root
-/// grammar — the structured, indextree-free entry point works end to end.
+/// `parse` yields a single top-level element for a single-root grammar — the
+/// structured, indextree-free entry point works end to end.
 #[test]
-fn parse_to_document_yields_single_root_element() {
+fn parse_yields_single_root_element() {
     let grammar = Grammar::from_ixml_str(r#"doc: "a"."#).expect("grammar parses");
     let mut parser = Parser::new(grammar);
-    let doc = parser.parse_to_document("a").expect("input parses");
+    let doc = parser.parse("a").expect("input parses");
 
     assert_eq!(doc.children.len(), 1, "expected a single top-level node");
     match &doc.children[0] {
@@ -35,20 +35,14 @@ fn parse_to_document_yields_single_root_element() {
     }
 }
 
-/// The structured path agrees with the established string serialization: the
-/// owned tree's `to_xml` matches the legacy `tree_to_test_format` for the same
-/// parse. This pins the port as behavior-preserving via the public API.
+/// The public path is end-to-end: parse to an owned `Document`, validate it, and
+/// serialize to canonical XML — all without touching any indextree/arena type.
 #[test]
-fn parse_to_document_to_xml_matches_legacy_serialization() {
-    let grammar_src = r#"doc: "a"."#;
-    let input = "a";
+fn parse_validate_and_serialize_via_public_api() {
+    let grammar = Grammar::from_ixml_str(r#"doc: "a"."#).expect("grammar parses");
+    let mut parser = Parser::new(grammar);
+    let doc = parser.parse("a").expect("input parses");
 
-    let mut p_legacy = Parser::new(Grammar::from_ixml_str(grammar_src).unwrap());
-    let arena = p_legacy.parse(input).expect("input parses");
-    let legacy_xml = Parser::tree_to_test_format(&arena);
-
-    let mut p_doc = Parser::new(Grammar::from_ixml_str(grammar_src).unwrap());
-    let doc_xml = p_doc.parse_to_document(input).unwrap().to_xml();
-
-    assert_eq!(doc_xml, legacy_xml);
+    doc.validate().expect("output is well-formed XML");
+    assert_eq!(doc.to_xml(), "<doc>a</doc>");
 }

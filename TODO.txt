@@ -256,6 +256,23 @@ per-op, change one thing, re-measure.
   - Files: src/grammar.rs (split)
 
 ## Lower Priority - Architecture
+- [ ] Parse forest retrofit (resolves the single-derivation tensions) #LOW
+  - Why: see ARCHITECTURE.md "Known tension: single derivation vs. forest". The engine
+    keeps only one derivation per item, which makes selection order-dependent (tension 2)
+    and leaves a specific tree among ambiguous parses unreachable (tension 3; e.g. g12.c05).
+  - Incremental — a retrofit of the existing Earley engine, NOT a GLL rewrite:
+    1. Grow `families` into a minimal forest: store each alternative's child edges, not just
+       its signature, so every derivation's structure is retained (not only the one that
+       survived dedup).
+    2. Replace scheduling-dependent selection (filter_completed_trace) with an explicit walk
+       of that forest under a defined disambiguation policy — removes tensions 2 and 3.
+    3. Intern nonterminal names to NonTermId — tension 1's leftover per-item cost; see the
+       "Intern nonterminals to NonTermId(u32)" item below.
+  - Groundwork already in place: the Stage 3 span-index (completed_by_span) is what step 2's
+    walk needs.
+  - See also: g12.c05 / SPPF notes under "Current Test Suite Status" and the Leo item under
+    "Performance & Soundness Defects".
+  - Files: src/parser.rs (families repr, filter_completed_trace, unpack_parse_tree*)
 - [~] Intern nonterminals to NonTermId(u32) at grammar-build time (performance) #LOW
   - TRIED & REVERTED 2026-06-06 (was d17d087/2fb909a, reset out): the perf premise below
     does NOT hold for this codebase. Swapping the per-item dedup hash (the MOST frequent

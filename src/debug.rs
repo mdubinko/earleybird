@@ -21,6 +21,7 @@ pub struct DebugConfig {
 }
 
 impl DebugLevel {
+    #[allow(clippy::should_implement_trait)] // intentional inherent helper, not std::str::FromStr
     pub fn from_str(s: &str) -> Result<Self, String> {
         match s {
             "off" => Ok(DebugLevel::Off),

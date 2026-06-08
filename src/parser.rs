@@ -1,23 +1,23 @@
 use crate::debug::DebugLevel;
 use crate::grammar::{Factor, Grammar, Mark, Rule, TMark, TerminalDefn};
 use crate::utils;
+use crate::EarleyStr;
 use crate::{debug_earley_fail, debug_earley_pos};
 use indextree::{Arena, NodeId};
 use log::{debug, info, trace};
 use multimap::MultiMap;
-use crate::EarleyStr;
+use std::rc::Rc;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     fmt,
     hash::{Hash, Hasher},
 };
-use std::rc::Rc;
 
 const DOTSEP: &str = "•";
 
 /// Parse session state - contains per-parse mutable state including statistics and progress tracking
 #[derive(Debug)]
-pub struct ParseSession {
+pub(crate) struct ParseSession {
     /// Total length of input being parsed
     pub input_length: usize,
     /// Track operations at each position for infinite loop detection
@@ -30,8 +30,6 @@ pub struct ParseSession {
     pub max_queue_size: usize,
     /// Maximum operations allowed at any single position before detecting infinite loop
     pub infinite_loop_threshold: u32,
-    /// Count of tasks that were deduplicated (not created)
-    pub tasks_deduplicated: u32,
     /// Per-phase wall-time in nanoseconds for the parse loop arms, indexed by
     /// [complete, predict, scan, insertion]. Only populated when phase reporting is on.
     pub phase_ns: [u128; 4],
@@ -55,7 +53,6 @@ impl Default for ParseSession {
             farthest_pos: 0,
             max_queue_size: 0,
             infinite_loop_threshold: 1000,
-            tasks_deduplicated: 0,
             phase_ns: [0; 4],
             phase_calls: [0; 4],
             unpack_ns: 0,
@@ -196,7 +193,7 @@ impl std::hash::Hash for MatchStack {
 /// A sort of iterator for a Rule.
 /// Instead of just calling next(), For completed terms, it tracks positions and specifically-matched chars
 /// `matched_so_far.len`() is the cursor position
-pub struct DotNotation {
+pub(crate) struct DotNotation {
     /// The rule being matched. Shared via `Rc` so `advance_dot` (called once per cursor
     /// advance, i.e. per scanned terminal / completed child) is a refcount bump rather
     /// than a deep clone of the whole `Vec<Factor>` — see TODO.txt "Stop cloning grammar
@@ -334,9 +331,9 @@ fn family_signature(alt_index: usize, dot: &DotNotation) -> u64 {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Task {
+pub(crate) struct Task {
     id: TraceId,      // unique id, as handled by TraceArena
-    name: EarleyStr,    // BranchingRule name
+    name: EarleyStr,  // BranchingRule name
     alt_index: usize, // which alt of this BranchingRule (0-based)
     mark: Mark,       // effective mark for this task
     alias: Option<EarleyStr>,
@@ -344,12 +341,6 @@ pub struct Task {
     pos: usize,       // current position in the input
     dot: DotNotation, // progress
     hash: u64,        // identity hash based on name, alt_index, origin, pos, dot
-}
-
-impl Task {
-    pub fn mark(&self) -> Mark {
-        self.mark.clone()
-    }
 }
 
 /// Display task content for debugging
@@ -364,13 +355,13 @@ impl fmt::Display for Task {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TraceId(usize);
+pub(crate) struct TraceId(usize);
 
 #[derive(Debug)]
 /// Position-bucketed queue for proper Earley left-to-right processing.
 /// Ensures all tasks at position N are completed before advancing to N+1.
 /// Within each position, maintains front/back priority for predictions vs completions.
-pub struct PositionBucketedQueue {
+pub(crate) struct PositionBucketedQueue {
     /// Map from position to tasks at that position
     buckets: std::collections::BTreeMap<usize, VecDeque<TraceId>>,
     /// Current position being processed
@@ -389,16 +380,13 @@ impl PositionBucketedQueue {
     pub fn push_front(&mut self, task_id: TraceId, position: usize) {
         self.buckets
             .entry(position)
-            .or_insert_with(VecDeque::new)
+            .or_default()
             .push_front(task_id);
     }
 
     /// Add task to back of its position bucket (normal priority - completions, scanning)
     pub fn push_back(&mut self, task_id: TraceId, position: usize) {
-        self.buckets
-            .entry(position)
-            .or_insert_with(VecDeque::new)
-            .push_back(task_id);
+        self.buckets.entry(position).or_default().push_back(task_id);
     }
 
     /// Get next task, advancing position when current bucket is empty
@@ -432,14 +420,9 @@ impl PositionBucketedQueue {
         self.buckets.values().map(|bucket| bucket.len()).sum()
     }
 
-    /// Get current position being processed
-    pub fn current_position(&self) -> usize {
-        self.current_position
-    }
-
     /// Iterate over all tasks in queue order (by position, then by priority within position)
     pub fn iter(&self) -> impl Iterator<Item = &TraceId> {
-        self.buckets.iter().flat_map(|(_, bucket)| bucket.iter())
+        self.buckets.values().flat_map(|bucket| bucket.iter())
     }
 }
 
@@ -473,7 +456,7 @@ impl std::fmt::Display for PositionBucketedQueue {
 
 #[derive(Debug)]
 /// the permanent home of all Traces/Tasks
-pub struct TraceArena {
+pub(crate) struct TraceArena {
     /// main storage for Tasks. The vector index becomes the TraceId
     /// (which should always match what's stored in task.id)
     arena: Vec<Task>,
@@ -580,7 +563,10 @@ impl TraceArena {
     /// buffer so the per-`complete` parent list does not allocate a fresh `Vec`.
     fn collect_waiting_parents(&self, rule_name: &str, origin: usize, out: &mut Vec<TraceId>) {
         out.clear();
-        if let Some(parents) = self.continuations.get_vec(&(EarleyStr::from(rule_name), origin)) {
+        if let Some(parents) = self
+            .continuations
+            .get_vec(&(EarleyStr::from(rule_name), origin))
+        {
             out.extend_from_slice(parents);
         }
         debug!(
@@ -593,6 +579,7 @@ impl TraceArena {
 
     /// originate a completely new task (root level)
     /// Returns Some(TraceId) (unless this is a duplicate Task, in which case None is returned)
+    #[allow(clippy::too_many_arguments)] // an Earley item is intrinsically this wide
     fn task(
         &mut self,
         name: &str,
@@ -667,7 +654,7 @@ impl TraceArena {
             id,
             name: from_task.name.clone(),
             alt_index: from_task.alt_index, // Preserve alt_index from source task
-            mark: from_task.mark.clone(),
+            mark: from_task.mark,
             alias: from_task.alias.clone(),
             origin: from_task.origin,
             pos: new_pos,
@@ -695,17 +682,17 @@ impl TraceArena {
     /// Simple Task Deduplication Strategy:
     /// Use task identity hash based on name, alt_index, origin, pos, and dot
     fn have_we_seen(&mut self, task: &Task) -> bool {
-        if self.task_by_hash.contains_key(&task.hash) {
+        if let std::collections::hash_map::Entry::Vacant(e) = self.task_by_hash.entry(task.hash) {
+            debug!("...caching task {}[{}]", task.name, task.alt_index);
+            e.insert(task.id);
+            false
+        } else {
             debug!(
                 "🚫 DUPLICATE TASK DETECTED: Skipping {}[{}]",
                 task.name, task.alt_index
             );
             self.deduplicated_count += 1;
             true
-        } else {
-            debug!("...caching task {}[{}]", task.name, task.alt_index);
-            self.task_by_hash.insert(task.hash, task.id);
-            false
         }
     }
 
@@ -752,7 +739,8 @@ impl InputIter {
 
 #[derive(Debug, Clone)]
 /// in the intermediate parse indextree, tree nodes are provided thusly
-pub enum Content {
+// implementation detail of the build phase; see ARCHITECTURE.md ADR 1
+pub(crate) enum Content {
     Root,
     Element(String),           // name
     Attribute(String, String), // name, value
@@ -762,9 +750,6 @@ pub enum Content {
 impl Content {
     pub fn is_attr(&self) -> bool {
         matches!(self, Self::Attribute(_, _))
-    }
-    pub fn is_elem(&self) -> bool {
-        matches!(self, Self::Element(_))
     }
     pub fn get_name(&self) -> Option<String> {
         match self {
@@ -897,7 +882,9 @@ impl ErrorCode {
     pub fn exit_code(&self) -> u8 {
         let s = self.as_str();
         let base = if s.starts_with('S') { 100 } else { 200 };
-        let n: u8 = s[1..].parse().expect("ErrorCode::as_str has a numeric suffix");
+        let n: u8 = s[1..]
+            .parse()
+            .expect("ErrorCode::as_str has a numeric suffix");
         base + n
     }
 }
@@ -1071,34 +1058,55 @@ impl Parser {
         }
     }
 
+    #[doc(hidden)]
     pub fn set_stats_enabled(&mut self, enabled: bool) {
         self.stats_enabled = enabled;
     }
 
     /// Enable the per-phase wall-time breakdown (see [`Parser::phase_report`]).
+    #[doc(hidden)]
     pub fn set_phase_report(&mut self, enabled: bool) {
         self.phase_report = enabled;
     }
 
-    /// Successful return value is an indextree over Content. Consider this temporary
-    pub fn parse(&mut self, input: &str) -> Result<Arena<Content>, ParseError> {
+    /// Parse `input` and return the owned public output tree
+    /// ([`crate::treebird::Document`]).
+    ///
+    /// This is the single structured, indextree-free entry point for consumers;
+    /// the internal indextree build representation stays private behind the
+    /// conversion at the boundary. Serialize the result with
+    /// [`crate::treebird::Document::to_xml`] and check XML well-formedness with
+    /// [`crate::treebird::Document::validate`].
+    pub fn parse(&mut self, input: &str) -> Result<crate::treebird::Document, ParseError> {
+        let arena = self.parse_to_arena(input)?;
+        // D05: an attribute at the document root is unrepresentable in a
+        // `Document` (attributes belong to elements) and would be silently
+        // dropped by the converter — so it must be detected here, at the arena
+        // boundary, before the `Document` is built.
+        if let Some(root) = arena.iter().next() {
+            let root_id = arena.get_node_id(root).expect("arena root has a node id");
+            for child in root_id.children(&arena) {
+                if arena.get(child).expect("child exists").get().is_attr() {
+                    return Err(ParseError::coded(
+                        ErrorCode::D05,
+                        "attribute cannot appear at the root of an XML document",
+                    ));
+                }
+            }
+        }
+        Ok(crate::treebird::Document::from_content_arena(&arena))
+    }
+
+    /// Parse `input` and return the internal indextree arena.
+    ///
+    /// Internal build representation (the arena and [`Content`] are build-phase
+    /// mechanism — ARCHITECTURE.md ADR 1). Used by the grammar bootstrap and
+    /// internal tests; consumers use [`Parser::parse`].
+    pub(crate) fn parse_to_arena(&mut self, input: &str) -> Result<Arena<Content>, ParseError> {
         let mut session = ParseSession::default();
         // E003: strip UTF-8 BOM (U+FEFF) before parsing
         let input = input.trim_start_matches('\u{FEFF}');
         self.parse_with_session(input, &mut session)
-    }
-
-    /// Parse `input` and return the owned public output tree ([`crate::treebird::Document`]).
-    ///
-    /// This is the structured, indextree-free entry point for consumers. The
-    /// internal indextree build representation stays private behind the
-    /// conversion at the boundary.
-    pub fn parse_to_document(
-        &mut self,
-        input: &str,
-    ) -> Result<crate::treebird::Document, ParseError> {
-        let arena = self.parse(input)?;
-        Ok(crate::treebird::Document::from_content_arena(&arena))
     }
 
     /// Parse with explicit session for statistics tracking and infinite loop detection
@@ -1284,6 +1292,7 @@ impl Parser {
 
     /// Print the per-phase wall-time breakdown (parse-loop arms + tree unpack) to stderr.
     /// Gated by the opt-in `--stats` flag via [`Parser::set_phase_report`].
+    #[allow(clippy::needless_range_loop)] // one index drives four parallel arrays
     fn print_phase_breakdown(&self, session: &ParseSession) {
         let labels = ["complete", "predict", "scan", "insert"];
         let loop_ns: u128 = session.phase_ns.iter().sum();
@@ -1630,7 +1639,7 @@ impl Parser {
                 task.pos,
                 self.traces.format_task(id),
                 self.traces.queue,
-                format!("{} +1", self.traces.queue)
+                self.traces.queue,
             );
             self.traces.queue.push_back(id, task.pos);
         }
@@ -1644,7 +1653,7 @@ impl Parser {
                 task.pos,
                 self.traces.format_task(id),
                 self.traces.queue,
-                format!("{} +1", self.traces.queue)
+                self.traces.queue,
             );
             self.traces.queue.push_front(id, task.pos);
         }
@@ -1789,7 +1798,8 @@ impl Parser {
     }
 
     /// Only for use in test sutes. Not guaranteed to be stable...
-    pub fn test_inspect_trace(&self, filter: Option<EarleyStr>) -> Vec<Task> {
+    #[cfg(test)]
+    pub(crate) fn test_inspect_trace(&self, filter: Option<EarleyStr>) -> Vec<Task> {
         match filter {
             Some(str) => self
                 .traces
@@ -1984,6 +1994,7 @@ impl Parser {
         attr_value
     }
 
+    #[allow(clippy::too_many_arguments)] // recursive tree walk threads the full span context
     fn unpack_parse_tree_internal(
         &self,
         arena: &mut Arena<Content>,
@@ -2050,7 +2061,7 @@ impl Parser {
                             self.unpack_parse_tree_internal(
                                 arena,
                                 nt_name,
-                                mark.clone(),
+                                *mark,
                                 alias.as_ref(),
                                 new_origin,
                                 *pos,
@@ -2146,18 +2157,16 @@ impl Parser {
         false
     }
 
-    pub fn tree_to_test_format(arena: &Arena<Content>) -> String {
+    #[cfg(test)]
+    pub(crate) fn tree_to_test_format(arena: &Arena<Content>) -> String {
         Self::tree_to_test_format_with_state(arena, false, false)
     }
 
-    pub fn tree_to_test_format_with_version(
-        arena: &Arena<Content>,
-        version_mismatch: bool,
-    ) -> String {
-        Self::tree_to_test_format_with_state(arena, version_mismatch, false)
-    }
-
-    pub fn tree_to_test_format_with_state(
+    /// Arena → XML string with `ixml:state` stamping. Test-only helper that
+    /// pins the arena→`Document`→XML path via characterization goldens; the
+    /// production path is [`crate::treebird::Document::to_xml_with_state`].
+    #[cfg(test)]
+    pub(crate) fn tree_to_test_format_with_state(
         arena: &Arena<Content>,
         version_mismatch: bool,
         ambiguous: bool,
@@ -2168,160 +2177,10 @@ impl Parser {
             .to_xml_with_state(version_mismatch, ambiguous)
     }
 
-    pub fn validate_xml_output(arena: &Arena<Content>) -> Result<(), ParseError> {
-        let root = arena.iter().next().unwrap();
-        let root_id = arena.get_node_id(root).unwrap();
-        let mut top_level_elements = 0;
-
-        for child in root_id.children(arena) {
-            match arena.get(child).unwrap().get() {
-                Content::Element(_) => top_level_elements += 1,
-                Content::Attribute(..) => {
-                    return Err(ParseError::coded(
-                        ErrorCode::D05,
-                        "attribute cannot appear at the root of an XML document",
-                    ));
-                }
-                Content::Text(text) if text.is_empty() => {}
-                Content::Text(_) => {
-                    return Err(ParseError::coded(
-                        ErrorCode::D06,
-                        "parse tree must contain exactly one top-level element",
-                    ));
-                }
-                Content::Root => {}
-            }
-        }
-
-        if top_level_elements != 1 {
-            return Err(ParseError::coded(
-                ErrorCode::D06,
-                "parse tree must contain exactly one top-level element",
-            ));
-        }
-
-        for child in root_id.children(arena) {
-            Self::validate_xml_output_recurse(arena, child)?;
-        }
-
-        Ok(())
-    }
-
-    fn validate_xml_output_recurse(arena: &Arena<Content>, nid: NodeId) -> Result<(), ParseError> {
-        match arena.get(nid).unwrap().get() {
-            Content::Root => {}
-            Content::Element(name) => {
-                if !Self::is_xml_name(name) {
-                    return Err(ParseError::coded(
-                        ErrorCode::D03,
-                        format!("element name '{name}' is not an XML name"),
-                    ));
-                }
-
-                let mut seen_attrs = HashSet::new();
-                for attr_child in nid
-                    .children(arena)
-                    .filter(|n| arena.get(*n).unwrap().get().is_attr())
-                {
-                    if let Content::Attribute(attr_name, attr_value) =
-                        arena.get(attr_child).unwrap().get()
-                    {
-                        if attr_name == "xmlns" {
-                            return Err(ParseError::coded(
-                                ErrorCode::D07,
-                                "attribute name 'xmlns' is reserved",
-                            ));
-                        }
-                        if !Self::is_xml_name(attr_name) {
-                            return Err(ParseError::coded(
-                                ErrorCode::D03,
-                                format!("attribute name '{attr_name}' is not an XML name"),
-                            ));
-                        }
-                        if !seen_attrs.insert(attr_name.as_str()) {
-                            return Err(ParseError::coded(
-                                ErrorCode::D02,
-                                format!("duplicate attribute '{attr_name}'"),
-                            ));
-                        }
-                        Self::validate_xml_chars(attr_value)?;
-                    }
-                }
-
-                for child in nid.children(arena) {
-                    Self::validate_xml_output_recurse(arena, child)?;
-                }
-            }
-            Content::Attribute(_, value) => {
-                Self::validate_xml_chars(value)?;
-            }
-            Content::Text(value) => {
-                Self::validate_xml_chars(value)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn validate_xml_chars(value: &str) -> Result<(), ParseError> {
-        if let Some(ch) = value.chars().find(|ch| !Self::is_xml_char(*ch)) {
-            return Err(ParseError::coded(
-                ErrorCode::D04,
-                format!("character U+{:04X} is not permitted in XML", ch as u32),
-            ));
-        }
-        Ok(())
-    }
-
-    fn is_xml_char(ch: char) -> bool {
-        matches!(
-            ch as u32,
-            0x09 | 0x0A | 0x0D | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF
-        )
-    }
-
-    fn is_xml_name(name: &str) -> bool {
-        let mut chars = name.chars();
-        let Some(first) = chars.next() else {
-            return false;
-        };
-        Self::is_xml_name_start_char(first) && chars.all(Self::is_xml_name_char)
-    }
-
-    fn is_xml_name_start_char(ch: char) -> bool {
-        matches!(
-            ch as u32,
-            0x3A
-                | 0x41..=0x5A
-                | 0x5F
-                | 0x61..=0x7A
-                | 0xC0..=0xD6
-                | 0xD8..=0xF6
-                | 0xF8..=0x2FF
-                | 0x370..=0x37D
-                | 0x37F..=0x1FFF
-                | 0x200C..=0x200D
-                | 0x2070..=0x218F
-                | 0x2C00..=0x2FEF
-                | 0x3001..=0xD7FF
-                | 0xF900..=0xFDCF
-                | 0xFDF0..=0xFFFD
-                | 0x10000..=0xEFFFF
-        )
-    }
-
-    fn is_xml_name_char(ch: char) -> bool {
-        Self::is_xml_name_start_char(ch)
-            || matches!(
-                ch as u32,
-                0x2D | 0x2E | 0x30..=0x39 | 0xB7 | 0x0300..=0x036F | 0x203F..=0x2040
-            )
-    }
-
     /// Helper function for working with indextree
     /// Given a `NodeId` (that should be an element) get all the Attribute nodes
     /// Returns an easily-digestiable `HashMap` of Name -> Value
-    pub fn get_attributes(arena: &Arena<Content>, elem: NodeId) -> HashMap<String, String> {
+    pub(crate) fn get_attributes(arena: &Arena<Content>, elem: NodeId) -> HashMap<String, String> {
         elem.children(arena)
             // from NodeId to Content...
             .map(|n| arena.get(n).unwrap().get())
@@ -2336,7 +2195,7 @@ impl Parser {
     /// get all immediate element children
     /// Returns a Vec of pairs of (Element Name , `NodeId`)
     /// Roughly like the `XPath` child axis
-    pub fn get_child_elements(arena: &Arena<Content>, nid: NodeId) -> Vec<(String, NodeId)> {
+    pub(crate) fn get_child_elements(arena: &Arena<Content>, nid: NodeId) -> Vec<(String, NodeId)> {
         nid.children(arena)
             // fist pair up as (&Content, NodeId)
             .map(|nid| (arena.get(nid).unwrap().get(), nid))
@@ -2350,7 +2209,7 @@ impl Parser {
     /// Helper function for working with indextree
     /// get all immediate element children matching a given name
     /// Returns a Vec of `NodeId`
-    pub fn get_child_elements_named(
+    pub(crate) fn get_child_elements_named(
         arena: &Arena<Content>,
         nid: NodeId,
         name: &str,
@@ -2502,7 +2361,7 @@ mod tests {
         let mut parser = Parser::new(grammar);
 
         // This should not hang or panic - should complete gracefully
-        let result = parser.parse("a");
+        let result = parser.parse_to_arena("a");
         assert!(result.is_ok(), "Simple parse should succeed");
     }
 
@@ -2519,7 +2378,7 @@ mod tests {
 
         // This previously caused infinite loop - should now complete (may fail parsing but shouldn't hang)
         let input = "Now is the time\nFor all good people\nTo have fun.";
-        let result = parser.parse(input);
+        let result = parser.parse_to_arena(input);
         // We don't care if it succeeds or fails, just that it doesn't hang
         let _ = result;
     }
@@ -2532,7 +2391,7 @@ mod tests {
         let mut parser = Parser::new(grammar);
 
         let input = "abc";
-        let _ = parser.parse(input);
+        let _ = parser.parse_to_arena(input);
 
         // Check that no task in the trace has a position > input.len()
         let trace = parser.test_inspect_trace(None);
@@ -2561,14 +2420,14 @@ mod tests {
         let mut parser = Parser::new(grammar);
 
         // Empty input should not cause bounds violations
-        let result = parser.parse("");
+        let result = parser.parse_to_arena("");
         let _ = result; // May succeed or fail, but shouldn't hang
 
         // Verify no positions exceed 0 (the length of empty input)
         let trace = parser.test_inspect_trace(None);
         for task in trace {
             assert!(
-                task.pos <= 0,
+                task.pos == 0,
                 "Task position {} exceeds empty input length",
                 task.pos
             );
@@ -2582,7 +2441,7 @@ mod tests {
         let mut parser = Parser::new(grammar);
 
         // Single character input
-        let result = parser.parse("a");
+        let result = parser.parse_to_arena("a");
         let _ = result; // May succeed or fail
 
         // Verify no positions exceed 1
@@ -2615,12 +2474,12 @@ mod tests {
                 let mut parser = Parser::new(grammar);
 
                 // The grammar should match 'A'
-                let input_a = parser.parse("A");
+                let input_a = parser.parse_to_arena("A");
                 assert!(input_a.is_ok(), "Grammar should match 'A'");
 
                 // The grammar should NOT match 'B' - this is the key test
                 let mut parser = Parser::new(Grammar::from_ixml_str(grammar_str).unwrap());
-                let input_b = parser.parse("B");
+                let input_b = parser.parse_to_arena("B");
                 if input_b.is_ok() {
                     panic!("BUG DETECTED: Grammar incorrectly matches 'B' when it should only match 'A'. This indicates the attribute extraction bug where single-character strings get corrupted.");
                 }
@@ -2656,12 +2515,12 @@ mod tests {
                 let mut parser = Parser::new(grammar);
 
                 // Test that it correctly matches digits
-                let digit_result = parser.parse("5");
+                let digit_result = parser.parse_to_arena("5");
                 assert!(digit_result.is_ok(), "Should match digit '5'");
 
                 // Test that it rejects non-digits
                 let mut parser2 = Parser::new(Grammar::from_ixml_str(problematic_grammar).unwrap());
-                let letter_result = parser2.parse("A");
+                let letter_result = parser2.parse_to_arena("A");
                 assert!(letter_result.is_err(), "Should not match letter 'A'");
             }
             Err(e) => {
@@ -2719,7 +2578,7 @@ mod tests {
             assert!(result.is_ok(), "Grammar should parse: {}", grammar_str);
 
             let mut parser = Parser::new(result.unwrap());
-            let parse_result = parser.parse(input);
+            let parse_result = parser.parse_to_arena(input);
 
             if should_match {
                 assert!(
@@ -2758,12 +2617,12 @@ mod tests {
             let mut parser = Parser::new(grammar);
 
             // Should match 'A' (first character of "AB")
-            let input_a = parser.parse("A");
+            let input_a = parser.parse_to_arena("A");
             assert!(input_a.is_ok(), "Grammar should match 'A' from [\"AB\"]");
 
             // Should also match 'B' (second character of "AB")
             let mut parser = Parser::new(Grammar::from_ixml_str(grammar_str).unwrap());
-            let input_b = parser.parse("B");
+            let input_b = parser.parse_to_arena("B");
             assert!(input_b.is_ok(), "Grammar should match 'B' from [\"AB\"]");
         }
     }
@@ -2806,7 +2665,7 @@ mod tests {
 
         // Test with input "5\t."
         let mut parser = Parser::new(hand_built);
-        let result = parser.parse("5\t.");
+        let result = parser.parse_to_arena("5\t.");
         assert!(
             result.is_ok(),
             "Hand-built range grammar should parse '5\\t.'"
@@ -2897,14 +2756,13 @@ mod tests {
         println!("\n=== Testing input: '{}' ===", input);
 
         let mut parser = Parser::new(mini_ixml);
-        let result = parser.parse(input);
+        let result = parser.parse_to_arena(input);
 
         match result {
             Ok(arena) => {
                 let output = Parser::tree_to_test_format(&arena);
                 println!("SUCCESS: {}", output);
-                // If this succeeds, the issue is elsewhere
-                assert!(true, "Minimal ixml subset should parse simple rules");
+                // If this succeeds, the issue is elsewhere (no assertion needed).
             }
             Err(e) => {
                 println!("FAILURE: {:?}", e);
@@ -2979,7 +2837,7 @@ mod tests {
                 // Now test that we can actually USE the grammar to parse input
                 // The empty alternative should match empty input
                 let mut parser = Parser::new(grammar.clone());
-                match parser.parse("") {
+                match parser.parse_to_arena("") {
                     Ok(_) => {
                         println!("✓ Successfully parsed empty input with empty alternative");
                     }
@@ -2993,7 +2851,7 @@ mod tests {
 
                 // And the non-empty alternative should match "done"
                 let mut parser2 = Parser::new(grammar.clone());
-                match parser2.parse("done") {
+                match parser2.parse_to_arena("done") {
                     Ok(_) => {
                         println!("✓ Successfully parsed 'done' with non-empty alternative");
                     }
@@ -3050,13 +2908,13 @@ mod tests {
         println!("=== PREMATURE QUEUE EMPTY DEBUG ===");
         println!("Grammar: doc: item++space. item: \"x\". space: \" \".");
         println!("Input: x x");
-        println!("");
+        println!();
 
         // Parse input "x x"
         let mut parser = Parser::new(g);
         let input = "x x";
 
-        match parser.parse(input) {
+        match parser.parse_to_arena(input) {
             Ok(tree) => {
                 println!("✓ Parse successful!");
                 let xml_output = Parser::tree_to_test_format(&tree);

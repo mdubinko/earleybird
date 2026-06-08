@@ -358,7 +358,8 @@ Planned advanced debugging features:
 As of May 1, 2023, no AI generated code has been used in any part of this project.
 
 The core concepts and architecture were all built 'by hand' resulting in a basic running app.
-After May 2023, I started experimenting with AI to buid out the conformance harness, and as tools improved,
+This foundational design comprises the core of the project down to this date.
+After a hiatus, I started experimenting with AI to buid out the conformance harness, and as tools improved,
 to help identify and fill conformance gaps, and improve performance.
 
 # Test Suite Setup

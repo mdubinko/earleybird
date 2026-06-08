@@ -48,8 +48,8 @@ use unicode_character_database::general_category::{
 
 #[derive(Clone, Copy, Debug)]
 /// Complete implementation of Unicode General Categories for iXML 1.0 spec
-/// See: https://en.wikipedia.org/wiki/Unicode_character_property#General_Category
-/// See: https://invisiblexml.org/1.0/#class
+/// See: <https://en.wikipedia.org/wiki/Unicode_character_property#General_Category>
+/// See: <https://invisiblexml.org/1.0/#class>
 pub enum UnicodeRange {
     // Major categories (single letter)
     C, // Other
@@ -110,14 +110,43 @@ impl UnicodeRange {
     pub fn is_valid(name: &str) -> bool {
         matches!(
             name,
-            "C" | "L" | "M" | "N" | "P" | "S" | "Z"
-                | "LC" | "Ll" | "Lm" | "Lo" | "Lt" | "Lu"
-                | "Mc" | "Me" | "Mn"
-                | "Nd" | "Nl" | "No"
-                | "Pc" | "Pd" | "Pe" | "Pf" | "Pi" | "Po" | "Ps"
-                | "Sc" | "Sk" | "Sm" | "So"
-                | "Zl" | "Zp" | "Zs"
-                | "Cc" | "Cf" | "Cn" | "Co" | "Cs"
+            "C" | "L"
+                | "M"
+                | "N"
+                | "P"
+                | "S"
+                | "Z"
+                | "LC"
+                | "Ll"
+                | "Lm"
+                | "Lo"
+                | "Lt"
+                | "Lu"
+                | "Mc"
+                | "Me"
+                | "Mn"
+                | "Nd"
+                | "Nl"
+                | "No"
+                | "Pc"
+                | "Pd"
+                | "Pe"
+                | "Pf"
+                | "Pi"
+                | "Po"
+                | "Ps"
+                | "Sc"
+                | "Sk"
+                | "Sm"
+                | "So"
+                | "Zl"
+                | "Zp"
+                | "Zs"
+                | "Cc"
+                | "Cf"
+                | "Cn"
+                | "Co"
+                | "Cs"
         )
     }
 

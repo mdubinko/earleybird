@@ -1,7 +1,7 @@
 //! treebird: an owned, public output tree for parse results.
 //!
-//! The parser builds results in a private `indextree` arena over
-//! [`crate::parser::Content`]; that arena is the right shape for the build phase
+//! The parser builds results in a private `indextree` arena over the internal
+//! `Content` type; that arena is the right shape for the build phase
 //! but the wrong type to EXPOSE (an indextree major bump would be a breaking
 //! change for earleybird, and consumers would need their own indextree dep).
 //!
@@ -13,7 +13,7 @@
 
 use indextree::{Arena, NodeId};
 
-use crate::parser::Content;
+use crate::parser::{Content, ErrorCode, ParseError};
 
 /// The root of an owned output tree. Holds the top-level nodes (normally a
 /// single element; the type permits more so the version-mismatch / ambiguous
@@ -161,7 +161,11 @@ impl Document {
     /// Serialize, optionally stamping an `ixml:state` annotation onto the
     /// top-level element(s). `version_mismatch` takes precedence over
     /// `ambiguous` (matching the historical conformance-harness behavior).
-    pub(crate) fn to_xml_with_state(&self, version_mismatch: bool, ambiguous: bool) -> String {
+    ///
+    /// Not part of the public contract (the `ixml:state` stamping is a
+    /// conformance-harness / CLI concern); use [`Document::to_xml`] instead.
+    #[doc(hidden)]
+    pub fn to_xml_with_state(&self, version_mismatch: bool, ambiguous: bool) -> String {
         let extra_attrs: Option<Vec<(&str, &str)>> = if version_mismatch {
             Some(vec![
                 ("xmlns", ""),
@@ -215,6 +219,149 @@ fn node_from_arena(arena: &Arena<Content>, nid: NodeId) -> Option<Node> {
             })
         }
     }
+}
+
+impl Document {
+    /// Validate that this document is well-formed XML output, returning the
+    /// first violation as a dynamic-error [`ParseError`].
+    ///
+    /// Checks the XML rules that are representable on this tree: **D06** (exactly
+    /// one top-level element), **D03** (names that are not XML names), **D07**
+    /// (the reserved `xmlns` attribute), **D02** (duplicate attributes), and
+    /// **D04** (characters not permitted in XML). **D05** (an attribute at the
+    /// document root) is unrepresentable here — attributes belong to elements —
+    /// and is enforced earlier, by [`crate::parser::Parser::parse`] at the arena
+    /// boundary, before the `Document` is built.
+    pub fn validate(&self) -> Result<(), ParseError> {
+        // D06: exactly one top-level element. A non-empty top-level text node
+        // cannot be serialized as a single-rooted document; an empty one is
+        // ignored (it contributes nothing to the output).
+        let mut elements = 0usize;
+        for child in &self.children {
+            match child {
+                Node::Element { .. } => elements += 1,
+                Node::Text(t) if t.is_empty() => {}
+                Node::Text(_) => return Err(d06()),
+            }
+        }
+        if elements != 1 {
+            return Err(d06());
+        }
+        for child in &self.children {
+            validate_node(child)?;
+        }
+        Ok(())
+    }
+}
+
+fn d06() -> ParseError {
+    ParseError::coded(
+        ErrorCode::D06,
+        "parse tree must contain exactly one top-level element",
+    )
+}
+
+/// Recursively validate one node's XML well-formedness (D02/D03/D04/D07).
+fn validate_node(node: &Node) -> Result<(), ParseError> {
+    match node {
+        Node::Element {
+            name,
+            attributes,
+            children,
+        } => {
+            if !is_xml_name(name) {
+                return Err(ParseError::coded(
+                    ErrorCode::D03,
+                    format!("element name '{name}' is not an XML name"),
+                ));
+            }
+            let mut seen_attrs = std::collections::HashSet::new();
+            for (key, value) in attributes {
+                if key == "xmlns" {
+                    return Err(ParseError::coded(
+                        ErrorCode::D07,
+                        "attribute name 'xmlns' is reserved",
+                    ));
+                }
+                if !is_xml_name(key) {
+                    return Err(ParseError::coded(
+                        ErrorCode::D03,
+                        format!("attribute name '{key}' is not an XML name"),
+                    ));
+                }
+                if !seen_attrs.insert(key.as_str()) {
+                    return Err(ParseError::coded(
+                        ErrorCode::D02,
+                        format!("duplicate attribute '{key}'"),
+                    ));
+                }
+                validate_chars(value)?;
+            }
+            for child in children {
+                validate_node(child)?;
+            }
+        }
+        Node::Text(value) => validate_chars(value)?,
+    }
+    Ok(())
+}
+
+fn validate_chars(value: &str) -> Result<(), ParseError> {
+    if let Some(ch) = value.chars().find(|ch| !is_xml_char(*ch)) {
+        return Err(ParseError::coded(
+            ErrorCode::D04,
+            format!("character U+{:04X} is not permitted in XML", ch as u32),
+        ));
+    }
+    Ok(())
+}
+
+// ---- XML name / character predicates (XML 1.0) ----------------------------
+// These define well-formedness of the *output*, so they live with the output
+// tree (ARCHITECTURE.md ADR 6), not with the parser.
+
+fn is_xml_char(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x09 | 0x0A | 0x0D | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF
+    )
+}
+
+fn is_xml_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    is_xml_name_start_char(first) && chars.all(is_xml_name_char)
+}
+
+fn is_xml_name_start_char(ch: char) -> bool {
+    matches!(
+        ch as u32,
+        0x3A | 0x41..=0x5A
+            | 0x5F
+            | 0x61..=0x7A
+            | 0xC0..=0xD6
+            | 0xD8..=0xF6
+            | 0xF8..=0x2FF
+            | 0x370..=0x37D
+            | 0x37F..=0x1FFF
+            | 0x200C..=0x200D
+            | 0x2070..=0x218F
+            | 0x2C00..=0x2FEF
+            | 0x3001..=0xD7FF
+            | 0xF900..=0xFDCF
+            | 0xFDF0..=0xFFFD
+            | 0x10000..=0xEFFFF
+    )
+}
+
+fn is_xml_name_char(ch: char) -> bool {
+    is_xml_name_start_char(ch)
+        || matches!(
+            ch as u32,
+            0x2D | 0x2E | 0x30..=0x39 | 0xB7 | 0x0300..=0x036F | 0x203F..=0x2040
+        )
 }
 
 #[cfg(test)]
@@ -327,10 +474,7 @@ mod tests {
             Document::of([Node::el(
                 "a",
                 [],
-                [
-                    Node::el("b", [], [Node::text("x")]),
-                    Node::el("c", [], []),
-                ]
+                [Node::el("b", [], [Node::text("x")]), Node::el("c", [], []),]
             )])
         );
     }
@@ -368,10 +512,7 @@ mod tests {
         let doc = Document::of([Node::el(
             "a",
             [attr("x", "1"), attr("y", "2")],
-            [
-                Node::el("b", [], [Node::text("hi")]),
-                Node::el("c", [], []),
-            ],
+            [Node::el("b", [], [Node::text("hi")]), Node::el("c", [], [])],
         )]);
         assert_eq!(doc.to_xml(), r#"<a x="1" y="2"><b>hi</b><c/></a>"#);
     }

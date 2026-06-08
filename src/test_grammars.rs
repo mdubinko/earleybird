@@ -26,6 +26,10 @@ impl SmokeTests {
         self.tests.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.tests.is_empty()
+    }
+
     /// add one or more test cases against a provided grammar
     fn add<T: ParserTestSet>(&mut self, testset: &T) {
         let name = testset.get_name();
@@ -394,9 +398,8 @@ impl ParserTestSet for SmokeAttr {
     }
 }
 
-/// turning off rules or literals with -
-/// Several different ways to mute...
-
+// turning off rules or literals with -
+// Several different ways to mute...
 impl ParserTestSet for SmokeMute {
     fn get_name(&self) -> &'static str {
         "SmokeMute"
@@ -440,7 +443,7 @@ impl ParserTestSet for SmokeMute {
     }
 }
 
-/// The example grammar from https://en.wikipedia.org/wiki/Earley_parser
+/// The example grammar from <https://en.wikipedia.org/wiki/Earley_parser>
 impl ParserTestSet for SmokeWiki {
     fn get_name(&self) -> &'static str {
         "SmokeWiki"

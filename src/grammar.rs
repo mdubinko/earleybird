@@ -1,4 +1,4 @@
-//! An ixml grammar definition based on https://invisiblexml.org/
+//! An ixml grammar definition based on <https://invisiblexml.org/>
 //!
 //! ixml grammars are defined down to the character-level -- there is no "lexing" phase.
 //!
@@ -11,10 +11,10 @@
 //!
 //! In the example gramamr there are two possible branches for the "doc" rule - either ("A","B") or ("C","D")
 //! A `BranchingRule` captures all possible alternatives (called 'alts' in the ixml spec)
-//! A `BranchingRule` contains a Mark, a Vec<Rule>, and an `is_internal` flag.
+//! A `BranchingRule` contains a Mark, a `Vec<Rule>`, and an `is_internal` flag.
 //! (In ixml, a Mark can be a @ prefix indicating an attribute, or a - prefix indicating to skip over this term)
 //!
-//! A (non-branching) Rule is always a sequence of zero or more Factors, a Vec<Factor>
+//! A (non-branching) Rule is always a sequence of zero or more Factors, a `Vec<Factor>`
 //! A Factor is an enum of either
 //! `Terminal`(TMark, Lit)  (a `TMark` is like a Mark, except there is no @ prefix)
 //! or
@@ -26,14 +26,10 @@
 //! This module includes an ergonomic interface for building grammars by hand,
 //! or from the output of upstream processes (including ixml parsing!)
 
-use crate::{
-    debug::DebugLevel,
-    parser::Parser,
-    unicode_ranges::UnicodeRange,
-};
+use crate::EarleyStr;
+use crate::{debug::DebugLevel, parser::Parser, unicode_ranges::UnicodeRange};
 use crate::{debug_grammar, ixml_bootstrap::bootstrap_ixml_grammar};
 use indextree::{Arena, NodeId};
-use crate::EarleyStr;
 use std::{
     cell::{Cell, OnceCell},
     collections::HashMap,
@@ -111,6 +107,12 @@ impl PartialEq for Grammar {
 }
 
 impl Eq for Grammar {}
+
+impl Default for Grammar {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl Grammar {
     pub fn new() -> Self {
@@ -193,11 +195,11 @@ impl Grammar {
     }
 
     pub fn get_root_definition_name(&self) -> Option<String> {
-        self.defn_order.get(0).map(EarleyStr::to_string)
+        self.defn_order.first().map(EarleyStr::to_string)
     }
 
     pub fn get_root_definition(&self) -> Result<Option<&BranchingRule>, crate::parser::ParseError> {
-        match self.defn_order.get(0) {
+        match self.defn_order.first() {
             Some(s) => Ok(Some(self.get_definition(s)?)),
             None => Ok(None),
         }
@@ -325,7 +327,7 @@ impl Grammar {
                     let alt_key = NullabilityKey::Alternative(rule_name.clone(), alt_index);
 
                     // Compute nullability for this alternative
-                    let is_nullable = self.is_rule_nullable_with_cache(&rule, &cache)?;
+                    let is_nullable = self.is_rule_nullable_with_cache(rule, &cache)?;
 
                     // Update the cache if the value changed
                     let old_value = cache[&alt_key];
@@ -489,7 +491,7 @@ impl Grammar {
         let mut ixml_parser = Parser::new(bootstrap_ixml_grammar());
         ixml_parser.set_stats_enabled(stats_enabled);
         ixml_parser.set_phase_report(phase_report);
-        let ixml_arena = match ixml_parser.parse(&validation_result.processed_text) {
+        let ixml_arena = match ixml_parser.parse_to_arena(&validation_result.processed_text) {
             Ok(arena) => arena,
             Err(parse_error) => {
                 return Err(GrammarConstructionError::BootstrapParseError(parse_error))
@@ -508,7 +510,7 @@ impl Grammar {
     }
 
     /// Convert a parse tree (Arena<Content>) from iXML parsing into a Grammar
-    pub fn from_parse_tree(
+    pub(crate) fn from_parse_tree(
         arena: &Arena<crate::parser::Content>,
     ) -> Result<Grammar, crate::parser::ParseError> {
         use crate::parser::{Content, Parser};
@@ -547,6 +549,7 @@ impl Grammar {
         // Debug: Track all elements we encounter
         for nid in root_id.descendants(arena) {
             let content = arena.get(nid).unwrap().get();
+            #[allow(clippy::single_match)] // kept as match; more arms are likely here
             match content {
                 Content::Element(name) => {
                     *element_counts.entry(name.clone()).or_insert(0) += 1;
@@ -670,7 +673,9 @@ impl Grammar {
                         if !g.definitions.contains_key(name.as_str()) {
                             return Err(crate::parser::ParseError::coded(
                                 crate::parser::ErrorCode::S02,
-                                format!("nonterminal '{name}' is used but not defined in the grammar"),
+                                format!(
+                                    "nonterminal '{name}' is used but not defined in the grammar"
+                                ),
                             ));
                         }
                     }
@@ -799,7 +804,8 @@ impl Grammar {
             "alts" => {
                 let alt_elements = Parser::get_child_elements_named(arena, nid, "alt");
                 if alt_elements.len() == 1 {
-                    seq = Grammar::append_factor_from_tree(seq, "alt", alt_elements[0], arena, ctx)?;
+                    seq =
+                        Grammar::append_factor_from_tree(seq, "alt", alt_elements[0], arena, ctx)?;
                 } else {
                     let altrules: Vec<SeqBuilder> = alt_elements
                         .iter()
@@ -810,7 +816,8 @@ impl Grammar {
             }
             "alt" => {
                 for (child_name, child_nid) in Parser::get_child_elements(arena, nid) {
-                    seq = Grammar::append_factor_from_tree(seq, &child_name, child_nid, arena, ctx)?;
+                    seq =
+                        Grammar::append_factor_from_tree(seq, &child_name, child_nid, arena, ctx)?;
                 }
             }
             "literal" => {
@@ -833,13 +840,12 @@ impl Grammar {
                         seq = seq.mark_str(string_value, tmark);
                     }
                 } else if let Some(hex_value) = attrs.get("hex") {
-                    let code_point =
-                        u32::from_str_radix(hex_value, 16).map_err(|_| {
-                            crate::parser::ParseError::coded(
-                                crate::parser::ErrorCode::S06,
-                                format!("invalid hexadecimal value '#{hex_value}'"),
-                            )
-                        })?;
+                    let code_point = u32::from_str_radix(hex_value, 16).map_err(|_| {
+                        crate::parser::ParseError::coded(
+                            crate::parser::ErrorCode::S06,
+                            format!("invalid hexadecimal value '#{hex_value}'"),
+                        )
+                    })?;
                     let ch = Self::validate_hex_codepoint(code_point, hex_value)?;
                     seq = seq.mark_ch(ch, tmark);
                 }
@@ -927,7 +933,7 @@ impl Grammar {
             "repeat0" => {
                 let children = Parser::get_child_elements(arena, nid);
                 let expr = children
-                    .get(0)
+                    .first()
                     .expect("Should always be at least one child here");
                 let repeat_this_node = expr.1;
                 let mut repeat_this = ctx.seq();
@@ -950,7 +956,7 @@ impl Grammar {
             "repeat1" => {
                 let children = Parser::get_child_elements(arena, nid);
                 let expr = children
-                    .get(0)
+                    .first()
                     .expect("Should always be at least one child here");
                 let repeat_this_node = expr.1;
                 let mut repeat_this = ctx.seq();
@@ -1039,11 +1045,16 @@ impl Grammar {
 
     /// Process hex member like #41
     /// S07/S08: validate a raw code-point number and convert to char
-    fn validate_hex_codepoint(code: u32, hex_attr: &str) -> Result<char, crate::parser::ParseError> {
+    fn validate_hex_codepoint(
+        code: u32,
+        hex_attr: &str,
+    ) -> Result<char, crate::parser::ParseError> {
         if code > 0x10FFFF {
             return Err(crate::parser::ParseError::coded(
                 crate::parser::ErrorCode::S07,
-                format!("hex value #{hex_attr} is outside the Unicode code-point range (0..10FFFF)"),
+                format!(
+                    "hex value #{hex_attr} is outside the Unicode code-point range (0..10FFFF)"
+                ),
             ));
         }
         if (0xD800..=0xDFFF).contains(&code) {
@@ -1061,7 +1072,10 @@ impl Grammar {
         Ok(char::from_u32(code).expect("validated above"))
     }
 
-    fn process_hex_member(hex_attr: &str, lit_builder: LitBuilder) -> Result<LitBuilder, crate::parser::ParseError> {
+    fn process_hex_member(
+        hex_attr: &str,
+        lit_builder: LitBuilder,
+    ) -> Result<LitBuilder, crate::parser::ParseError> {
         let hex_value = u32::from_str_radix(hex_attr, 16).map_err(|_| {
             crate::parser::ParseError::coded(
                 crate::parser::ErrorCode::S06,
@@ -1073,7 +1087,10 @@ impl Grammar {
     }
 
     /// Process Unicode class member like L, LC, Nd, etc.
-    fn process_class_member(class_attr: &str, lit_builder: LitBuilder) -> Result<LitBuilder, crate::parser::ParseError> {
+    fn process_class_member(
+        class_attr: &str,
+        lit_builder: LitBuilder,
+    ) -> Result<LitBuilder, crate::parser::ParseError> {
         if !UnicodeRange::is_valid(class_attr) {
             return Err(crate::parser::ParseError::coded(
                 crate::parser::ErrorCode::S10,
@@ -1226,10 +1243,8 @@ impl BranchingRule {
 }
 
 /// Representation of marks on rules or nonterminal references.
-/// These get used often, so the varient names are kept short
-/// @ for attribute
-/// - for hidden
-/// ^ for visible (default)
+/// These get used often, so the varient names are kept short:
+/// `@` for attribute, `-` for hidden, `^` for visible (default).
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum Mark {
     Default,
@@ -1251,9 +1266,8 @@ impl fmt::Display for Mark {
 
 /// Representation of tmarks on terminals
 /// (Much like Mark, except no Attr variant)
-/// These get used often, so the varient names are kept short
-/// - for hidden
-/// ^ for visible (default)
+/// These get used often, so the varient names are kept short:
+/// `-` for hidden, `^` for visible (default).
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum TMark {
     Default,
@@ -1289,6 +1303,10 @@ impl Rule {
 
     pub fn len(&self) -> usize {
         self.factors.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.factors.is_empty()
     }
 
     pub fn add_term(&mut self, term: Factor) {
@@ -1641,10 +1659,7 @@ impl SeqBuilder {
     /// record an entirely new (internal, synthesized) named rule
     fn syn_rule(mut self, name: &str, mut rb: Self) -> Self {
         self = self.siphon(&mut rb);
-        let vec = self
-            .syn_rules
-            .entry(EarleyStr::new(name))
-            .or_insert(Vec::new());
+        let vec = self.syn_rules.entry(EarleyStr::new(name)).or_default();
         vec.push(rb);
         let smol_name = EarleyStr::new(name);
         if !self.defn_order.contains(&smol_name) {
@@ -1810,8 +1825,14 @@ mod tests {
         let g1 = sample_grammar();
         let g2 = g1.clone();
         let _ = g2.is_nullable("a").unwrap(); // populates g2's cache only
-        assert!(g1.nullability_cache.get().is_none(), "g1 cache must be empty");
-        assert!(g2.nullability_cache.get().is_some(), "g2 cache must be populated");
+        assert!(
+            g1.nullability_cache.get().is_none(),
+            "g1 cache must be empty"
+        );
+        assert!(
+            g2.nullability_cache.get().is_some(),
+            "g2 cache must be populated"
+        );
         assert_eq!(g1, g2, "differing cache state must not affect equality");
     }
 
@@ -1846,7 +1867,7 @@ mod tests {
         let ixml: &str = r#"doc = "A", "B"."#;
         //                    012345678901234
         let mut parser = Parser::new(g);
-        let arena = parser.parse(ixml)?;
+        let arena = parser.parse_to_arena(ixml)?;
         let result = Parser::tree_to_test_format(&arena);
         let expected = r#"<ixml><rule name="doc"><alt><literal string="A"/><literal string="B"/></alt></rule></ixml>"#;
         assert_eq!(result, expected);
@@ -1857,7 +1878,7 @@ mod tests {
         let mut gen_parser = Parser::new(gen_grammar);
         // now do a second pass, with the just-generated grammar
         let input2 = "AB";
-        let gen_arena = gen_parser.parse(input2)?;
+        let gen_arena = gen_parser.parse_to_arena(input2)?;
         let result2 = Parser::tree_to_test_format(&gen_arena);
         let expected2 = "<doc>AB</doc>";
         assert_eq!(result2, expected2);
@@ -1871,7 +1892,7 @@ mod tests {
         let g = bootstrap_ixml_grammar();
         let ixml: &str = r#"doc = -"A"."#;
         let mut parser = Parser::new(g);
-        let arena = parser.parse(ixml)?;
+        let arena = parser.parse_to_arena(ixml)?;
         let result = Parser::tree_to_test_format(&arena);
         assert!(
             result.contains("tmark=\"-\""),
@@ -2004,14 +2025,14 @@ mod tests {
 
         // Test 1: epsilon branch (empty input should match optional)
         let mut parser1 = crate::parser::Parser::new(g.clone());
-        let arena1 = parser1.parse("")?;
+        let arena1 = parser1.parse_to_arena("")?;
         let result1 = crate::parser::Parser::tree_to_test_format(&arena1);
         println!("Empty input parse result: {}", result1);
         assert!(result1.contains("<optional>") || result1.contains("<optional/>"));
 
         // Test 2: non-epsilon branch (input "a" should match base inside optional)
         let mut parser2 = crate::parser::Parser::new(g);
-        let arena2 = parser2.parse("a")?;
+        let arena2 = parser2.parse_to_arena("a")?;
         let result2 = crate::parser::Parser::tree_to_test_format(&arena2);
         println!("Input 'a' parse result: {}", result2);
         assert!(result2.contains("<optional>") || result2.contains("<optional/>"));
@@ -2048,14 +2069,14 @@ mod tests {
 
         // Test 1: zero repetitions (epsilon branch)
         let mut parser1 = crate::parser::Parser::new(g.clone());
-        let arena1 = parser1.parse("")?;
+        let arena1 = parser1.parse_to_arena("")?;
         let result1 = crate::parser::Parser::tree_to_test_format(&arena1);
         println!("Empty input parse result: {}", result1);
         assert!(result1.contains("<star>") || result1.contains("<star/>"));
 
         // Test 2: one repetition
         let mut parser2 = crate::parser::Parser::new(g.clone());
-        let arena2 = parser2.parse("a")?;
+        let arena2 = parser2.parse_to_arena("a")?;
         let result2 = crate::parser::Parser::tree_to_test_format(&arena2);
         println!("Input 'a' parse result: {}", result2);
         assert!(result2.contains("<star>") || result2.contains("<star/>"));
@@ -2063,7 +2084,7 @@ mod tests {
 
         // Test 3: multiple repetitions
         let mut parser3 = crate::parser::Parser::new(g);
-        let arena3 = parser3.parse("aaa")?;
+        let arena3 = parser3.parse_to_arena("aaa")?;
         let result3 = crate::parser::Parser::tree_to_test_format(&arena3);
         println!("Input 'aaa' parse result: {}", result3);
         assert!(result3.contains("<star>") || result3.contains("<star/>"));
@@ -2099,7 +2120,7 @@ mod tests {
 
         // Test 1: one repetition (minimum required)
         let mut parser1 = crate::parser::Parser::new(g.clone());
-        let arena1 = parser1.parse("a")?;
+        let arena1 = parser1.parse_to_arena("a")?;
         let result1 = crate::parser::Parser::tree_to_test_format(&arena1);
         println!("Input 'a' parse result: {}", result1);
         assert!(result1.contains("<plus>"));
@@ -2107,7 +2128,7 @@ mod tests {
 
         // Test 2: multiple repetitions
         let mut parser2 = crate::parser::Parser::new(g);
-        let arena2 = parser2.parse("aaa")?;
+        let arena2 = parser2.parse_to_arena("aaa")?;
         let result2 = crate::parser::Parser::tree_to_test_format(&arena2);
         println!("Input 'aaa' parse result: {}", result2);
         assert!(result2.contains("<plus>"));
@@ -2147,7 +2168,7 @@ mod tests {
 
         // Test 1: one item (no separator needed)
         let mut parser1 = crate::parser::Parser::new(g.clone());
-        let arena1 = parser1.parse("a")?;
+        let arena1 = parser1.parse_to_arena("a")?;
         let result1 = crate::parser::Parser::tree_to_test_format(&arena1);
         println!("Input 'a' parse result: {}", result1);
         assert!(result1.contains("<plus_sep>"));
@@ -2155,7 +2176,7 @@ mod tests {
 
         // Test 2: multiple items with separators
         let mut parser2 = crate::parser::Parser::new(g);
-        let arena2 = parser2.parse("a,a,a")?;
+        let arena2 = parser2.parse_to_arena("a,a,a")?;
         let result2 = crate::parser::Parser::tree_to_test_format(&arena2);
         println!("Input 'a,a,a' parse result: {}", result2);
         assert!(result2.contains("<plus_sep>"));
@@ -2195,14 +2216,14 @@ mod tests {
 
         // Test 1: zero items (epsilon)
         let mut parser1 = crate::parser::Parser::new(g.clone());
-        let arena1 = parser1.parse("")?;
+        let arena1 = parser1.parse_to_arena("")?;
         let result1 = crate::parser::Parser::tree_to_test_format(&arena1);
         println!("Empty input parse result: {}", result1);
         assert!(result1.contains("<star_sep>") || result1.contains("<star_sep/>"));
 
         // Test 2: one item (no separator needed)
         let mut parser2 = crate::parser::Parser::new(g.clone());
-        let arena2 = parser2.parse("a")?;
+        let arena2 = parser2.parse_to_arena("a")?;
         let result2 = crate::parser::Parser::tree_to_test_format(&arena2);
         println!("Input 'a' parse result: {}", result2);
         assert!(result2.contains("<star_sep>") || result2.contains("<star_sep/>"));
@@ -2210,7 +2231,7 @@ mod tests {
 
         // Test 3: multiple items with separators
         let mut parser3 = crate::parser::Parser::new(g);
-        let arena3 = parser3.parse("a,a,a")?;
+        let arena3 = parser3.parse_to_arena("a,a,a")?;
         let result3 = crate::parser::Parser::tree_to_test_format(&arena3);
         println!("Input 'a,a,a' parse result: {}", result3);
         assert!(result3.contains("<star_sep>") || result3.contains("<star_sep/>"));
@@ -2312,7 +2333,7 @@ mod tests {
 
         // Now examine the actual synthetic rules that were generated
         println!("\n=== Examining synthetic rules directly ===");
-        for (name, _rule) in &g.definitions {
+        for name in g.definitions.keys() {
             if name.contains("--test.f-") {
                 println!(
                     "Synthetic rule: {} -> nullable: {}",
@@ -2346,7 +2367,7 @@ mod tests {
 
         // Parse empty input with nullable synthetic rules
         let mut parser = crate::parser::Parser::new(g.clone());
-        let arena = parser.parse("")?;
+        let arena = parser.parse_to_arena("")?;
         let result = crate::parser::Parser::tree_to_test_format(&arena);
         println!("\nEmpty input parse result: {}", result);
 
