@@ -216,7 +216,7 @@ impl Parse {
                 if console_level != DebugLevel::Off {
                     debug_basic!("Grammar content: {}", grammar_content);
                 }
-                std::process::exit(1);
+                std::process::exit(e.exit_code() as i32);
             }
         };
 
@@ -268,7 +268,7 @@ impl Parse {
                     debug_basic!("Input content: {}", input_content);
                 }
                 earleybird::debug::debug_parse_failure(&input_content, 0, &e.to_string());
-                std::process::exit(1);
+                std::process::exit(e.exit_code() as i32);
             }
         };
         let parse_ms = parse_start.elapsed().as_secs_f64() * 1000.0;
@@ -286,7 +286,7 @@ impl Parse {
             "XML" => {
                 if let Err(e) = Parser::validate_xml_output(&parse_tree) {
                     eprintln!("Error serializing XML output: {}", e);
-                    std::process::exit(1);
+                    std::process::exit(e.exit_code() as i32);
                 }
                 let xml_output = Parser::tree_to_test_format_with_state(
                     &parse_tree,

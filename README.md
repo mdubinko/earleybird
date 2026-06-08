@@ -38,6 +38,30 @@ cargo run -- parse -g grammar.ixml -i input.txt
 cargo run -- parse --grammar-str 'rule: "a" | "b".' --input-str 'a'
 ```
 
+### Exit codes
+
+The `parse` and `validate` commands map ixml specification error codes to distinct
+process exit codes, so failures can be distinguished in scripts and tests. The error
+class is the hundreds digit and the spec code is recoverable by subtraction:
+
+| Exit code | Meaning |
+|-----------|---------|
+| `0`       | success |
+| `1`       | usage / IO error (bad arguments, unreadable file) |
+| `70`      | internal parser error (a bug in earleybird) |
+| `100 + N` | static error `SN` — detected from the grammar alone (e.g. `S03` → `103`) |
+| `200 + N` | dynamic error `DN` — detected from the parse output (e.g. `D02` → `202`) |
+
+Codes `2`–`99` are reserved for future use. Examples:
+
+```bash
+# S03 (duplicate rule definition) → exit 103
+cargo run -- validate --grammar-str 'doc: "a". doc: "b".'; echo $?
+
+# D06 (not exactly one top-level element) → exit 206
+cargo run -- parse --grammar-str '-doc: "ab".' --input-str 'ab'; echo $?
+```
+
 ### Run test suite
 
 ```bash
@@ -333,9 +357,9 @@ Planned advanced debugging features:
 
 As of May 1, 2023, no AI generated code has been used in any part of this project.
 
-The core concepts and architecture were all built 'by hand'.
-
-Since this is a learning project, I intend to experiment with different code generation products in the future, especially for testing and fleshing out the details of the implementation.
+The core concepts and architecture were all built 'by hand' resulting in a basic running app.
+After May 2023, I started experimenting with AI to buid out the conformance harness, and as tools improved,
+to help identify and fill conformance gaps, and improve performance.
 
 # Test Suite Setup
 
@@ -343,7 +367,7 @@ The test harness expects to locate resources from the official ixml repo in a sy
 
 1. Clone the official ixml repository:
    ```bash
-   git clone https://github.com/invisibleXML/ixml.git
+   git clone https://codeberg.org/invisibleXML/ixml.git
    ```
 
 2. Create a symlink in your earleybird directory:
@@ -362,8 +386,8 @@ Invisible XML: https://invisiblexml.org/
 
 ixml Specification (2026-02-03 Editorial Draft): https://invisiblexml.org/current/
 
-IXML Repo: https://github.com/invisibleXML/ixml
+IXML Repo: https://codeberg.org/invisibleXML/ixml
 
-Test Suite: https://github.com/invisibleXML/ixml/tree/master/tests
+Test Suite: https://codeberg.org/invisibleXML/ixml/src/branch/main/tests
 
 Vulturine Guinea Fowl: https://en.wikipedia.org/wiki/Vulturine_guineafowl

@@ -789,34 +789,232 @@ impl Content {
     }
 }
 
-#[derive(Debug)]
-pub enum ParseError {
-    StaticError(String),
-    DynamicError(String),
-    UncategorizedError(String),
+/// A byte-offset span into the source an error refers to.
+///
+/// Offsets index the UTF-8 grammar source (for [`ErrorKind::Static`]) or the
+/// input being parsed (for [`ErrorKind::Dynamic`]). Line/column are a
+/// presentation concern and are deliberately not stored — derive them from the
+/// source when rendering. Most errors do not yet carry a span (`None`); the
+/// field is part of the public surface so positions can be populated later
+/// without a breaking change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
+impl Span {
+    pub fn new(start: usize, end: usize) -> Self {
+        Self { start, end }
+    }
+}
+
+/// The ixml error class. The spec distinguishes *static* errors (detectable
+/// from the grammar alone, before any input is parsed) from *dynamic* errors
+/// (detectable only while/after parsing a specific input). `Internal` covers
+/// parser-invariant violations that should never fire for a well-formed
+/// grammar + input — they indicate a bug in earleybird, not user error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ErrorKind {
+    Static,
+    Dynamic,
+    Internal,
+}
+
+/// A specific ixml specification error code emitted by this implementation.
+///
+/// Only the codes earleybird actually produces are listed. The enum is
+/// `#[non_exhaustive]` so codes added by spec errata (or newly implemented
+/// static checks) can be introduced without a breaking change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ErrorCode {
+    /// nonterminal used but not defined
+    S02,
+    /// more than one rule for a nonterminal
+    S03,
+    /// invalid hexadecimal value
+    S06,
+    /// hex value outside the Unicode code-point range
+    S07,
+    /// hex value denotes a surrogate or noncharacter code point
+    S08,
+    /// reversed character range (first code point greater than second)
+    S09,
+    /// unknown Unicode character category
+    S10,
+    /// duplicate attribute on an element
+    D02,
+    /// name is not a well-formed XML name
+    D03,
+    /// character is not permitted in XML
+    D04,
+    /// attribute at the root of the document
+    D05,
+    /// parse tree does not have exactly one top-level element
+    D06,
+    /// reserved attribute name (`xmlns`)
+    D07,
+}
+
+impl ErrorCode {
+    /// The canonical spec code string, e.g. `"S03"`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::S02 => "S02",
+            Self::S03 => "S03",
+            Self::S06 => "S06",
+            Self::S07 => "S07",
+            Self::S08 => "S08",
+            Self::S09 => "S09",
+            Self::S10 => "S10",
+            Self::D02 => "D02",
+            Self::D03 => "D03",
+            Self::D04 => "D04",
+            Self::D05 => "D05",
+            Self::D06 => "D06",
+            Self::D07 => "D07",
+        }
+    }
+
+    /// The error class this code belongs to.
+    pub fn kind(&self) -> ErrorKind {
+        match self {
+            Self::S02 | Self::S03 | Self::S06 | Self::S07 | Self::S08 | Self::S09 | Self::S10 => {
+                ErrorKind::Static
+            }
+            Self::D02 | Self::D03 | Self::D04 | Self::D05 | Self::D06 | Self::D07 => {
+                ErrorKind::Dynamic
+            }
+        }
+    }
+
+    /// The process exit code for this error: `100 + N` for a static code `SN`,
+    /// `200 + N` for a dynamic code `DN` (e.g. `S03 -> 103`, `D02 -> 202`).
+    /// Derived from [`ErrorCode::as_str`] so it cannot drift from the code name.
+    /// See [`ParseError::exit_code`] for the non-coded cases.
+    pub fn exit_code(&self) -> u8 {
+        let s = self.as_str();
+        let base = if s.starts_with('S') { 100 } else { 200 };
+        let n: u8 = s[1..].parse().expect("ErrorCode::as_str has a numeric suffix");
+        base + n
+    }
+}
+
+impl fmt::Display for ErrorCode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        f.write_str(self.as_str())
+    }
+}
+
+/// An error produced while compiling a grammar or parsing input against it.
+///
+/// Construct with [`ParseError::coded`] (a spec-coded error), [`ParseError::static_err`]
+/// (a grammar error with no specific spec code), or [`ParseError::internal`] (a
+/// parser-invariant violation). Inspect with [`ParseError::kind`],
+/// [`ParseError::code`], [`ParseError::message`], and [`ParseError::span`].
+///
+/// `Display` renders `"<code>: <message>"` when a code is present, otherwise the
+/// bare message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseError {
+    kind: ErrorKind,
+    code: Option<ErrorCode>,
+    message: String,
+    span: Option<Span>,
 }
 
 impl ParseError {
-    pub fn static_err(msg: &str) -> Self {
-        Self::StaticError(msg.to_string())
+    /// A spec-coded error. The [`ErrorKind`] is derived from the code's class.
+    pub fn coded(code: ErrorCode, message: impl Into<String>) -> Self {
+        Self {
+            kind: code.kind(),
+            code: Some(code),
+            message: message.into(),
+            span: None,
+        }
     }
-    pub fn dynamic_err(msg: &str) -> Self {
-        Self::DynamicError(msg.to_string())
+
+    /// A static (grammar) error with no specific spec code.
+    pub fn static_err(message: &str) -> Self {
+        Self {
+            kind: ErrorKind::Static,
+            code: None,
+            message: message.to_string(),
+            span: None,
+        }
     }
-    pub fn uncategorized_err(msg: &str) -> Self {
-        Self::UncategorizedError(msg.to_string())
+
+    /// An internal parser-invariant violation: a bug in earleybird, not a user
+    /// error. Replaces the former `panic!("INTERNAL ERROR…")` arms.
+    pub fn internal(message: impl Into<String>) -> Self {
+        Self {
+            kind: ErrorKind::Internal,
+            code: None,
+            message: message.into(),
+            span: None,
+        }
+    }
+
+    /// Attach a source span (builder-style).
+    pub fn with_span(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
+    }
+
+    /// The error class (static / dynamic / internal).
+    pub fn kind(&self) -> ErrorKind {
+        self.kind
+    }
+
+    /// The spec error code, when one applies.
+    pub fn code(&self) -> Option<ErrorCode> {
+        self.code
+    }
+
+    /// The human-readable message, without any code prefix.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// The source span, when known.
+    pub fn span(&self) -> Option<Span> {
+        self.span
+    }
+
+    /// A process exit code for this error, suitable for `std::process::exit`.
+    ///
+    /// - A spec-coded error uses [`ErrorCode::exit_code`]: `100 + N` for static
+    ///   `SN`, `200 + N` for dynamic `DN` (so the class is the hundreds digit
+    ///   and the code is recoverable by subtraction).
+    /// - An [`ErrorKind::Internal`] error (a parser bug) is `70` (sysexits
+    ///   `EX_SOFTWARE`).
+    /// - Any other code-less error is the generic `1`.
+    ///
+    /// Codes `0` (success) and `2`–`99` are left for the caller; usage / IO
+    /// errors in the CLI stay at `1`.
+    pub fn exit_code(&self) -> u8 {
+        match self.code {
+            Some(code) => code.exit_code(),
+            None => match self.kind {
+                ErrorKind::Internal => 70,
+                _ => 1,
+            },
+        }
     }
 }
 
 impl fmt::Display for ParseError {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match self {
-            Self::StaticError(e) => write!(f, "StaticError: {e}"),
-            Self::DynamicError(e) => write!(f, "DynamicError: {e}"),
-            Self::UncategorizedError(e) => write!(f, "UncategorizedError: {e}"),
+        match self.code {
+            Some(code) => write!(f, "{}: {}", code.as_str(), self.message),
+            None => f.write_str(&self.message),
         }
     }
 }
+
+impl std::error::Error for ParseError {}
 
 #[derive(Debug)]
 pub struct Parser {
@@ -1190,12 +1388,16 @@ impl Parser {
                     MatchRec::NonTerm(name, self.traces.get(tid).pos, mark, alias)
                 }
                 Factor::Terminal(tmark, _ch) => {
-                    // This should never happen - terminals are handled by Scanner
-                    panic!("INTERNAL ERROR: Complete() called on task waiting for terminal {:?}. This indicates a logic bug in the parser.", tmark);
+                    // Should never happen: terminals are consumed by the Scanner, not here.
+                    return Err(ParseError::internal(format!(
+                        "complete(): parent task is waiting on terminal {tmark:?}; terminals must be handled by the scanner"
+                    )));
                 }
                 Factor::Insertion(_tmark, text) => {
-                    // This should never happen - insertions are handled directly in main loop
-                    panic!("INTERNAL ERROR: Complete() called on task waiting for insertion {:?}. This indicates a logic bug in the parser.", text);
+                    // Should never happen: insertions are advanced directly in the main loop.
+                    return Err(ParseError::internal(format!(
+                        "complete(): parent task is waiting on insertion {text:?}; insertions must be handled in the main loop"
+                    )));
                 }
             };
             trace!("MatchRec {:?}", &match_rec);
@@ -1321,10 +1523,16 @@ impl Parser {
                             MatchRec::NonTerm(name, current_pos, mark, alias)
                         }
                         Factor::Terminal(tmark, _ch) => {
-                            panic!("INTERNAL ERROR: Complete() called on task waiting for terminal {:?}. This indicates a logic bug in the parser.", tmark);
+                            // Should never happen: terminals are consumed by the Scanner.
+                            return Err(ParseError::internal(format!(
+                                "predict(): parent task is waiting on terminal {tmark:?}; terminals must be handled by the scanner"
+                            )));
                         }
                         Factor::Insertion(_tmark, text) => {
-                            panic!("INTERNAL ERROR: Complete() called on task waiting for insertion {:?}. This indicates a logic bug in the parser.", text);
+                            // Should never happen: insertions are advanced in the main loop.
+                            return Err(ParseError::internal(format!(
+                                "predict(): parent task is waiting on insertion {text:?}; insertions must be handled in the main loop"
+                            )));
                         }
                     };
                     trace!("MatchRec {:?}", &match_rec);
@@ -1969,14 +2177,16 @@ impl Parser {
             match arena.get(child).unwrap().get() {
                 Content::Element(_) => top_level_elements += 1,
                 Content::Attribute(..) => {
-                    return Err(ParseError::dynamic_err(
-                        "D05: attribute cannot appear at the root of an XML document",
+                    return Err(ParseError::coded(
+                        ErrorCode::D05,
+                        "attribute cannot appear at the root of an XML document",
                     ));
                 }
                 Content::Text(text) if text.is_empty() => {}
                 Content::Text(_) => {
-                    return Err(ParseError::dynamic_err(
-                        "D06: parse tree must contain exactly one top-level element",
+                    return Err(ParseError::coded(
+                        ErrorCode::D06,
+                        "parse tree must contain exactly one top-level element",
                     ));
                 }
                 Content::Root => {}
@@ -1984,8 +2194,9 @@ impl Parser {
         }
 
         if top_level_elements != 1 {
-            return Err(ParseError::dynamic_err(
-                "D06: parse tree must contain exactly one top-level element",
+            return Err(ParseError::coded(
+                ErrorCode::D06,
+                "parse tree must contain exactly one top-level element",
             ));
         }
 
@@ -2001,9 +2212,10 @@ impl Parser {
             Content::Root => {}
             Content::Element(name) => {
                 if !Self::is_xml_name(name) {
-                    return Err(ParseError::dynamic_err(&format!(
-                        "D03: element name '{name}' is not an XML name"
-                    )));
+                    return Err(ParseError::coded(
+                        ErrorCode::D03,
+                        format!("element name '{name}' is not an XML name"),
+                    ));
                 }
 
                 let mut seen_attrs = HashSet::new();
@@ -2015,19 +2227,22 @@ impl Parser {
                         arena.get(attr_child).unwrap().get()
                     {
                         if attr_name == "xmlns" {
-                            return Err(ParseError::dynamic_err(
-                                "D07: attribute name 'xmlns' is reserved",
+                            return Err(ParseError::coded(
+                                ErrorCode::D07,
+                                "attribute name 'xmlns' is reserved",
                             ));
                         }
                         if !Self::is_xml_name(attr_name) {
-                            return Err(ParseError::dynamic_err(&format!(
-                                "D03: attribute name '{attr_name}' is not an XML name"
-                            )));
+                            return Err(ParseError::coded(
+                                ErrorCode::D03,
+                                format!("attribute name '{attr_name}' is not an XML name"),
+                            ));
                         }
                         if !seen_attrs.insert(attr_name.as_str()) {
-                            return Err(ParseError::dynamic_err(&format!(
-                                "D02: duplicate attribute '{attr_name}'"
-                            )));
+                            return Err(ParseError::coded(
+                                ErrorCode::D02,
+                                format!("duplicate attribute '{attr_name}'"),
+                            ));
                         }
                         Self::validate_xml_chars(attr_value)?;
                     }
@@ -2050,10 +2265,10 @@ impl Parser {
 
     fn validate_xml_chars(value: &str) -> Result<(), ParseError> {
         if let Some(ch) = value.chars().find(|ch| !Self::is_xml_char(*ch)) {
-            return Err(ParseError::dynamic_err(&format!(
-                "D04: character U+{:04X} is not permitted in XML",
-                ch as u32
-            )));
+            return Err(ParseError::coded(
+                ErrorCode::D04,
+                format!("character U+{:04X} is not permitted in XML", ch as u32),
+            ));
         }
         Ok(())
     }

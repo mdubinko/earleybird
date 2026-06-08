@@ -57,8 +57,10 @@ pub enum GrammarConstructionError {
     ValidationError(String),
     /// Phase 2: Bootstrap grammar couldn't parse the iXML
     BootstrapParseError(crate::parser::ParseError),
-    /// Phase 3: Parse tree to Grammar conversion failed
-    ConversionError(String),
+    /// Phase 3: Parse tree to Grammar conversion failed. Carries the structured
+    /// `ParseError` (with its spec code, e.g. S03) so the code survives to the
+    /// `from_ixml_str` boundary and the CLI exit code.
+    ConversionError(crate::parser::ParseError),
 }
 
 impl fmt::Display for GrammarConstructionError {
@@ -441,10 +443,19 @@ impl Grammar {
         stats_enabled: bool,
         phase_report: bool,
     ) -> Result<Grammar, crate::parser::ParseError> {
-        // Convert detailed error to legacy error for backward compatibility
+        // Flatten the phased construction error into a ParseError, preserving the
+        // structured spec code where one exists (BootstrapParseError and
+        // ConversionError already hold a ParseError; only validator messages,
+        // which carry no spec code, are wrapped as a code-less static error).
         match Self::from_ixml_str_detailed_with_stats(ixml, stats_enabled, phase_report) {
             Ok(grammar) => Ok(grammar),
-            Err(err) => Err(crate::parser::ParseError::static_err(&err.to_string())),
+            Err(err) => Err(match err {
+                GrammarConstructionError::BootstrapParseError(pe) => pe,
+                GrammarConstructionError::ConversionError(pe) => pe,
+                GrammarConstructionError::ValidationError(msg) => {
+                    crate::parser::ParseError::static_err(&msg)
+                }
+            }),
         }
     }
 
@@ -489,9 +500,7 @@ impl Grammar {
         let grammar = match Grammar::from_parse_tree(&ixml_arena) {
             Ok(g) => g,
             Err(conversion_error) => {
-                return Err(GrammarConstructionError::ConversionError(
-                    conversion_error.to_string(),
-                ));
+                return Err(GrammarConstructionError::ConversionError(conversion_error));
             }
         };
 
@@ -630,9 +639,10 @@ impl Grammar {
             // S03: duplicate rule definition
             let rule_name_smol = EarleyStr::new(rule_name.as_str());
             if !seen_rule_names.insert(rule_name_smol) {
-                return Err(crate::parser::ParseError::static_err(&format!(
-                    "S03: grammar contains more than one rule for nonterminal '{rule_name}'"
-                )));
+                return Err(crate::parser::ParseError::coded(
+                    crate::parser::ErrorCode::S03,
+                    format!("grammar contains more than one rule for nonterminal '{rule_name}'"),
+                ));
             }
 
             let rule_mark = rule_attrs.get("mark").or(naming.mark.as_ref());
@@ -658,9 +668,10 @@ impl Grammar {
                 for factor in alt.iter() {
                     if let Factor::Nonterm(_, name, _) = factor {
                         if !g.definitions.contains_key(name.as_str()) {
-                            return Err(crate::parser::ParseError::static_err(&format!(
-                                "S02: nonterminal '{name}' is used but not defined in the grammar"
-                            )));
+                            return Err(crate::parser::ParseError::coded(
+                                crate::parser::ErrorCode::S02,
+                                format!("nonterminal '{name}' is used but not defined in the grammar"),
+                            ));
                         }
                     }
                 }
@@ -824,9 +835,10 @@ impl Grammar {
                 } else if let Some(hex_value) = attrs.get("hex") {
                     let code_point =
                         u32::from_str_radix(hex_value, 16).map_err(|_| {
-                            crate::parser::ParseError::static_err(&format!(
-                                "S06: invalid hexadecimal value '#{hex_value}'"
-                            ))
+                            crate::parser::ParseError::coded(
+                                crate::parser::ErrorCode::S06,
+                                format!("invalid hexadecimal value '#{hex_value}'"),
+                            )
                         })?;
                     let ch = Self::validate_hex_codepoint(code_point, hex_value)?;
                     seq = seq.mark_ch(ch, tmark);
@@ -968,9 +980,10 @@ impl Grammar {
                     string_val.to_string()
                 } else if let Some(hex_val) = attrs.get("hex") {
                     let code_point = u32::from_str_radix(hex_val, 16).map_err(|_| {
-                        crate::parser::ParseError::static_err(&format!(
-                            "S06: invalid hexadecimal value '#{hex_val}' in insertion"
-                        ))
+                        crate::parser::ParseError::coded(
+                            crate::parser::ErrorCode::S06,
+                            format!("invalid hexadecimal value '#{hex_val}' in insertion"),
+                        )
                     })?;
                     Self::validate_hex_codepoint(code_point, hex_val)?.to_string()
                 } else {
@@ -1028,28 +1041,32 @@ impl Grammar {
     /// S07/S08: validate a raw code-point number and convert to char
     fn validate_hex_codepoint(code: u32, hex_attr: &str) -> Result<char, crate::parser::ParseError> {
         if code > 0x10FFFF {
-            return Err(crate::parser::ParseError::static_err(&format!(
-                "S07: hex value #{hex_attr} is outside the Unicode code-point range (0..10FFFF)"
-            )));
+            return Err(crate::parser::ParseError::coded(
+                crate::parser::ErrorCode::S07,
+                format!("hex value #{hex_attr} is outside the Unicode code-point range (0..10FFFF)"),
+            ));
         }
         if (0xD800..=0xDFFF).contains(&code) {
-            return Err(crate::parser::ParseError::static_err(&format!(
-                "S08: hex value #{hex_attr} denotes a Unicode surrogate code point"
-            )));
+            return Err(crate::parser::ParseError::coded(
+                crate::parser::ErrorCode::S08,
+                format!("hex value #{hex_attr} denotes a Unicode surrogate code point"),
+            ));
         }
         if (0xFDD0..=0xFDEF).contains(&code) || (code & 0xFFFF) >= 0xFFFE {
-            return Err(crate::parser::ParseError::static_err(&format!(
-                "S08: hex value #{hex_attr} denotes a Unicode noncharacter"
-            )));
+            return Err(crate::parser::ParseError::coded(
+                crate::parser::ErrorCode::S08,
+                format!("hex value #{hex_attr} denotes a Unicode noncharacter"),
+            ));
         }
         Ok(char::from_u32(code).expect("validated above"))
     }
 
     fn process_hex_member(hex_attr: &str, lit_builder: LitBuilder) -> Result<LitBuilder, crate::parser::ParseError> {
         let hex_value = u32::from_str_radix(hex_attr, 16).map_err(|_| {
-            crate::parser::ParseError::static_err(&format!(
-                "S06: invalid hexadecimal value '#{hex_attr}'"
-            ))
+            crate::parser::ParseError::coded(
+                crate::parser::ErrorCode::S06,
+                format!("invalid hexadecimal value '#{hex_attr}'"),
+            )
         })?;
         let ch = Self::validate_hex_codepoint(hex_value, hex_attr)?;
         Ok(lit_builder.ch(ch))
@@ -1058,9 +1075,10 @@ impl Grammar {
     /// Process Unicode class member like L, LC, Nd, etc.
     fn process_class_member(class_attr: &str, lit_builder: LitBuilder) -> Result<LitBuilder, crate::parser::ParseError> {
         if !UnicodeRange::is_valid(class_attr) {
-            return Err(crate::parser::ParseError::static_err(&format!(
-                "S10: '{class_attr}' is not a defined Unicode character category"
-            )));
+            return Err(crate::parser::ParseError::coded(
+                crate::parser::ErrorCode::S10,
+                format!("'{class_attr}' is not a defined Unicode character category"),
+            ));
         }
         Ok(lit_builder.ch_unicode(class_attr))
     }
@@ -1070,9 +1088,10 @@ impl Grammar {
         let from_char = Self::parse_char_or_hex(from)?;
         let to_char = Self::parse_char_or_hex(to)?;
         if from_char > to_char {
-            return Err(crate::parser::ParseError::static_err(&format!(
-                "S09: in character range '{from}'-'{to}', first character has greater code point than second"
-            )));
+            return Err(crate::parser::ParseError::coded(
+                crate::parser::ErrorCode::S09,
+                format!("in character range '{from}'-'{to}', first character has greater code point than second"),
+            ));
         }
         Ok((from_char, to_char))
     }
@@ -1082,9 +1101,10 @@ impl Grammar {
         if let Some(hex_part) = value.strip_prefix('#') {
             if !hex_part.is_empty() {
                 let hex_value = u32::from_str_radix(hex_part, 16).map_err(|_| {
-                    crate::parser::ParseError::static_err(&format!(
-                        "S06: invalid hexadecimal value '{value}'"
-                    ))
+                    crate::parser::ParseError::coded(
+                        crate::parser::ErrorCode::S06,
+                        format!("invalid hexadecimal value '{value}'"),
+                    )
                 })?;
                 return Self::validate_hex_codepoint(hex_value, hex_part);
             }

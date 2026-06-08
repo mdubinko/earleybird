@@ -575,8 +575,8 @@ fn run_single_test(
                             GrammarConstructionError::BootstrapParseError(err) => {
                                 TestOutcome::BootstrapParseError(err.to_string())
                             }
-                            GrammarConstructionError::ConversionError(msg) => {
-                                TestOutcome::ConversionError(msg)
+                            GrammarConstructionError::ConversionError(err) => {
+                                TestOutcome::ConversionError(err.to_string())
                             }
                         };
                     }
@@ -610,7 +610,9 @@ fn run_single_test(
                             expected: format!("dynamic error {expected_code}"),
                             actual: "parse and XML serialization succeeded".to_string(),
                         },
-                        Err(e) if dynamic_error_matches(&e.to_string(), &expected_code) => {
+                        // Match on the structured spec code, not a substring of the
+                        // rendered message (the message text is not part of the contract).
+                        Err(e) if e.code().is_some_and(|c| c.as_str() == expected_code) => {
                             TestOutcome::Pass
                         }
                         Err(e) => TestOutcome::Fail {
@@ -690,10 +692,6 @@ fn run_single_test(
     }
 
     first_failure.unwrap_or(TestOutcome::Pass)
-}
-
-fn dynamic_error_matches(actual: &str, expected_code: &str) -> bool {
-    actual.contains(&format!("{expected_code}:"))
 }
 
 impl RunSuite {

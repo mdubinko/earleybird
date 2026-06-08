@@ -173,7 +173,7 @@ impl Validate {
             Err(e) => {
                 // Validation failed
                 eprintln!("Grammar validation failed: {}", e);
-                std::process::exit(1);
+                std::process::exit(e.exit_code() as i32);
             }
         }
     }
